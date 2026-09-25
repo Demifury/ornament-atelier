@@ -646,6 +646,20 @@ input[type="file"] {
   overflow: auto;
 }
 
+/* Pasteboard: a screen's worth of empty scroll room above and below the artboards, the
+   way a design tool lets you pan past the edge of the page. Without it, whenever the
+   whole composition fit on screen there was no scroll offset at all — so when the
+   unrolled strip above the Ring editor grew or shrank (editing a radius changes its
+   height), nothing could absorb the reflow and the ring jumped on screen. With room on
+   both sides, syncStraightPreviewToRing() and the zoom anchoring can always take the
+   shift back out of the scroll offset, at any zoom. JS scrolls to the artboards on load
+   and on mode switch (homePreviewScroll), so the view doesn't open on empty pasteboard. */
+.preview::before,
+.preview::after {
+  content: "";
+  flex: 0 0 100vh;
+}
+
 /* These wrap the two modes' artboards purely so JS can show/hide one at a time —
    `contents` keeps their children direct participants in .preview's flex layout,
    same as if the wrapper div weren't there. */

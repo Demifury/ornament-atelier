@@ -1170,6 +1170,8 @@ function distributeAngles(layer) {
 const STRAIGHT_PAD = 60;
 let straightExportWidth = CANVAS_SIZE;
 let straightExportHeight = 1000;
+// Sub-pixel scroll correction left over from the last syncStraightPreviewToRing() call.
+let straightSyncScrollCarry = 0;
 
 function radiusToStraightY(radius, maxR, padY) {
   return padY + (maxR - radius);
@@ -2255,8 +2257,16 @@ function applyZoom() {
 
 function setCurrentZoom(percent) {
   const clamped = Math.min(ZOOM_MAX * 100, Math.max(ZOOM_MIN * 100, percent));
-  currentZoomTarget().set(clamped / 100);
-  applyZoom();
+  const target = currentZoomTarget();
+  // A typed zoom has no cursor to anchor on, so it anchors on the middle of the pane.
+  // Unanchored, it used to grow/shrink from the artboard's top edge — harmless while the
+  // pane couldn't scroll past the artwork, but with the pasteboard, zooming out from deep
+  // inside a big artboard would leave the view staring at empty margin.
+  const pane = document.querySelector(".preview").getBoundingClientRect();
+  zoomAnchoredAt(document.getElementById(target.svgId), pane.left + pane.width / 2, pane.top + pane.height / 2, () => {
+    target.set(clamped / 100);
+    applyZoom();
+  });
 }
 
 // Kept for the Ring editor specifically — some call sites and tests address it by name.
@@ -2265,6 +2275,72 @@ function setRingZoom(percent) {
   applyZoom();
 }
 
+// Runs `apply` (a zoom change) while holding the artwork point under (clientX, clientY)
+// still on screen. The point is captured as a fraction of the artboard's size BEFORE
+// resizing, then nudged back under the same screen position — measured again afterwards
+// rather than predicted, since .preview centres its children and its scroll extent is
+// driven by whichever child is widest, not necessarily this one.
+//
+// Vertically this is exact for any point on the artboard: the pasteboard (see .preview in
+// style.css) always leaves enough scroll room on both sides. Horizontally it's still
+// best-effort — there's no side pasteboard, so hard against a left/right edge the zoom
+// falls back to expanding about the centre.
+function zoomAnchoredAt(svg, clientX, clientY, apply) {
+  const preview = document.querySelector(".preview");
+  const before = svg.getBoundingClientRect();
+  // A hidden artboard measures 0: there is nothing on screen to hold still.
+  if (!preview || !(before.width > 0)) {
+    apply();
+    return;
+  }
+  const relX = (clientX - before.left) / before.width;
+  const relY = (clientY - before.top) / before.height;
+  apply();
+  const after = svg.getBoundingClientRect();
+  preview.scrollLeft += after.left + relX * after.width - clientX;
+  preview.scrollTop += after.top + relY * after.height - clientY;
+}
+
+// Scrolls the showing mode's first artboard to the top of the pane — where it sat before
+// the pasteboard existed. Needed on load and on mode switch: scrollTop 0 is now a screen of
+// empty margin, and the other mode's scroll offset means nothing for this one's artboards.
+function homePreviewScroll() {
+  const preview = document.querySelector(".preview");
+  const offset = firstArtboardOffset();
+  if (!preview || offset === null) return;
+  const padTop = parseFloat(getComputedStyle(preview).paddingTop) || 0;
+  preview.scrollTop += offset - padTop;
+  lastArtboardOffset = firstArtboardOffset();
+}
+
+// How far the showing mode's first artboard sits below the top of the pane, or null when
+// there's nothing to measure.
+function firstArtboardOffset() {
+  const preview = document.querySelector(".preview");
+  const first = document.querySelector(
+    currentMode === "circle" ? "#circleModePreview .artboard-block" : "#straightModePreview .artboard-block"
+  );
+  if (!preview || !first) return null;
+  return first.getBoundingClientRect().top - preview.getBoundingClientRect().top;
+}
+
+// The pasteboard is 100vh tall, so resizing the window also resizes the margin ABOVE the
+// artboards, which would slide them by the difference. Usually the browser's own scroll
+// anchoring (overflow-anchor) already absorbs that, but it can be suppressed — so rather
+// than blindly subtracting the size change (which double-corrects whenever anchoring DID
+// kick in), remember where the artboards sat after every scroll and, on resize, put them
+// back there. Measured, so it's a no-op when there's nothing left to correct. Also noted
+// synchronously wherever this code moves the view itself, since scroll events only arrive
+// on the next frame.
+let lastArtboardOffset = null;
+document.querySelector(".preview").addEventListener(
+  "scroll",
+  () => {
+    lastArtboardOffset = firstArtboardOffset();
+  },
+  { passive: true }
+);
+
 function attachAltWheelZoom(svgId, getZoom, setZoom) {
   document.getElementById(svgId).addEventListener(
     "wheel",
@@ -2272,30 +2348,11 @@ function attachAltWheelZoom(svgId, getZoom, setZoom) {
       if (!e.altKey) return;
       e.preventDefault(); // Alt+wheel otherwise triggers browser-level scroll/navigation
 
-      const svg = document.getElementById(svgId);
-      const preview = document.querySelector(".preview");
-      // Where the cursor sits within the artboard, as a fraction of its size — captured
-      // BEFORE resizing so the same point of the artwork can be nudged back under the
-      // cursor afterwards. Measured again after the resize rather than predicted, since
-      // .preview centres its children and its scroll extent is driven by whichever child
-      // is widest, not necessarily this one.
-      //
-      // Best-effort by design: the scroll can only compensate as far as the pane actually
-      // has room to scroll, so at the extremes (already hard against an edge) the zoom
-      // falls back to expanding about the centre. That's strictly better than not
-      // compensating at all, and fully anchoring would mean restructuring the preview
-      // layout — far more than this shortcut is worth.
-      const before = svg.getBoundingClientRect();
-      const relX = (e.clientX - before.left) / before.width;
-      const relY = (e.clientY - before.top) / before.height;
-
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, getZoom() * factor)));
-      applyZoom();
-
-      const after = svg.getBoundingClientRect();
-      preview.scrollLeft += after.left + relX * after.width - e.clientX;
-      preview.scrollTop += after.top + relY * after.height - e.clientY;
+      zoomAnchoredAt(document.getElementById(svgId), e.clientX, e.clientY, () => {
+        setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, getZoom() * factor)));
+        applyZoom();
+      });
     },
     { passive: false }
   );
@@ -2319,7 +2376,14 @@ attachAltWheelZoom("tileCanvas", () => tileZoom, (z) => (tileZoom = z));
   // even when the zoom factor hasn't — which also moves the scale the unrolled preview
   // has to match.
   window.addEventListener("resize", () => {
+    const now = firstArtboardOffset();
+    if (now !== null && lastArtboardOffset !== null) {
+      document.querySelector(".preview").scrollTop += now - lastArtboardOffset;
+    }
+    // Then the ring itself has changed size (it's vh-based), which resizes the strip —
+    // that sync holds the RING still, same as for any other strip resize.
     syncStraightPreviewToRing();
+    lastArtboardOffset = firstArtboardOffset();
     updateOnScreenSizes();
   });
   applyZoom();
@@ -2363,8 +2427,10 @@ function syncStraightPreviewToRing() {
   // radius appeared to move the camera, even though the scroll offset never changed.
   // Anchor on the ring: note where it sits, resize, then take the shift straight back out
   // of the scroll offset so it stays put on screen. A no-op when the size didn't change,
-  // and harmless during zoom — the Alt+wheel handler measures again afterwards and does
-  // its own cursor-anchored correction on top.
+  // and harmless during zoom — zoomAnchoredAt() measures again afterwards and does its own
+  // anchored correction on top. The pasteboard (see .preview in style.css) is what
+  // guarantees there's always scroll room to take the shift, even when the whole
+  // composition fits on screen.
   const preview = document.querySelector(".preview");
   const before = ring.getBoundingClientRect();
   svg.style.width = w;
@@ -2372,7 +2438,15 @@ function syncStraightPreviewToRing() {
   if (!preview) return;
   const after = ring.getBoundingClientRect();
   preview.scrollLeft += after.left - before.left;
-  preview.scrollTop += after.top - before.top;
+  // The browser snaps scrollTop to whole pixels, so each correction is off by up to half a
+  // pixel — and those errors random-walk: a few dozen edits crept the ring ~1px. Carry the
+  // part that didn't land into the next correction so it stays within half a pixel for
+  // good. A residual of a pixel or more means the scroll hit an end and was clamped;
+  // that isn't rounding, so don't carry it.
+  const wanted = preview.scrollTop + (after.top - before.top) + straightSyncScrollCarry;
+  preview.scrollTop = wanted;
+  const residual = wanted - preview.scrollTop;
+  straightSyncScrollCarry = Math.abs(residual) < 1 ? residual : 0;
 }
 
 function renderStraight() {
@@ -4437,6 +4511,7 @@ function setMode(mode) {
   // The Zoom box follows whichever artboard is showing, and the on-screen readouts can
   // only be measured once the newly visible mode is laid out.
   applyZoom();
+  homePreviewScroll();
   // The animation loop only tracks the VISIBLE mode (see currentModeAnimating), so
   // switching into a mode whose layers are animating is exactly when it may need
   // starting again — the loop will have shut itself down while that mode was hidden.
@@ -4524,3 +4599,4 @@ document.addEventListener("keydown", (e) => {
 
 applyDefaultProject(DEFAULT_PROJECT);
 updateAllAnimSizeEstimates();
+homePreviewScroll();

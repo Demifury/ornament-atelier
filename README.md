@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=53`, `style.css?v=34`); bump those
+`index.html` cache-busts with query strings (`app.js?v=57`, `style.css?v=35`); bump those
 when changing either file.
 
 ## Two modes
@@ -41,8 +41,9 @@ Both modes share the layers, roughness and mask panels.
 
 ## Known issues
 
-- The preview camera drifts below roughly 90% zoom: with no scrollbar in the preview pane,
-  nothing absorbs the unrolled strip's growth and the ring gets pushed down. Correct at 100%
-  and above. Fixing it needs a layout change, not tuning.
+- When the unrolled strip (or the Ring editor at high zoom) is wider than the preview pane,
+  its left end can't be scrolled to: `.preview` centres its children with
+  `align-items: center`, which overflows both sides, and a scroll container can't reach
+  negative overflow.
 - `images/banner.png` was exported with its canvas too tight — 8 of its outer lobes are
   clipped flat at the frame. The app has always rendered it this way.
