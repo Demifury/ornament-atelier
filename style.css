@@ -72,9 +72,17 @@ html, body {
   height: 210px;
 }
 
+/* banner.png is 4600px square: the original 4096px ornament, 1:1 in the middle, plus a
+   252px margin all round that holds the outer lobe tips the original export had cropped
+   flat against its frame. Drawn 4600/4096 larger than the wrap and pulled back by the
+   margin so the ring itself still renders at exactly 210px. Margins rather than a
+   transform because the spin animation owns `transform`; percentage margins resolve
+   against the wrap's width, which is fine because it's square. */
 .app-banner-img {
-  width: 100%;
-  height: 100%;
+  display: block;
+  width: calc(100% * 4600 / 4096);
+  height: calc(100% * 4600 / 4096);
+  margin: calc(-100% * 252 / 4096);
   object-fit: contain;
   animation: app-banner-spin 160s linear infinite;
 }

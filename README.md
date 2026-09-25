@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=57`, `style.css?v=35`); bump those
+`index.html` cache-busts with query strings (`app.js?v=57`, `style.css?v=36`); bump those
 when changing either file.
 
 ## Two modes
@@ -45,5 +45,3 @@ Both modes share the layers, roughness and mask panels.
   its left end can't be scrolled to: `.preview` centres its children with
   `align-items: center`, which overflows both sides, and a scroll container can't reach
   negative overflow.
-- `images/banner.png` was exported with its canvas too tight — 8 of its outer lobes are
-  clipped flat at the frame. The app has always rendered it this way.
