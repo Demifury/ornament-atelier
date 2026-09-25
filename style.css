@@ -1,0 +1,851 @@
+@font-face {
+  font-family: "Caudex";
+  src: url("fonts/Caudex-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Buttons/inputs/selects don't inherit the page font by default in most browsers
+   (a long-standing UA-stylesheet quirk) — force it everywhere, once, rather than
+   patching font-family onto every individual button/input class. */
+button, input, select, textarea {
+  font-family: inherit;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Caudex", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #e4e4e6;
+  background: #0b0c0e;
+  color-scheme: dark;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 16px;
+  background: #0e0f12;
+  border-right: 1px solid #1c1d21;
+}
+
+/* Its own scroll region, separate from .sidebar — picking a different layer here no
+   longer means scrolling back up past a long list of property panels to reach it, and
+   vice versa. */
+.layers-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 16px;
+  background: #0e0f12;
+  border-right: 1px solid #1c1d21;
+}
+
+/* The image is centered inside this box at a fixed size (independent of the box's
+   own width), while the name bar and text stretch to the box's full width — which is
+   the sidebar's content width, same as every other element here — so the name reads
+   as a full-width label sitting across the ring, not squeezed into the ring's own
+   circle. */
+.app-banner {
+  position: relative;
+  width: 100%;
+  height: 210px;
+  margin-bottom: 16px;
+}
+
+.app-banner-img-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 210px;
+  height: 210px;
+}
+
+.app-banner-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: app-banner-spin 160s linear infinite;
+}
+
+@keyframes app-banner-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Same color as the sidebar background — sits between the ring image and the text so
+   the ring's pattern doesn't show through behind the name, like a knockout bar. */
+.app-banner-name-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 30px;
+  background: #0e0f12;
+}
+
+.app-banner-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  font-size: 21px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: #e4e4e6;
+}
+
+/* A thin strip of the app's own seamless-tile artwork, reused as a section divider —
+   background-size scales it to a fixed height while background-repeat tiles it across
+   whatever width the sidebar has, so it never stretches/distorts regardless of exact
+   container width. */
+.ornament-divider {
+  height: 32px;
+  margin: 16px 0;
+  background-image: url("images/divider.png");
+  background-repeat: repeat-x;
+  background-position: left center;
+  background-size: auto 32px;
+  /* Fades the hard tile-repeat cutoff at each end into the sidebar background instead
+     of an abrupt edge. */
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+
+/* Same fade treatment as .ornament-divider, just a different source image, shown as a
+   single copy instead of a tiled repeat, stretched edge-to-edge — height overridden to
+   auto plus a matching aspect-ratio (the source image is cropped tight to its visible
+   content, 2000x304) so it fills the full width without distorting the image or leaving
+   the dead vertical space the uncropped file had, instead of the fixed 32px band the
+   tiled dividers use. */
+.ornament-divider-export {
+  background-image: url("images/divider-export.png?v=2");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+  height: auto;
+  aspect-ratio: 2000 / 304;
+}
+
+/* Same full-width, aspect-ratio-preserving sizing as .ornament-divider-export (the
+   source here is also cropped to 2000x304) instead of the tiled 32px band — used for the
+   divider right under the mode-switch buttons, in both modes. Still mirrored vertically. */
+.ornament-divider-mode {
+  background-image: url("images/divider-mode.png?v=2");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+  height: auto;
+  aspect-ratio: 2000 / 304;
+  transform: scaleY(-1);
+}
+
+/* Same tiled/32px treatment as .ornament-divider, just the source swapped — used for the
+   pair of dividers around each mode's layer list. The lower one is mirrored vertically
+   (-flip) so the two read as a symmetric top/bottom frame around the list instead of two
+   identical copies stacked the same way up. Went 45px -> 27px (45 * 0.6, i.e. 40%
+   smaller than the previous size), background-size scaled to match. */
+.ornament-divider-layers {
+  background-image: url("images/divider-layers.png?v=6");
+  height: 27px;
+  background-size: auto 27px;
+  opacity: 0.8;
+}
+.ornament-divider-layers-flip {
+  transform: scaleY(-1);
+}
+
+.mode-switch {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  background: #0b0c0e;
+  border: 1px solid #202127;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.mode-btn:hover {
+  color: #e4e4e6;
+}
+
+.mode-btn.active {
+  background: #2c3e63;
+  color: #f2f2f3;
+}
+
+.panel {
+  background: #16171a;
+  border: 1px solid #202127;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  transition: opacity 0.15s;
+}
+
+.panel.disabled,
+.field.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.panel.hidden {
+  display: none;
+}
+
+.panel h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9a9aa2;
+  margin: 0 0 10px;
+}
+
+.hint {
+  font-size: 12px;
+  color: #8a8a92;
+  margin: 4px 0 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.field.row-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #ffffff;
+}
+
+.num-input {
+  width: 62px;
+  flex-shrink: 0;
+  background: #0b0c0e;
+  color: #e4e4e6;
+  border: 1px solid #2c2d33;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.reset-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #2c2d33;
+  border-radius: 5px;
+  background: #1a1b1f;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.reset-btn:hover {
+  background: #232429;
+  color: #ffffff;
+}
+
+.reset-btn svg {
+  display: block;
+}
+
+/* The Width field this sits on needs to be a positioning root for the button below —
+   see .field-with-lock. */
+.field-with-lock {
+  position: relative;
+}
+
+/* Same base look as .reset-btn, but its own class rather than sharing that one — the
+   reset buttons are auto-wired by class name elsewhere (see the JS that queries
+   ".reset-btn" and expects a data-reset-target on every match), and this button isn't
+   a reset button, just visually similar.
+   Absolutely positioned (not part of the normal flow) and anchored to the Width field
+   it's a child of, centered horizontally over its number box and vertically equidistant
+   from that box and Height's — so it reads as bridging the two number boxes without
+   adding any height of its own between them. */
+.lock-ratio-btn {
+  position: absolute;
+  right: 18px;
+  bottom: -28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #2c2d33;
+  border-radius: 5px;
+  background: #1a1b1f;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.lock-ratio-btn:hover {
+  background: #232429;
+  color: #ffffff;
+}
+
+.lock-ratio-btn svg {
+  display: block;
+}
+
+.lock-ratio-btn.locked {
+  background: #142033;
+  border-color: #4f8cff;
+  color: #4f8cff;
+}
+
+.field-group {
+  border: 1px solid #202127;
+  border-radius: 6px;
+  padding: 10px 10px 0;
+  margin-bottom: 10px;
+  background: #101114;
+}
+
+.field-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a7a82;
+  margin-bottom: 8px;
+}
+
+.motif-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.motif-preview-img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 4px;
+  border: 1px solid #2c2d33;
+  background: repeating-conic-gradient(#1c1d21 0% 25%, #0e0f11 0% 50%) 50% / 12px 12px;
+  flex-shrink: 0;
+}
+
+.motif-preview-name {
+  font-size: 12px;
+  color: #c4c4c8;
+  overflow-wrap: anywhere;
+}
+
+input[type="color"] {
+  width: 40px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #2c2d33;
+  border-radius: 4px;
+  background: transparent;
+}
+
+select {
+  background: #0b0c0e;
+  color: #e4e4e6;
+  border: 1px solid #2c2d33;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+input[type="file"] {
+  font-size: 12px;
+  color: #c4c4c8;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btn-row button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #e4e4e6;
+  cursor: pointer;
+}
+
+.btn-row button:hover {
+  background: #232429;
+}
+
+/* Move Up / Move Down stacked on the left, Undo and Redo as two tall buttons beside
+   them spanning both rows — the pair reads as one "history" control next to the
+   "reorder" control, rather than four equal buttons in a row. */
+.order-history-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: stretch;
+}
+
+.move-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.move-stack button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #e4e4e6;
+  cursor: pointer;
+  text-align: left;
+}
+
+.move-stack button:hover {
+  background: #232429;
+}
+
+/* The page font (Caudex) has no arrow glyphs, so it would silently fall back to some
+   arbitrary system face. Naming symbol-capable fonts explicitly keeps the arrow
+   consistent, and slightly larger/dimmer so it reads as an icon beside the label. */
+.btn-arrow {
+  font-family: "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols 2", sans-serif;
+  font-size: 14px;
+  line-height: 1;
+  color: #9a9aa2;
+  flex-shrink: 0;
+}
+
+.move-stack button:hover .btn-arrow {
+  color: #e4e4e6;
+}
+
+.history-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.history-btn:hover {
+  background: #232429;
+  color: #ffffff;
+}
+
+.history-btn svg {
+  display: block;
+}
+
+#duplicateLayerBtn,
+#smDuplicateLayerBtn,
+#randomizeSpeedsBtn,
+#smRandomizeSpeedsBtn {
+  background: #1B211A;
+  border-color: #1B211A;
+}
+
+#renameLayerBtn,
+#smRenameLayerBtn,
+#zeroSpeedsBtn,
+#smZeroSpeedsBtn {
+  background: #132440;
+  border-color: #132440;
+  color: #e4e4e6;
+}
+
+#removeLayerBtn,
+#smRemoveLayerBtn,
+#clearLayersBtn,
+#smClearLayersBtn {
+  background: #280905;
+  border-color: #280905;
+}
+
+#duplicateLayerBtn:hover,
+#renameLayerBtn:hover,
+#removeLayerBtn:hover,
+#smDuplicateLayerBtn:hover,
+#smRenameLayerBtn:hover,
+#smRemoveLayerBtn:hover,
+#clearLayersBtn:hover,
+#smClearLayersBtn:hover,
+#randomizeSpeedsBtn:hover,
+#smRandomizeSpeedsBtn:hover,
+#zeroSpeedsBtn:hover,
+#smZeroSpeedsBtn:hover {
+  filter: brightness(1.25);
+}
+
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.layer-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.layer-item-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.layer-visibility-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Hitbox is bigger than the 14x14 icon inside it — negative margin keeps the row's
+     visual layout the same as a plain 20x20 button while the actual clickable area
+     (the button's own box) is noticeably larger and easier to hit. */
+  width: 28px;
+  height: 28px;
+  margin: -4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.layer-visibility-btn:hover {
+  color: #e4e4e6;
+}
+
+.layer-visibility-btn.is-hidden {
+  color: #4a4a50;
+}
+
+.layer-item:hover {
+  background: #1a1b1f;
+}
+
+.layer-item.active {
+  background: #142033;
+  border-color: #4f8cff;
+}
+
+/* Also-selected rows in a multi-selection: same blue family as the active row but
+   dimmer, so it stays obvious which one the panel headings/type are being read from. */
+.layer-item.multi-selected {
+  background: #101a29;
+  border-color: #2f5a99;
+}
+
+.layer-name-input {
+  flex: 1;
+  min-width: 0;
+  background: #0b0c0e;
+  color: #e4e4e6;
+  border: 1px solid #4f8cff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.layer-name-input:focus {
+  outline: none;
+}
+
+.layer-item .layer-meta {
+  font-size: 11px;
+  color: #8a8a92;
+}
+
+.preview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 28px 16px;
+  background: repeating-conic-gradient(#19191c 0% 25%, #0b0c0e 0% 50%) 50% / 24px 24px;
+  overflow: auto;
+}
+
+/* These wrap the two modes' artboards purely so JS can show/hide one at a time —
+   `contents` keeps their children direct participants in .preview's flex layout,
+   same as if the wrapper div weren't there. */
+#circleModePreview,
+#straightModePreview {
+  display: contents;
+}
+
+.artboard-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.artboard-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #d5d5da;
+  text-align: center;
+}
+
+.artboard-size {
+  color: #8fb8f0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.artboard-disclaimer {
+  color: #aeaeb6;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+}
+
+.size-estimate {
+  color: #5a8fd6;
+  margin-top: 14px; /* -6px original, +40px lower, -20px back up */
+}
+
+/* Alt+scroll zoom multiplies the responsive base size rather than replacing it with a
+   fixed pixel value — that way the artboard still tracks the window when it's resized,
+   at whatever zoom level is currently set. --ring-zoom is written on :root by the wheel
+   handler; the fallback keeps this correct before anything has touched it. */
+svg#canvas {
+  width: calc(min(70vh, 70vw) * var(--ring-zoom, 1));
+  height: calc(min(70vh, 70vw) * var(--ring-zoom, 1));
+  overflow: visible;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: transparent;
+}
+
+.layer-hit {
+  cursor: pointer;
+}
+
+svg.straight-canvas {
+  /* Not sized here at all — setStraightPreviewScale() sets an explicit px width/height
+     from the viewBox so this strip renders at a FIXED units-per-pixel, the same scale as
+     the Ring editor. Fitting it to a CSS height instead made the scale depend on the
+     project's radius spread, so the same artwork (and the same rough brush texture) came
+     out a different size from one project to the next, and different again from the ring
+     it was unrolled from. It overflows horizontally by design; .preview scrolls to it. */
+  flex-shrink: 0;
+  overflow: visible;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: transparent;
+}
+
+svg.tile-canvas {
+  /* Fit by height and let width overflow/scroll — tile width is user-adjustable and shows 3
+     copies side by side, so fit by height and let width overflow/scroll.
+     --tile-zoom is Straight mode's equivalent of --ring-zoom (Alt + Scroll). */
+  height: calc(min(60vh, 640px) * var(--tile-zoom, 1));
+  width: auto;
+  flex-shrink: 0;
+  overflow: visible;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: transparent;
+}
+
+.shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.shortcuts-table td {
+  padding: 6px 0;
+  border-bottom: 1px solid #1c1d21;
+  color: #c4c4c8;
+}
+
+.shortcuts-table tr:last-child td {
+  border-bottom: none;
+}
+
+.shortcuts-table td:first-child {
+  white-space: nowrap;
+  padding-right: 14px;
+  width: 1%;
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #e4e4e6;
+  background: #1a1b1f;
+  border: 1px solid #2c2d33;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* Fixed to the viewport corner (not absolutely positioned within .preview) so it
+   stays reachable even when a wide/tall design pushes the artboard into scrolling —
+   same segmented-button look as .mode-switch/.mode-btn. */
+.preview-fps-control {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #16171a;
+  border: 1px solid #202127;
+  border-radius: 8px;
+  padding: 4px;
+  font-size: 11px;
+  color: #7a7a82;
+  z-index: 5;
+}
+
+.preview-fps-control span {
+  padding: 0 4px 0 6px;
+}
+
+.preview-fps-btn {
+  padding: 4px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.preview-fps-btn:hover {
+  color: #e4e4e6;
+}
+
+.preview-fps-btn.active {
+  background: #2c3e63;
+  color: #f2f2f3;
+}
+
+/* Bottom-LEFT of the preview area, mirroring .preview-fps-control on the right. Fixed to
+   the viewport rather than placed inside .preview, because .preview scrolls and these
+   readouts need to stay put. The left offset tracks the two sidebars (320px + 300px plus
+   their 1px right borders) — if either sidebar width changes, this needs to change too. */
+.viewport-tools {
+  position: fixed;
+  left: calc(320px + 300px + 2px + 16px);
+  bottom: 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  z-index: 5;
+}
+
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #16171a;
+  border: 1px solid #202127;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #7a7a82;
+}
+
+.zoom-unit {
+  color: #7a7a82;
+}
+
+.viewport-tools .num-input {
+  width: 54px;
+}
+
+/* Second line of the Ring editor's label: the current on-screen size, dimmer than the
+   export size above it so the two don't compete. Matches .artboard-disclaimer. */
+.artboard-onscreen {
+  color: #aeaeb6;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+}
+
