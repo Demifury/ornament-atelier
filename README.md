@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=57`, `style.css?v=36`); bump those
+`index.html` cache-busts with query strings (`app.js?v=62`, `style.css?v=38`); bump those
 when changing either file.
 
 ## Two modes
@@ -38,10 +38,3 @@ shape, and export (images or separate layers).
 export.
 
 Both modes share the layers, roughness and mask panels.
-
-## Known issues
-
-- When the unrolled strip (or the Ring editor at high zoom) is wider than the preview pane,
-  its left end can't be scrolled to: `.preview` centres its children with
-  `align-items: center`, which overflows both sides, and a scroll container can't reach
-  negative overflow.

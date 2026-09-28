@@ -652,28 +652,34 @@ input[type="file"] {
   padding: 28px 16px;
   background: repeating-conic-gradient(#19191c 0% 25%, #0b0c0e 0% 50%) 50% / 24px 24px;
   overflow: auto;
+  /* Always reserve the vertical scrollbar's width. Otherwise the bar appearing (e.g. when
+     an edit makes scroll room) narrows the pane and re-centres everything by half its
+     width — the ring would jump sideways while the code was holding it still. */
+  scrollbar-gutter: stable;
 }
 
-/* Pasteboard: a screen's worth of empty scroll room above and below the artboards, the
-   way a design tool lets you pan past the edge of the page. Without it, whenever the
-   whole composition fit on screen there was no scroll offset at all — so when the
-   unrolled strip above the Ring editor grew or shrank (editing a radius changes its
-   height), nothing could absorb the reflow and the ring jumped on screen. With room on
-   both sides, syncStraightPreviewToRing() and the zoom anchoring can always take the
-   shift back out of the scroll offset, at any zoom. JS scrolls to the artboards on load
-   and on mode switch (homePreviewScroll), so the view doesn't open on empty pasteboard. */
-.preview::before,
-.preview::after {
-  content: "";
-  flex: 0 0 100vh;
-}
+/* One box per mode around its artboards (JS shows one at a time). It's as wide as the
+   widest artboard and never narrower than the pane, and the artboards are centred inside
+   it — so the unrolled strip and the Ring editor stay centred on each other, and a strip
+   wider than the pane overflows only to the right, where it can be scrolled to. Centring
+   the artboards straight in .preview instead (they used to be direct flex items) split any
+   overflow across both sides, and a scroll container can't reach the left half of that.
+   JS opens the view scrolled to the middle (resetPreviewView), so the ring still starts
+   centred.
 
-/* These wrap the two modes' artboards purely so JS can show/hide one at a time —
-   `contents` keeps their children direct participants in .preview's flex layout,
-   same as if the wrapper div weren't there. */
+   The margins are scroll room made on demand (scrollPreviewBy in app.js): 0 at rest, and
+   only ever as big as a move needs to hold the Ring editor still. */
 #circleModePreview,
 #straightModePreview {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: max-content;
+  min-width: 100%;
+  margin: var(--slack-top, 0px) var(--slack-right, 0px) var(--slack-bottom, 0px) var(--slack-left, 0px);
 }
 
 .artboard-block {
