@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=39" />
+<link rel="stylesheet" href="style.css?v=40" />
 </head>
 <body>
 <div class="app">
@@ -46,9 +46,45 @@
         </label>
       </section>
 
-      <section class="panel" id="motifPanel">
-        <h2>Asset</h2>
+      <section class="panel hidden" id="textPanel">
+        <h2>Text</h2>
         <label class="field">
+          <span>Text</span>
+          <textarea id="textContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea>
+        </label>
+        <label class="field">
+          <span>Font</span>
+          <select id="textFont"></select>
+        </label>
+        <div class="btn-row">
+          <button type="button" id="textLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
+          <button type="button" id="textInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
+        </div>
+        <p class="hint font-status"></p>
+        <label class="field row-field">
+          <span>Colour</span>
+          <input type="color" id="textColor" />
+        </label>
+        <label class="field">
+          <span>Letter spacing (% of font size)</span>
+          <div class="range-row">
+            <input type="range" id="textLetterSpacing" min="-20" max="100" step="1" />
+            <input type="text" inputmode="decimal" id="textLetterSpacingNum" min="-20" max="100" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Line alignment</span>
+          <select id="textAlign">
+            <option value="left">Left</option>
+            <option value="center">Centre</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="panel" id="motifPanel">
+        <h2 id="motifPanelTitle">Asset</h2>
+        <label class="field" id="motifUploadField">
           <span>Upload bitmap</span>
           <input type="file" id="motifUpload" accept="image/*" />
         </label>
@@ -420,9 +456,45 @@
         </label>
       </section>
 
-      <section class="panel" id="smMotifPanel">
-        <h2>Asset</h2>
+      <section class="panel hidden" id="smTextPanel">
+        <h2>Text</h2>
         <label class="field">
+          <span>Text</span>
+          <textarea id="smTextContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea>
+        </label>
+        <label class="field">
+          <span>Font</span>
+          <select id="smTextFont"></select>
+        </label>
+        <div class="btn-row">
+          <button type="button" id="smTextLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
+          <button type="button" id="smTextInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
+        </div>
+        <p class="hint font-status"></p>
+        <label class="field row-field">
+          <span>Colour</span>
+          <input type="color" id="smTextColor" />
+        </label>
+        <label class="field">
+          <span>Letter spacing (% of font size)</span>
+          <div class="range-row">
+            <input type="range" id="smTextLetterSpacing" min="-20" max="100" step="1" />
+            <input type="text" inputmode="decimal" id="smTextLetterSpacingNum" min="-20" max="100" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Line alignment</span>
+          <select id="smTextAlign">
+            <option value="left">Left</option>
+            <option value="center">Centre</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="panel" id="smMotifPanel">
+        <h2 id="smMotifPanelTitle">Asset</h2>
+        <label class="field" id="smMotifUploadField">
           <span>Upload bitmap</span>
           <input type="file" id="smMotifUpload" accept="image/*" />
         </label>
@@ -729,6 +801,7 @@
         <div class="btn-row">
           <button id="addLineBtn" title="Add a line layer">+ Line</button>
           <button id="addShapeBtn" title="Add a shape layer">+ Shape</button>
+          <button id="addTextBtn" title="Add a text layer">+ Text</button>
         </div>
         <div class="btn-row">
           <button id="duplicateLayerBtn" title="Duplicate selected layer">Duplicate</button>
@@ -753,6 +826,7 @@
             <option value="motif">Asset</option>
             <option value="line">Line</option>
             <option value="shape">Shape</option>
+            <option value="text">Text</option>
           </select>
         </label>
         <label class="field" id="layerOpacityField">
@@ -838,6 +912,7 @@
         <div class="btn-row">
           <button id="smAddLineBtn" title="Add a line layer">+ Line</button>
           <button id="smAddShapeBtn" title="Add a shape layer">+ Shape</button>
+          <button id="smAddTextBtn" title="Add a text layer">+ Text</button>
         </div>
         <div class="btn-row">
           <button id="smDuplicateLayerBtn" title="Duplicate selected layer">Duplicate</button>
@@ -862,6 +937,7 @@
             <option value="motif">Asset</option>
             <option value="line">Line</option>
             <option value="shape">Shape</option>
+            <option value="text">Text</option>
           </select>
         </label>
         <label class="field" id="smLayerOpacityField">
@@ -971,6 +1047,19 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=63"></script>
+<input type="file" id="fontFileInput" accept=".ttf,.otf,.woff,.woff2" hidden />
+<div id="localFontsDialog" class="font-dialog" hidden>
+  <div class="font-dialog-card" role="dialog" aria-modal="true" aria-label="Installed fonts">
+    <div class="font-dialog-head">
+      <strong>Installed fonts</strong>
+      <button type="button" id="localFontsClose">Close</button>
+    </div>
+    <input type="search" id="localFontsSearch" placeholder="Search fonts…" autocomplete="off" />
+    <div id="localFontsList" class="font-dialog-list"></div>
+    <p class="hint" id="localFontsCount"></p>
+  </div>
+</div>
+
+<script src="app.js?v=64"></script>
 </body>
 </html>

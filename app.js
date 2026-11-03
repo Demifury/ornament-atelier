@@ -124,6 +124,338 @@ function createShapeLayer(name, radius) {
   };
 }
 
+function createTextLayer(name, radius) {
+  return {
+    id: nextLayerId++,
+    type: "text",
+    name,
+    radius,
+    visible: true,
+    ...textDefaults(),
+    // One bent copy reads as lettering around the ring; "size" is the width of the whole
+    // text block, exactly like an asset's width.
+    size: 800,
+    count: 1,
+    startAngle: 0,
+    followRing: true,
+    rotation: 0,
+    bend: 100,
+    flip: false,
+    flipHorizontal: false,
+    alternateFlip: false,
+    animSpeed: 0,
+    ...placementDefaults(),
+  };
+}
+
+// --- Fonts & text rasterising (Text layers, both modes) ---
+// A Text layer is an asset layer whose bitmap is drawn from a string: the text is
+// rasterised onto an offscreen canvas and handed to the same motif pipeline (copies,
+// bend, flips, animation, exports). The bitmap is DERIVED data — it lives on the layer
+// as non-enumerable properties (imageDataUrl, imageEl, naturalWidth/Height, rasterKey),
+// so JSON cloning (undo snapshots, duplicates, project files) never carries it and it is
+// simply rebuilt from the text parameters.
+//
+// Fonts live in one registry shared by both modes. A layer stores only fontId; the bytes
+// (a data URL) are kept once here, embedded into a project file only when used, and
+// registered with the FontFace API so the canvas can draw with them.
+const BUILTIN_FONT_ID = "caudex";
+const MAX_FONT_BYTES = 12 * 1024 * 1024; // a project embeds its fonts, so refuse monsters
+const fontRegistry = new Map(); // id -> { id, name, dataUrl, family, status, ready }
+
+function textDefaults() {
+  return { text: "ORNAMENT", fontId: BUILTIN_FONT_ID, textColor: "#e0e0e0", letterSpacing: 0, textAlign: "center" };
+}
+
+// 53-bit string hash (cyrb53): content-addressed font ids mean the same font file is the
+// same id in every session, so projects never clash with whatever is already loaded.
+function hashString(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+function registerFont({ id, name, dataUrl = null, url = null }) {
+  const existing = fontRegistry.get(id);
+  if (existing) return existing;
+  const entry = { id, name, dataUrl, family: `oa-font-${id}`, status: "loading", ready: null };
+  fontRegistry.set(id, entry);
+  entry.ready = (async () => {
+    try {
+      const source = dataUrl ? await (await fetch(dataUrl)).arrayBuffer() : `url(${url})`;
+      const face = new FontFace(entry.family, source);
+      await face.load();
+      document.fonts.add(face);
+      entry.status = "ready";
+    } catch (err) {
+      entry.status = "error";
+      fontRegistry.delete(id); // unusable file: never offered, never saved
+    }
+    fontsChanged();
+    return entry;
+  })();
+  return entry;
+}
+
+registerFont({ id: BUILTIN_FONT_ID, name: "Caudex", url: "fonts/Caudex-Regular.ttf" });
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function addFontFromBlob(name, blob) {
+  if (blob.size > MAX_FONT_BYTES) throw new Error("That font file is too large (limit 12 MB).");
+  const dataUrl = await blobToDataUrl(blob);
+  const entry = registerFont({ id: "f" + hashString(dataUrl), name, dataUrl });
+  await entry.ready;
+  if (entry.status !== "ready") throw new Error("That file couldn't be used as a font.");
+  return entry;
+}
+
+// The font a layer actually draws with: its own once loaded; nothing yet while it is
+// still loading (the layer re-renders when it arrives); the built-in one if the id is
+// unknown (a project whose embedded font failed to load).
+function resolveFont(fontId) {
+  const entry = fontRegistry.get(fontId);
+  if (entry) return entry.status === "ready" ? entry : null;
+  const fallback = fontRegistry.get(BUILTIN_FONT_ID);
+  return fallback && fallback.status === "ready" ? fallback : null;
+}
+
+function allTextLayers() {
+  return [...state.layers, ...smState.layers].filter((l) => l.type === "text");
+}
+
+function fontsChanged() {
+  populateFontSelects();
+  if (allTextLayers().length > 0) {
+    refreshControls();
+    smRefreshControls();
+    render();
+    smRender();
+  }
+}
+
+function populateFontSelects() {
+  const fonts = [...fontRegistry.values()].filter((f) => f.status === "ready");
+  fonts.sort((a, b) => (a.id === BUILTIN_FONT_ID ? -1 : b.id === BUILTIN_FONT_ID ? 1 : a.name.localeCompare(b.name)));
+  for (const id of ["textFont", "smTextFont"]) {
+    const select = document.getElementById(id);
+    if (!select) continue;
+    select.innerHTML = "";
+    const mixed = document.createElement("option");
+    mixed.value = "";
+    mixed.hidden = true;
+    mixed.disabled = true;
+    mixed.textContent = "–";
+    select.appendChild(mixed);
+    for (const f of fonts) {
+      const opt = document.createElement("option");
+      opt.value = f.id;
+      opt.textContent = f.id === BUILTIN_FONT_ID ? `${f.name} (built-in)` : f.name;
+      select.appendChild(opt);
+    }
+  }
+}
+
+// Fonts used by a mode's text layers, minus the built-in one: what a project embeds.
+function collectProjectFonts(layers) {
+  const out = {};
+  for (const l of layers) {
+    if (l.type !== "text" || l.fontId === BUILTIN_FONT_ID) continue;
+    const f = fontRegistry.get(l.fontId);
+    if (f && f.dataUrl) out[f.id] = { name: f.name, dataUrl: f.dataUrl };
+  }
+  return out;
+}
+
+// Registers a project's embedded fonts, waits until each has loaded, and rewrites the
+// layers' fontIds to the registry's canonical ids. Resolves before anything is rasterised.
+async function restoreProjectFonts(fonts, layers) {
+  if (!fonts || typeof fonts !== "object") return;
+  const idMap = {};
+  const entries = [];
+  for (const [oldId, f] of Object.entries(fonts)) {
+    if (!f || typeof f.dataUrl !== "string") continue;
+    const entry = registerFont({ id: "f" + hashString(f.dataUrl), name: String(f.name || "Font"), dataUrl: f.dataUrl });
+    idMap[oldId] = entry.id;
+    entries.push(entry);
+  }
+  await Promise.all(entries.map((e) => e.ready));
+  for (const l of layers) if (l.type === "text" && idMap[l.fontId]) l.fontId = idMap[l.fontId];
+}
+
+// --- Rasterising ---
+const textRasterCache = new Map(); // key -> { key, dataUrl, canvas, w, h }  (insertion order = age)
+const TEXT_RASTER_MAX_PX = 4096;
+const TEXT_CACHE_MAX_PIXELS = 48e6;
+const textRasterTimers = new WeakMap();
+
+// Bitmap width: ~2x the width the text is displayed at (so a full-size export stays
+// crisp), rounded up to a multiple of 128 so dragging Size doesn't redo it every tick.
+function textRasterWidth(layer) {
+  return Math.min(TEXT_RASTER_MAX_PX, Math.max(128, Math.ceil(((layer.size || 1) * 2) / 128) * 128));
+}
+
+function textRasterKey(layer) {
+  const font = resolveFont(layer.fontId);
+  return [layer.text ?? "", font ? font.id : "", layer.textColor, layer.letterSpacing || 0, layer.textAlign || "center", textRasterWidth(layer)].join("\u0001");
+}
+
+function rasterizeText(layer, key, font) {
+  const REF = 200; // layout is measured and drawn at this size, then scaled to fit
+  const lines = String(layer.text ?? "").split(/\r?\n/);
+  if (lines.every((l) => l.trim() === "")) return { key, dataUrl: null, canvas: null, w: 0, h: 0 };
+  const spacing = (((layer.letterSpacing || 0) / 100) * REF);
+  const align = layer.textAlign || "center";
+  const fontCss = `${REF}px "${font.family}"`;
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = fontCss;
+  const native = "letterSpacing" in probe;
+  if (native) probe.letterSpacing = spacing + "px";
+
+  const measure = (line) => {
+    if (!line) return { adv: 0, l: 0, r: 0, asc: 0, desc: 0 };
+    if (native) {
+      const t = probe.measureText(line);
+      return { adv: t.width - spacing, l: t.actualBoundingBoxLeft, r: t.actualBoundingBoxRight, asc: t.actualBoundingBoxAscent, desc: t.actualBoundingBoxDescent };
+    }
+    let x = 0, l = 0, r = 0, asc = 0, desc = 0;
+    [...line].forEach((ch, i) => {
+      const t = probe.measureText(ch);
+      if (i === 0) l = t.actualBoundingBoxLeft;
+      r = x + t.actualBoundingBoxRight;
+      asc = Math.max(asc, t.actualBoundingBoxAscent);
+      desc = Math.max(desc, t.actualBoundingBoxDescent);
+      x += t.width + spacing;
+    });
+    return { adv: x - spacing, l, r, asc, desc };
+  };
+
+  const LH = REF * 1.2;
+  const info = lines.map(measure);
+  const maxAdv = Math.max(...info.map((i) => i.adv));
+  const xs = info.map((i) => (align === "left" ? 0 : align === "right" ? maxAdv - i.adv : (maxAdv - i.adv) / 2));
+  let minX = Infinity, maxX = -Infinity;
+  info.forEach((i, k) => {
+    if (!lines[k]) return;
+    minX = Math.min(minX, xs[k] - i.l);
+    maxX = Math.max(maxX, xs[k] + i.r);
+  });
+  const top = -(lines[0] ? info[0].asc : REF * 0.7);
+  const last = info.length - 1;
+  const bottom = last * LH + (lines[last] ? info[last].desc : 0);
+  const pad = REF * 0.04;
+  const boxW = Math.max(1, maxX - minX + 2 * pad);
+  const boxH = Math.max(1, bottom - top + 2 * pad);
+  let scale = textRasterWidth(layer) / boxW;
+  if (boxH * scale > TEXT_RASTER_MAX_PX) scale = TEXT_RASTER_MAX_PX / boxH;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(boxW * scale));
+  canvas.height = Math.max(1, Math.ceil(boxH * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(scale, 0, 0, scale, -(minX - pad) * scale, -(top - pad) * scale);
+  ctx.font = fontCss;
+  if (native) ctx.letterSpacing = spacing + "px";
+  ctx.fillStyle = layer.textColor || "#e0e0e0";
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  lines.forEach((line, k) => {
+    if (!line) return;
+    if (native) {
+      ctx.fillText(line, xs[k], k * LH);
+    } else {
+      let x = xs[k];
+      for (const ch of line) {
+        ctx.fillText(ch, x, k * LH);
+        x += ctx.measureText(ch).width + spacing;
+      }
+    }
+  });
+  return { key, dataUrl: canvas.toDataURL("image/png"), canvas, w: canvas.width, h: canvas.height };
+}
+
+function setLayerRaster(layer, r) {
+  const values = {
+    imageDataUrl: r.dataUrl,
+    imageEl: r.canvas,
+    naturalWidth: r.w,
+    naturalHeight: r.h,
+    rasterKey: r.key,
+  };
+  for (const [k, v] of Object.entries(values)) {
+    Object.defineProperty(layer, k, { value: v, writable: true, enumerable: false, configurable: true });
+  }
+  layer.bendCache = null;
+  layer.bendCacheFlipped = null;
+}
+
+function cacheTextRaster(r) {
+  textRasterCache.set(r.key, r);
+  let total = 0;
+  for (const v of textRasterCache.values()) total += v.w * v.h;
+  for (const k of textRasterCache.keys()) {
+    if (total <= TEXT_CACHE_MAX_PIXELS || textRasterCache.size <= 1) break;
+    const old = textRasterCache.get(k);
+    total -= old.w * old.h;
+    textRasterCache.delete(k);
+  }
+}
+
+function rerenderLayerMode(layer) {
+  if (state.layers.includes(layer)) render();
+  else if (smState.layers.includes(layer)) smRender();
+}
+
+// Brings a text layer's bitmap up to date with its parameters. The first bitmap (and
+// anything already cached, e.g. after undo or on a duplicate) is applied at once; later
+// edits keep showing the previous bitmap until typing pauses, then re-rasterise.
+// `immediate` skips that wait — used before exports so they never capture a stale bitmap.
+function ensureTextRaster(layer, immediate = false) {
+  const key = textRasterKey(layer);
+  if (layer.rasterKey === key) return;
+  const cached = textRasterCache.get(key);
+  if (cached) {
+    setLayerRaster(layer, cached);
+    return;
+  }
+  const font = resolveFont(layer.fontId);
+  if (!font) return; // font still loading; fontsChanged() re-renders when it arrives
+  if (!immediate && layer.rasterKey !== undefined) {
+    clearTimeout(textRasterTimers.get(layer));
+    textRasterTimers.set(layer, setTimeout(() => {
+      ensureTextRaster(layer, true);
+      rerenderLayerMode(layer);
+    }, 150));
+    return;
+  }
+  const r = rasterizeText(layer, key, font);
+  cacheTextRaster(r);
+  setLayerRaster(layer, r);
+}
+
+function flushTextRasters() {
+  for (const l of allTextLayers()) ensureTextRaster(l, true);
+}
+
+// Short text snippet shown next to a text layer's name in the layer list.
+function textSnippet(layer) {
+  const t = String(layer.text ?? "").replace(/\s+/g, " ").trim();
+  return t.length > 24 ? t.slice(0, 23) + "…" : t;
+}
+
 function getActiveLayer() {
   return state.layers.find((l) => l.id === state.activeLayerId) || null;
 }
@@ -153,9 +485,11 @@ const CONTROL_PROPERTY = {
   shapeStrokeWidth: "strokeWidth", shapeStrokeColor: "strokeColor",
   shapeCount: "count", shapeStartAngle: "startAngle",
   shapeFlip: "flip", shapeFlipHorizontal: "flipHorizontal", shapeAlternateFlip: "alternateFlip", shapeFlipOffset: "flipOffset",
+  textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign",
   placeOriginX: "originX", placeOriginY: "originY", placeMirror: "mirror",
   placeArcStart: "arcStart", placeArcSweep: "arcSweep", placeGapCount: "gapCount", placeGapSize: "gapSize",
 
+  smTextFont: "fontId", smTextColor: "textColor", smTextLetterSpacing: "letterSpacing", smTextAlign: "textAlign",
   smLayerOpacity: "opacity", smLayerAnimSpeed: "animSpeed",
   smGuidePosition: "position", smGuideStrokeWidth: "strokeWidth", smGuideStrokeColor: "strokeColor",
   smMotifPosition: "position", smMotifSize: "size", smMotifCount: "count", smMotifStartOffset: "startOffset",
@@ -242,7 +576,7 @@ function markMixedFields(layers) {
 // versa for "guide"). Ring/Guide have none of Motif/Line/Shape's "distributed copies"
 // fields (count, start angle/offset, rotation, follow-ring) — converting into or out of
 // them just carries over whatever the two types both have.
-const CONVERTIBLE_TYPES = ["ring", "guide", "motif", "line", "shape"];
+const CONVERTIBLE_TYPES = ["ring", "guide", "motif", "line", "shape", "text"];
 
 // Builds a fresh layer of newType (so every field the new type needs gets its normal
 // default) and carries over only the fields the two types actually share — checking
@@ -250,14 +584,35 @@ const CONVERTIBLE_TYPES = ["ring", "guide", "motif", "line", "shape"];
 // lets Ring (missing count/startAngle/rotation/followRing) fall out of this for free,
 // rather than needing its own special-cased branch.
 function convertLayerType(layer, newType) {
-  const factories = { ring: createRingLayer, motif: createMotifLayer, line: createLineLayer, shape: createShapeLayer };
+  const factories = { ring: createRingLayer, motif: createMotifLayer, line: createLineLayer, shape: createShapeLayer, text: createTextLayer };
   const fresh = factories[newType](layer.name, layer.radius);
   fresh.id = layer.id;
   for (const key of ["count", "startAngle", "rotation", "followRing", "animSpeed", "visible", "flip", "flipHorizontal", "alternateFlip", "flipOffset", ...PLACEMENT_KEYS]) {
     if (key in fresh && key in layer) fresh[key] = layer[key];
   }
+  carryMotifLook(layer, fresh);
   if (layer.opacity != null) fresh.opacity = layer.opacity;
   return fresh;
+}
+
+// Asset <-> Text: same width and bend, so the conversion looks the same. Text -> Asset
+// bakes the current bitmap into a normal asset layer.
+function carryMotifLook(from, to) {
+  const fromMotif = from.type === "motif" || from.type === "text";
+  const toMotif = to.type === "motif" || to.type === "text";
+  if (!fromMotif || !toMotif) return;
+  to.size = from.size;
+  if ("bend" in from) to.bend = from.bend;
+  if (from.type === "text" && to.type === "motif") {
+    ensureTextRaster(from, true);
+    if (from.imageDataUrl) {
+      to.imageDataUrl = from.imageDataUrl;
+      to.imageName = textSnippet(from) || "text";
+      to.naturalWidth = from.naturalWidth;
+      to.naturalHeight = from.naturalHeight;
+      to.imageEl = from.imageEl;
+    }
+  }
 }
 
 // --- History (undo) ---
@@ -397,6 +752,16 @@ function addShapeLayer() {
   render();
 }
 
+function addTextLayer() {
+  pushHistory();
+  const layer = createTextLayer(`Text ${nextLayerId}`, nextDefaultRadius());
+  state.layers.push(layer);
+  state.activeLayerId = layer.id;
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
 function duplicateLayer() {
   const active = getActiveLayer();
   if (!active) return;
@@ -405,6 +770,12 @@ function duplicateLayer() {
   clone.id = nextLayerId++;
   clone.name = active.name + " copy";
   clone.imageEl = active.imageEl; // JSON clone can't carry the loaded Image object
+  if (active.type === "text") {
+    // derived bitmap: rebuilt (from the raster cache) on first render, not copied
+    delete clone.imageEl;
+    delete clone.bendCache;
+    delete clone.bendCacheFlipped;
+  }
   const idx = state.layers.findIndex((l) => l.id === active.id);
   state.layers.splice(idx + 1, 0, clone);
   state.activeLayerId = clone.id;
@@ -585,6 +956,9 @@ function layerDisplayName(layer) {
   if (layer.type === "motif" && layer.imageName) {
     return `${layer.name} (${layer.imageName})`;
   }
+  if (layer.type === "text" && textSnippet(layer)) {
+    return `${layer.name} (${textSnippet(layer)})`;
+  }
   return layer.name;
 }
 
@@ -622,6 +996,9 @@ function updateLayerListMeta() {
     const layer = state.layers.find((l) => l.id === Number(el.dataset.layerId));
     const meta = el.querySelector(".layer-meta");
     if (layer && meta) meta.textContent = layerMetaText(layer);
+    // A text layer's name carries its text, which changes while typing.
+    const label = el.querySelector(".layer-item-main > span");
+    if (layer && label && layer.type === "text") label.textContent = layerDisplayName(layer);
   });
 }
 
@@ -646,6 +1023,7 @@ function refreshControls() {
   const ringPanel = document.getElementById("ringPanel");
   const motifPanel = document.getElementById("motifPanel");
   const linePanel = document.getElementById("linePanel");
+  const textPanel = document.getElementById("textPanel");
 
   const shapePanel = document.getElementById("shapePanel");
 
@@ -672,7 +1050,7 @@ function refreshControls() {
 
   const placementPanel = document.getElementById("placementPanel");
   if (!active) {
-    [ringPanel, motifPanel, linePanel, shapePanel, placementPanel].forEach((p) => p.classList.add("disabled", "hidden"));
+    [ringPanel, motifPanel, linePanel, shapePanel, textPanel, placementPanel].forEach((p) => p.classList.add("disabled", "hidden"));
     return;
   }
 
@@ -686,9 +1064,12 @@ function refreshControls() {
   setFieldValue("placeGapCount", place.gapCount);
   setFieldValue("placeGapSize", place.gapSize);
 
-  [ringPanel, motifPanel, linePanel, shapePanel].forEach((p) => p.classList.remove("disabled"));
+  [ringPanel, motifPanel, linePanel, shapePanel, textPanel].forEach((p) => p.classList.remove("disabled"));
+  const isText = active.type === "text";
   ringPanel.classList.toggle("hidden", active.type !== "ring");
-  motifPanel.classList.toggle("hidden", active.type !== "motif");
+  // A Text layer uses the Asset panel for everything except the bitmap itself.
+  motifPanel.classList.toggle("hidden", active.type !== "motif" && !isText);
+  textPanel.classList.toggle("hidden", !isText);
   linePanel.classList.toggle("hidden", active.type !== "line");
   shapePanel.classList.toggle("hidden", active.type !== "shape");
 
@@ -696,10 +1077,20 @@ function refreshControls() {
     setFieldValue("ringRadius", active.radius);
     setFieldValue("ringStrokeWidth", active.strokeWidth);
     document.getElementById("ringStrokeColor").value = active.strokeColor;
-  } else if (active.type === "motif") {
-    const hasImage = !!active.imageDataUrl;
-    document.getElementById("motifNoImageHint").style.display = hasImage ? "none" : "";
+  } else if (active.type === "motif" || isText) {
+    const hasImage = !!active.imageDataUrl && !isText;
+    document.getElementById("motifUploadField").style.display = isText ? "none" : "";
+    document.getElementById("motifPanelTitle").textContent = isText ? "Layout" : "Asset";
+    document.getElementById("motifNoImageHint").style.display = hasImage || isText ? "none" : "";
     document.getElementById("motifPreviewWrap").style.display = hasImage ? "" : "none";
+    if (isText) {
+      const ta = document.getElementById("textContent");
+      if (ta.value !== active.text) ta.value = active.text;
+      document.getElementById("textFont").value = active.fontId;
+      document.getElementById("textColor").value = active.textColor;
+      setFieldValue("textLetterSpacing", active.letterSpacing || 0);
+      document.getElementById("textAlign").value = active.textAlign || "center";
+    }
     if (hasImage) {
       document.getElementById("motifPreviewImg").src = active.imageDataUrl;
       document.getElementById("motifFileName").textContent = active.imageName || "Image loaded";
@@ -923,6 +1314,25 @@ bindControl("shapeFlipHorizontal", (l, el) => (l.flipHorizontal = el.checked));
 bindControl("shapeAlternateFlip", (l, el) => (l.alternateFlip = el.checked));
 bindControl("shapeFlipOffset", (l, el) => (l.flipOffset = Number(el.value)));
 
+// Text layers (the layout fields reuse the Asset panel's motif* controls above).
+bindControl("textContent", (l, el) => (l.text = el.value));
+bindControl("textFont", (l, el) => {
+  if (el.value) l.fontId = el.value;
+});
+bindControl("textColor", (l, el) => (l.textColor = el.value));
+bindControl("textLetterSpacing", (l, el) => (l.letterSpacing = Number(el.value)));
+bindControl("textAlign", (l, el) => (l.textAlign = el.value));
+// bindControl closes an undo gesture on 'change', which for a textarea only fires on
+// blur — so a whole typing session would be ONE undo step. Close it after a pause too:
+// one undo entry per burst of typing.
+{
+  let timer = null;
+  document.getElementById("textContent").addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => (historyGestureOpen = false), 700);
+  });
+}
+
 // Shared by file-upload and the asset-picker modal — both end up with a data URL and
 // a display name, then need the identical "install it on this motif layer" steps.
 function applyMotifImageToLayer(layer, dataUrl, filename, onDone) {
@@ -960,6 +1370,7 @@ document.getElementById("addRingBtn").addEventListener("click", addRingLayer);
 document.getElementById("addMotifBtn").addEventListener("click", addMotifLayer);
 document.getElementById("addLineBtn").addEventListener("click", addLineLayer);
 document.getElementById("addShapeBtn").addEventListener("click", addShapeLayer);
+document.getElementById("addTextBtn").addEventListener("click", addTextLayer);
 document.getElementById("duplicateLayerBtn").addEventListener("click", duplicateLayer);
 document.getElementById("renameLayerBtn").addEventListener("click", () => {
   if (state.activeLayerId != null) startRename(state.activeLayerId);
@@ -1311,6 +1722,10 @@ function radiusToStraightY(radius, maxR, padY) {
 // right at the angle=0 seam (or at the min/max radius) don't get clipped at the edge.
 function layerHalfExtent(layer) {
   if (layer.type === "motif") return layer.size * 0.75;
+  if (layer.type === "text") {
+    const aspect = layer.naturalWidth ? layer.naturalHeight / layer.naturalWidth : 1;
+    return Math.max(1, aspect) * layer.size * 0.75;
+  }
   if (layer.type === "shape") {
     const sizeY = layer.sizeY != null ? layer.sizeY : layer.size;
     return Math.max(layer.size, sizeY) * 0.75;
@@ -2259,7 +2674,8 @@ function render() {
 
     if (layer.type === "ring") {
       drawRing(g, layer, state.roughness);
-    } else if (layer.type === "motif") {
+    } else if (layer.type === "motif" || layer.type === "text") {
+      if (layer.type === "text") ensureTextRaster(layer);
       // imageEl can briefly be missing right after loading a saved project — it isn't
       // part of the file (see snapshotLayers) and gets reloaded from imageDataUrl
       // asynchronously, so bend falls back to flat for the instant before that finishes
@@ -2954,7 +3370,8 @@ function renderStraight() {
         line.setAttribute("stroke-width", layer.strokeWidth);
         g.appendChild(line);
       }
-    } else if (layer.type === "motif") {
+    } else if (layer.type === "motif" || layer.type === "text") {
+      if (layer.type === "text") ensureTextRaster(layer);
       // Bend has no meaning without curvature, so the straight view always shows the
       // flat artwork even for a bent layer.
       drawMotifFlat(g, layer, distributeStraight(layer, maxR, padY, centerX));
@@ -3013,6 +3430,7 @@ function getExportSvgString(svgId) {
 // for exports that read the LIVE DOM (the ring/straight artboards); Straight mode's tile
 // export builds its own detached SVG, so it just needs the clock frozen while it does.
 function withFrozenAnimation(capture, renderFn) {
+  flushTextRasters();
   const previous = animTimeOverride;
   animTimeOverride = 0;
   try {
@@ -3268,6 +3686,7 @@ async function exportLayersZip() {
     return;
   }
 
+  flushTextRasters();
   animTimeOverride = 0;
   try {
     const files = [];
@@ -3472,6 +3891,25 @@ function smCreateMotifLayer(name) {
   };
 }
 
+function smCreateTextLayer(name) {
+  return {
+    id: smNextLayerId++,
+    type: "text",
+    name,
+    position: 0,
+    visible: true,
+    ...textDefaults(),
+    size: 300,
+    count: 2,
+    startOffset: 0,
+    rotation: 0,
+    flip: false,
+    flipHorizontal: false,
+    alternateFlip: false,
+    animSpeed: 0,
+  };
+}
+
 function smCreateLineLayer(name) {
   return {
     id: smNextLayerId++,
@@ -3522,12 +3960,13 @@ function smGetActiveLayer() {
 // Same reasoning as convertLayerType (circle mode) — Guide is missing
 // count/startOffset/rotation, same as Ring there, and falls out of the loop the same way.
 function smConvertLayerType(layer, newType) {
-  const factories = { guide: smCreateGuideLayer, motif: smCreateMotifLayer, line: smCreateLineLayer, shape: smCreateShapeLayer };
+  const factories = { guide: smCreateGuideLayer, motif: smCreateMotifLayer, line: smCreateLineLayer, shape: smCreateShapeLayer, text: smCreateTextLayer };
   const fresh = factories[newType](layer.name);
   fresh.id = layer.id;
   for (const key of ["position", "count", "startOffset", "rotation", "animSpeed", "visible", "flip", "flipHorizontal", "alternateFlip", "flipOffset"]) {
     if (key in fresh && key in layer) fresh[key] = layer[key];
   }
+  carryMotifLook(layer, fresh);
   if (layer.opacity != null) fresh.opacity = layer.opacity;
   return fresh;
 }
@@ -3636,6 +4075,16 @@ function smAddMotifLayer() {
   smRender();
 }
 
+function smAddTextLayer() {
+  smPushHistory();
+  const layer = smCreateTextLayer(`Text ${smNextLayerId}`);
+  smState.layers.push(layer);
+  smState.activeLayerId = layer.id;
+  smRenderLayerList();
+  smRefreshControls();
+  smRender();
+}
+
 function smAddLineLayer() {
   smPushHistory();
   const layer = smCreateLineLayer(`Line ${smNextLayerId}`);
@@ -3664,6 +4113,11 @@ function smDuplicateLayer() {
   clone.id = smNextLayerId++;
   clone.name = active.name + " copy";
   clone.imageEl = active.imageEl; // JSON clone can't carry the loaded Image object
+  if (active.type === "text") {
+    delete clone.imageEl;
+    delete clone.bendCache;
+    delete clone.bendCacheFlipped;
+  }
   const idx = smState.layers.findIndex((l) => l.id === active.id);
   smState.layers.splice(idx + 1, 0, clone);
   smState.activeLayerId = clone.id;
@@ -3765,6 +4219,9 @@ function smLayerDisplayName(layer) {
   if (layer.type === "motif" && layer.imageName) {
     return `${layer.name} (${layer.imageName})`;
   }
+  if (layer.type === "text" && textSnippet(layer)) {
+    return `${layer.name} (${textSnippet(layer)})`;
+  }
   return layer.name;
 }
 
@@ -3834,6 +4291,8 @@ function smUpdateLayerListMeta() {
     const layer = smState.layers.find((l) => l.id === Number(el.dataset.layerId));
     const meta = el.querySelector(".layer-meta");
     if (layer && meta) meta.textContent = smLayerTypeLabel(layer);
+    const label = el.querySelector(".layer-item-main > span");
+    if (layer && label && layer.type === "text") label.textContent = smLayerDisplayName(layer);
   });
 }
 
@@ -3937,7 +4396,8 @@ function smRenderInto(svg, width, itemsFor) {
     // has to be authored ~3x smaller in units to land at the same size on screen.
     if (layer.type === "guide") {
       smDrawGuide(g, layer, width, smState.roughness, ROUGH_SCALE_TILE);
-    } else if (layer.type === "motif") {
+    } else if (layer.type === "motif" || layer.type === "text") {
+      if (layer.type === "text") ensureTextRaster(layer);
       drawMotifFlat(g, layer, itemsFor(layer));
     } else if (layer.type === "line") {
       drawLine(g, layer, itemsFor(layer), smState.roughness, ROUGH_SCALE_TILE);
@@ -4020,7 +4480,8 @@ function smRefreshControls() {
   const motifPanel = document.getElementById("smMotifPanel");
   const linePanel = document.getElementById("smLinePanel");
   const shapePanel = document.getElementById("smShapePanel");
-  const panels = [guidePanel, motifPanel, linePanel, shapePanel];
+  const textPanel = document.getElementById("smTextPanel");
+  const panels = [guidePanel, motifPanel, linePanel, shapePanel, textPanel];
 
   document.getElementById("smLayerOpacityField").classList.toggle("disabled", !active);
   smSetFieldValue("smLayerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
@@ -4043,7 +4504,9 @@ function smRefreshControls() {
 
   panels.forEach((p) => p.classList.remove("disabled"));
   guidePanel.classList.toggle("hidden", active.type !== "guide");
-  motifPanel.classList.toggle("hidden", active.type !== "motif");
+  const isText = active.type === "text";
+  motifPanel.classList.toggle("hidden", active.type !== "motif" && !isText);
+  textPanel.classList.toggle("hidden", !isText);
   linePanel.classList.toggle("hidden", active.type !== "line");
   shapePanel.classList.toggle("hidden", active.type !== "shape");
 
@@ -4051,10 +4514,20 @@ function smRefreshControls() {
     smSetFieldValue("smGuidePosition", active.position);
     smSetFieldValue("smGuideStrokeWidth", active.strokeWidth);
     document.getElementById("smGuideStrokeColor").value = active.strokeColor;
-  } else if (active.type === "motif") {
-    const hasImage = !!active.imageDataUrl;
-    document.getElementById("smMotifNoImageHint").style.display = hasImage ? "none" : "";
+  } else if (active.type === "motif" || isText) {
+    const hasImage = !!active.imageDataUrl && !isText;
+    document.getElementById("smMotifUploadField").style.display = isText ? "none" : "";
+    document.getElementById("smMotifPanelTitle").textContent = isText ? "Layout" : "Asset";
+    document.getElementById("smMotifNoImageHint").style.display = hasImage || isText ? "none" : "";
     document.getElementById("smMotifPreviewWrap").style.display = hasImage ? "" : "none";
+    if (isText) {
+      const ta = document.getElementById("smTextContent");
+      if (ta.value !== active.text) ta.value = active.text;
+      document.getElementById("smTextFont").value = active.fontId;
+      document.getElementById("smTextColor").value = active.textColor;
+      smSetFieldValue("smTextLetterSpacing", active.letterSpacing || 0);
+      document.getElementById("smTextAlign").value = active.textAlign || "center";
+    }
     if (hasImage) {
       document.getElementById("smMotifPreviewImg").src = active.imageDataUrl;
       document.getElementById("smMotifFileName").textContent = active.imageName || "Image loaded";
@@ -4215,6 +4688,22 @@ smBindControl("smShapeFlipHorizontal", (l, el) => (l.flipHorizontal = el.checked
 smBindControl("smShapeAlternateFlip", (l, el) => (l.alternateFlip = el.checked));
 smBindControl("smShapeFlipOffset", (l, el) => (l.flipOffset = Number(el.value)));
 
+// Text layers (the layout fields reuse the Asset panel's smMotif* controls above).
+smBindControl("smTextContent", (l, el) => (l.text = el.value));
+smBindControl("smTextFont", (l, el) => {
+  if (el.value) l.fontId = el.value;
+});
+smBindControl("smTextColor", (l, el) => (l.textColor = el.value));
+smBindControl("smTextLetterSpacing", (l, el) => (l.letterSpacing = Number(el.value)));
+smBindControl("smTextAlign", (l, el) => (l.textAlign = el.value));
+{
+  let timer = null;
+  document.getElementById("smTextContent").addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => (smHistoryGestureOpen = false), 700);
+  });
+}
+
 function smHandleTileWidthChange(value) {
   smState.tileWidth = Math.min(4096, Math.max(100, Number(value)));
   smSetFieldValue("smTileWidth", smState.tileWidth);
@@ -4253,6 +4742,7 @@ document.getElementById("smAddGuideBtn").addEventListener("click", smAddGuideLay
 document.getElementById("smAddMotifBtn").addEventListener("click", smAddMotifLayer);
 document.getElementById("smAddLineBtn").addEventListener("click", smAddLineLayer);
 document.getElementById("smAddShapeBtn").addEventListener("click", smAddShapeLayer);
+document.getElementById("smAddTextBtn").addEventListener("click", smAddTextLayer);
 document.getElementById("smDuplicateLayerBtn").addEventListener("click", smDuplicateLayer);
 document.getElementById("smRenameLayerBtn").addEventListener("click", () => {
   if (smState.activeLayerId != null) smStartRename(smState.activeLayerId);
@@ -4362,6 +4852,7 @@ document.getElementById("smRoughnessNum").addEventListener("change", () => (smHi
 // to exactly one tile width via the viewBox — see smDistributeWrapped for why that
 // still shows edge-straddling shapes whole instead of cut off.
 function smBuildExportSvgString() {
+  flushTextRasters();
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", `0 0 ${smState.tileWidth} ${SM_HEIGHT}`);
   svg.setAttribute("xmlns", SVG_NS);
@@ -4693,6 +5184,7 @@ function buildProjectData() {
       formatVersion: PROJECT_FORMAT_VERSION,
       mode: "circle",
       layers: snapshotLayers(state.layers),
+      ...projectFontsField(state.layers),
       activeLayerId: state.activeLayerId,
       mask: JSON.parse(JSON.stringify(state.mask)),
       roughness: state.roughness,
@@ -4702,6 +5194,7 @@ function buildProjectData() {
     formatVersion: PROJECT_FORMAT_VERSION,
     mode: "straight",
     layers: snapshotLayers(smState.layers),
+    ...projectFontsField(smState.layers),
     activeLayerId: smState.activeLayerId,
     tileWidth: smState.tileWidth,
     loopDuration: smState.loopDuration,
@@ -4709,6 +5202,13 @@ function buildProjectData() {
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
   };
+}
+
+// Only fonts this mode's text layers use are embedded (and nothing at all when there are
+// none, so projects without text look exactly as before).
+function projectFontsField(layers) {
+  const fonts = collectProjectFonts(layers);
+  return Object.keys(fonts).length > 0 ? { fonts } : {};
 }
 
 function setProjectStatus(message, isError) {
@@ -4826,7 +5326,7 @@ function applyProjectData(data) {
 
 function loadProject(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     let data;
     try {
       data = JSON.parse(reader.result);
@@ -4840,6 +5340,8 @@ function loadProject(file) {
       setProjectStatus("That file doesn't look like an Ornament Visualiser project.", true);
       return;
     }
+    // Embedded fonts must have finished loading before the text layers are rasterised.
+    if (isCurrentFormat) await restoreProjectFonts(data.fonts, data.layers);
     applyProjectData(data);
     setProjectStatus(`Loaded "${file.name}". (Ctrl+Z undoes the load.)`);
   };
@@ -4937,6 +5439,124 @@ document.querySelectorAll(".num-input").forEach((el) => {
     { passive: false }
   );
 });
+
+// --- Text layer fonts: Load font file / Installed fonts ---
+// Both buttons exist in each mode's Text panel; everything they do acts on whichever
+// mode is showing.
+function textModeApi() {
+  return currentMode === "circle"
+    ? { selected: getSelectedLayers, push: pushHistory, refresh: refreshControls, render }
+    : { selected: smGetSelectedLayers, push: smPushHistory, refresh: smRefreshControls, render: smRender };
+}
+
+function setFontStatus(message) {
+  document.querySelectorAll(".font-status").forEach((el) => (el.textContent = message));
+}
+
+function useFontOnSelection(fontId) {
+  const api = textModeApi();
+  const targets = api.selected().filter((l) => l.type === "text");
+  if (targets.length === 0) return;
+  api.push();
+  for (const l of targets) l.fontId = fontId;
+  api.refresh();
+  api.render();
+}
+
+function stripExtension(name) {
+  return name.replace(/\.[^.]+$/, "");
+}
+
+const fontFileInput = document.getElementById("fontFileInput");
+for (const id of ["textLoadFontBtn", "smTextLoadFontBtn"]) {
+  document.getElementById(id).addEventListener("click", () => fontFileInput.click());
+}
+fontFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  setFontStatus("Loading font…");
+  try {
+    const entry = await addFontFromBlob(stripExtension(file.name), file);
+    useFontOnSelection(entry.id);
+    setFontStatus(`Loaded ${entry.name}.`);
+  } catch (err) {
+    setFontStatus(err.message || "That file couldn't be used as a font.");
+  }
+});
+
+const localFonts = { list: null, dialog: document.getElementById("localFontsDialog") };
+const installedFontsButtons = ["textInstalledFontsBtn", "smTextInstalledFontsBtn"].map((id) => document.getElementById(id));
+const installedFontsHint = "Installed fonts aren't available in this browser. Use Load font file…";
+
+function disableInstalledFonts(message) {
+  installedFontsButtons.forEach((b) => (b.disabled = true));
+  setFontStatus(message);
+}
+if (typeof window.queryLocalFonts !== "function") disableInstalledFonts(installedFontsHint);
+
+function renderLocalFontList() {
+  const query = document.getElementById("localFontsSearch").value.trim().toLowerCase();
+  const listEl = document.getElementById("localFontsList");
+  listEl.innerHTML = "";
+  const matches = (localFonts.list || []).filter((f) => !query || localFontLabel(f).toLowerCase().includes(query));
+  for (const f of matches.slice(0, 300)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "font-dialog-item";
+    btn.textContent = localFontLabel(f);
+    btn.addEventListener("click", () => pickLocalFont(f));
+    listEl.appendChild(btn);
+  }
+  document.getElementById("localFontsCount").textContent =
+    matches.length > 300 ? `Showing 300 of ${matches.length} — type to narrow the list.` : `${matches.length} font(s)`;
+}
+
+function localFontLabel(f) {
+  return f.fullName || [f.family, f.style].filter(Boolean).join(" ") || f.postscriptName || "Font";
+}
+
+function closeLocalFonts() {
+  localFonts.dialog.hidden = true;
+}
+
+async function pickLocalFont(f) {
+  closeLocalFonts();
+  setFontStatus("Loading font…");
+  try {
+    const entry = await addFontFromBlob(localFontLabel(f), await f.blob());
+    useFontOnSelection(entry.id);
+    setFontStatus(`Loaded ${entry.name}.`);
+  } catch (err) {
+    setFontStatus(err.message || "That font couldn't be used.");
+  }
+}
+
+async function openInstalledFonts() {
+  if (typeof window.queryLocalFonts !== "function") return disableInstalledFonts(installedFontsHint);
+  try {
+    if (!localFonts.list) {
+      localFonts.list = [...(await window.queryLocalFonts())].sort((a, b) => localFontLabel(a).localeCompare(localFontLabel(b)));
+    }
+  } catch (err) {
+    return disableInstalledFonts("Permission to read installed fonts was denied. Use Load font file…");
+  }
+  if (localFonts.list.length === 0) return setFontStatus("No installed fonts were found. Use Load font file…");
+  document.getElementById("localFontsSearch").value = "";
+  renderLocalFontList();
+  localFonts.dialog.hidden = false;
+  document.getElementById("localFontsSearch").focus();
+}
+installedFontsButtons.forEach((b) => b.addEventListener("click", openInstalledFonts));
+document.getElementById("localFontsSearch").addEventListener("input", renderLocalFontList);
+document.getElementById("localFontsClose").addEventListener("click", closeLocalFonts);
+localFonts.dialog.addEventListener("click", (e) => {
+  if (e.target === localFonts.dialog) closeLocalFonts();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !localFonts.dialog.hidden) closeLocalFonts();
+});
+populateFontSelects();
 
 // --- Mode switching ---
 // `currentMode` is declared near the top of the file (the zoom init needs it early).

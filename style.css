@@ -403,7 +403,9 @@ input[type="color"] {
   background: transparent;
 }
 
-select {
+select,
+textarea,
+input[type="search"] {
   background: #0b0c0e;
   color: #e4e4e6;
   border: 1px solid #2c2d33;
@@ -411,6 +413,78 @@ select {
   padding: 4px 6px;
   font-size: 13px;
   font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.35;
+}
+
+.btn-row button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Installed-fonts picker (Text layers): a centred card over a dimmed backdrop. */
+.font-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.font-dialog[hidden] {
+  display: none;
+}
+.font-dialog-card {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: #16171a;
+  border: 1px solid #2c2d33;
+  border-radius: 8px;
+}
+.font-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.font-dialog-head button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #e4e4e6;
+  cursor: pointer;
+}
+.font-dialog-list {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  border: 1px solid #202127;
+  border-radius: 4px;
+}
+.font-dialog-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+  border: none;
+  border-bottom: 1px solid #202127;
+  background: transparent;
+  color: #e4e4e6;
+  cursor: pointer;
+}
+.font-dialog-item:hover {
+  background: #232429;
 }
 
 input[type="file"] {
