@@ -27,6 +27,16 @@ function nextDefaultRadius() {
   return Math.max(200, 1600 - state.layers.length * 350);
 }
 
+// Where a Circle layer sits and how much of its circle is used — shared by EVERY layer
+// type (a future Text layer included) so the geometry code never branches on type.
+// originX/Y offset the layer's own centre from the canvas CENTER; arcStart/arcSweep cut
+// the circle down to an arc; gapCount/gapSize break that arc into pieces; mirror adds
+// twins reflected about the canvas centre lines. Defaults describe an untouched layer.
+function placementDefaults() {
+  return { originX: 0, originY: 0, mirror: "none", arcStart: 0, arcSweep: 360, gapCount: 0, gapSize: 10 };
+}
+const PLACEMENT_KEYS = Object.keys(placementDefaults());
+
 function createRingLayer(name, radius) {
   return {
     id: nextLayerId++,
@@ -36,6 +46,8 @@ function createRingLayer(name, radius) {
     visible: true,
     strokeWidth: 10,
     strokeColor: "#e0e0e0",
+    animSpeed: 0,
+    ...placementDefaults(),
   };
 }
 
@@ -60,6 +72,7 @@ function createMotifLayer(name, radius) {
     flipHorizontal: false,
     alternateFlip: false,
     animSpeed: 0,
+    ...placementDefaults(),
   };
 }
 
@@ -78,6 +91,7 @@ function createLineLayer(name, radius) {
     strokeColor: "#e0e0e0",
     length: 200,
     animSpeed: 0,
+    ...placementDefaults(),
   };
 }
 
@@ -106,6 +120,7 @@ function createShapeLayer(name, radius) {
     flipHorizontal: false,
     alternateFlip: false,
     flipOffset: 0,
+    ...placementDefaults(),
   };
 }
 
@@ -138,6 +153,8 @@ const CONTROL_PROPERTY = {
   shapeStrokeWidth: "strokeWidth", shapeStrokeColor: "strokeColor",
   shapeCount: "count", shapeStartAngle: "startAngle",
   shapeFlip: "flip", shapeFlipHorizontal: "flipHorizontal", shapeAlternateFlip: "alternateFlip", shapeFlipOffset: "flipOffset",
+  placeOriginX: "originX", placeOriginY: "originY", placeMirror: "mirror",
+  placeArcStart: "arcStart", placeArcSweep: "arcSweep", placeGapCount: "gapCount", placeGapSize: "gapSize",
 
   smLayerOpacity: "opacity", smLayerAnimSpeed: "animSpeed",
   smGuidePosition: "position", smGuideStrokeWidth: "strokeWidth", smGuideStrokeColor: "strokeColor",
@@ -209,6 +226,12 @@ function markMixedFields(layers) {
       continue;
     }
     if (!mixed) continue;
+    // A select has no number box to put a dash in; one with a hidden "" option (see
+    // placeMirror) shows that instead of silently displaying only the active layer's value.
+    if (el.tagName === "SELECT") {
+      if (el.querySelector('option[value=""]')) el.value = "";
+      continue;
+    }
     const numEl = document.getElementById(id + "Num");
     if (numEl && document.activeElement !== numEl) numEl.value = MIXED_VALUE_TEXT;
   }
@@ -230,7 +253,7 @@ function convertLayerType(layer, newType) {
   const factories = { ring: createRingLayer, motif: createMotifLayer, line: createLineLayer, shape: createShapeLayer };
   const fresh = factories[newType](layer.name, layer.radius);
   fresh.id = layer.id;
-  for (const key of ["count", "startAngle", "rotation", "followRing", "animSpeed", "visible", "flip", "flipHorizontal", "alternateFlip", "flipOffset"]) {
+  for (const key of ["count", "startAngle", "rotation", "followRing", "animSpeed", "visible", "flip", "flipHorizontal", "alternateFlip", "flipOffset", ...PLACEMENT_KEYS]) {
     if (key in fresh && key in layer) fresh[key] = layer[key];
   }
   if (layer.opacity != null) fresh.opacity = layer.opacity;
@@ -430,7 +453,7 @@ function randomizeAnimSpeeds() {
 // Same target set as randomizeAnimSpeeds — a quick "stop everything" next to the
 // "randomize everything" button.
 function zeroAnimSpeeds() {
-  const targets = state.layers.filter((l) => l.type !== "ring");
+  const targets = state.layers.filter((l) => l.type !== "ring" || l.animSpeed);
   if (targets.length === 0) return;
   pushHistory();
   for (const l of targets) l.animSpeed = 0;
@@ -640,17 +663,28 @@ function refreshControls() {
   typeField.classList.toggle("disabled", !canChangeType);
   typeSelect.value = canChangeType ? active.type : "motif";
 
-  // Animation speed: same "lives in the Layers panel" reasoning as opacity, but Ring
-  // is excluded — a plain circle looks identical at every rotation, so animating it
-  // would be invisible.
-  const canAnimate = active && active.type !== "ring";
+  // Animation speed: same "lives in the Layers panel" reasoning as opacity. A full,
+  // unbroken ring looks identical at every rotation, but a cut or gapped one visibly
+  // turns, so Ring is no longer excluded.
+  const canAnimate = !!active;
   document.getElementById("layerAnimSpeedField").classList.toggle("disabled", !canAnimate);
   setFieldValue("layerAnimSpeed", canAnimate ? active.animSpeed || 0 : 0);
 
+  const placementPanel = document.getElementById("placementPanel");
   if (!active) {
-    [ringPanel, motifPanel, linePanel, shapePanel].forEach((p) => p.classList.add("disabled", "hidden"));
+    [ringPanel, motifPanel, linePanel, shapePanel, placementPanel].forEach((p) => p.classList.add("disabled", "hidden"));
     return;
   }
+
+  placementPanel.classList.remove("disabled", "hidden");
+  const place = placementOf(active);
+  setFieldValue("placeOriginX", place.originX);
+  setFieldValue("placeOriginY", place.originY);
+  document.getElementById("placeMirror").value = place.mirror;
+  setFieldValue("placeArcStart", place.arcStart);
+  setFieldValue("placeArcSweep", place.arcSweep);
+  setFieldValue("placeGapCount", place.gapCount);
+  setFieldValue("placeGapSize", place.gapSize);
 
   [ringPanel, motifPanel, linePanel, shapePanel].forEach((p) => p.classList.remove("disabled"));
   ringPanel.classList.toggle("hidden", active.type !== "ring");
@@ -721,6 +755,28 @@ function refreshControls() {
   markMixedFields(getSelectedLayers());
   updateLayerListMeta();
 }
+
+// Placement panel — every layer type, so no per-type variants of these.
+bindControl("placeOriginX", (l, el) => (l.originX = Number(el.value)));
+bindControl("placeOriginY", (l, el) => (l.originY = Number(el.value)));
+bindControl("placeMirror", (l, el) => {
+  if (el.value) l.mirror = el.value;
+});
+bindControl("placeArcStart", (l, el) => (l.arcStart = Number(el.value)));
+bindControl("placeArcSweep", (l, el) => (l.arcSweep = Math.min(360, Math.max(1, Number(el.value)))));
+bindControl("placeGapCount", (l, el) => (l.gapCount = Math.max(0, Math.round(Number(el.value)))));
+bindControl("placeGapSize", (l, el) => (l.gapSize = Math.max(0, Number(el.value))));
+document.getElementById("placeCentreBtn").addEventListener("click", () => {
+  const targets = getSelectedLayers();
+  if (targets.length === 0) return;
+  pushHistory();
+  for (const l of targets) {
+    l.originX = 0;
+    l.originY = 0;
+  }
+  refreshControls();
+  render();
+});
 
 // The width/height ratio a locked Shape should hold, captured ONCE at the start of a
 // gesture (a slider drag, or a typing run up to blur) and cleared when it ends — see the
@@ -1114,12 +1170,86 @@ document.querySelectorAll(".preview-fps-btn").forEach((btn) => {
 // layer.rotation is then added on top as a fixed extra spin (e.g. to flip a motif to
 // face inward, or angle a line's tick mark) — shared by both motif and line layers.
 
+// Layers saved before Placement existed have none of these fields — read through here
+// (never layer.originX directly) so they keep rendering exactly as they did.
+function placementOf(layer) {
+  const d = placementDefaults();
+  return {
+    originX: layer.originX ?? d.originX,
+    originY: layer.originY ?? d.originY,
+    mirror: layer.mirror || d.mirror,
+    arcStart: layer.arcStart ?? d.arcStart,
+    arcSweep: Math.min(360, Math.max(1, layer.arcSweep ?? d.arcSweep)),
+    gapCount: Math.max(0, Math.floor(layer.gapCount ?? d.gapCount)),
+    gapSize: Math.max(0, layer.gapSize ?? d.gapSize),
+  };
+}
+
+// The part of the layer's circle that is actually drawn, as [startDeg, endDeg] pieces in
+// the same angle convention as everything else here (0 = top, clockwise) and BEFORE the
+// animation spin is added. `full` means an unbroken 360° circle, which callers must keep
+// drawing the original way so such layers render byte-for-byte as they did before cuts
+// existed. startAngle (item layers only) rotates the whole window, so it composes with
+// arcStart instead of fighting it.
+//
+// Gaps are evenly spaced breaks, each gapSize wide and centred on its spacing point. On a
+// full circle with N gaps there are N pieces and the first gap is centred on arcStart;
+// on a cut arc the N gaps are interior, giving N+1 pieces with the arc's own ends left
+// intact. gapSize is clamped so no piece collapses to nothing.
+function visibleArc(layer) {
+  const p = placementOf(layer);
+  const base = p.arcStart + (layer.startAngle || 0);
+  const wraps = p.arcSweep >= 360;
+  if (wraps && p.gapCount < 1) return { full: true, pieces: [[base, base + 360]] };
+  const pieces = [];
+  if (wraps) {
+    const period = 360 / p.gapCount;
+    const gap = Math.min(p.gapSize, Math.max(0, period - 0.5));
+    for (let k = 0; k < p.gapCount; k++) {
+      pieces.push([base + k * period + gap / 2, base + (k + 1) * period - gap / 2]);
+    }
+  } else {
+    const period = p.arcSweep / (p.gapCount + 1);
+    const gap = Math.min(p.gapSize, Math.max(0, period - 0.5));
+    for (let k = 0; k <= p.gapCount; k++) {
+      const a0 = k === 0 ? base : base + k * period + gap / 2;
+      const a1 = k === p.gapCount ? base + p.arcSweep : base + (k + 1) * period - gap / 2;
+      pieces.push([a0, a1]);
+    }
+  }
+  return { full: false, pieces };
+}
+
+// THE item distribution helper: where the `count` copies of an item layer (motif, line,
+// shape — and any future layer built on the motif pipeline, e.g. Text) sit around its
+// circle. Everything else (distributeAngles for the circle view, distributeStraight for
+// the unrolled strip) just maps these angles to positions, so cuts and gaps apply to
+// every layer type from this one place. Copies are spread evenly along the TOTAL visible
+// length, hopping over gaps; on a closed full circle that means 360/count apart (the
+// original behaviour), on anything cut both end points of the visible arc get a copy.
 function layerAngles(layer) {
   const angles = [];
   const n = Math.floor(layer.count);
   if (n < 1) return angles;
-  const angleStep = 360 / n;
-  for (let i = 0; i < n; i++) angles.push(layer.startAngle + i * angleStep);
+  const arc = visibleArc(layer);
+  if (arc.full) {
+    const angleStep = 360 / n;
+    for (let i = 0; i < n; i++) angles.push(arc.pieces[0][0] + i * angleStep);
+    return angles;
+  }
+  const total = arc.pieces.reduce((sum, [a, b]) => sum + (b - a), 0);
+  for (let i = 0; i < n; i++) {
+    let t = n === 1 ? total / 2 : (i * total) / (n - 1);
+    let angle = arc.pieces[arc.pieces.length - 1][1];
+    for (const [a, b] of arc.pieces) {
+      if (t <= b - a + 1e-9) {
+        angle = a + Math.min(t, b - a);
+        break;
+      }
+      t -= b - a;
+    }
+    angles.push(angle);
+  }
   return angles;
 }
 
@@ -1501,7 +1631,34 @@ function getBentShapeImage(layer) {
 // ({x, y, rotation}), so both the circular view (distributeAngles) and the straight
 // view (distributeStraight) can reuse the exact same element-building code.
 
+// Point on a layer's circle (relative to CENTER) for an angle in the app's convention
+// (0 = top, clockwise).
+function arcPoint(radius, angleDeg) {
+  const a = ((angleDeg - 90) * Math.PI) / 180;
+  return [CENTER + radius * Math.cos(a), CENTER + radius * Math.sin(a)];
+}
+
+// Rough passes for several open polylines drawn as ONE def, so a gapped ring is still a
+// single <use>-able block. Each piece keeps its own cache slot keyed by its own angles,
+// which means dragging the origin or spinning the layer (both just transforms) never
+// invalidates the roughened geometry.
+function getRoughPiecePasses(layer, slot, keyBase, pieces, samplePiece, roughness) {
+  const per = pieces.map((piece, i) =>
+    getRoughOutlinePasses(layer, `${slot}${i}`, `${keyBase}|${piece[0].toFixed(3)},${piece[1].toFixed(3)}`, () => samplePiece(piece), false, roughness)
+  );
+  return per[0].map((pass, pi) => ({
+    ...pass,
+    core: per.map((p) => p[pi].core).join(" "),
+    ticks: per.map((p) => p[pi].ticks).join(" "),
+  }));
+}
+
 function drawRing(g, layer, roughness) {
+  const arc = visibleArc(layer);
+  if (!arc.full) {
+    drawRingArcs(g, layer, arc.pieces, roughness);
+    return;
+  }
   if (roughness > 0) {
     const passes = getRoughOutlinePasses(
       layer, "ring", String(layer.radius),
@@ -1525,6 +1682,45 @@ function drawRing(g, layer, roughness) {
   circle.setAttribute("stroke", layer.strokeColor);
   circle.setAttribute("stroke-width", layer.strokeWidth);
   g.appendChild(circle);
+}
+
+// A cut and/or gapped ring. The animation spin is applied as a rotation of the whole
+// piece group (not baked into the angles) so the roughened points stay cached and the
+// jitter doesn't shimmer while it turns.
+function drawRingArcs(g, layer, pieces, roughness) {
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  const turn = document.createElementNS(SVG_NS, "g");
+  if (spin) turn.setAttribute("transform", `rotate(${spin} ${CENTER} ${CENTER})`);
+  g.appendChild(turn);
+  if (roughness > 0) {
+    const passes = getRoughPiecePasses(
+      layer, "ringArc", String(layer.radius), pieces,
+      ([a0, a1]) => sampleArcPoints(CENTER, CENTER, layer.radius, layer.radius, ((a0 - 90) * Math.PI) / 180, ((a1 - 90) * Math.PI) / 180, ROUGH_SAMPLE_SPACING),
+      roughness
+    );
+    const defId = `rough-ring-${layer.id}`;
+    const defs = document.createElementNS(SVG_NS, "defs");
+    appendRoughOutlineDef(defs, defId, passes, layer.strokeColor);
+    turn.appendChild(defs);
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", `#${defId}`);
+    turn.appendChild(use);
+    return;
+  }
+  const path = document.createElementNS(SVG_NS, "path");
+  // An SVG arc whose end meets its start draws nothing, so a ~360° piece (one gap of
+  // size 0) is split in two.
+  const drawn = pieces.flatMap(([a0, a1]) => (a1 - a0 >= 359.99 ? [[a0, a0 + 180], [a0 + 180, a1]] : [[a0, a1]]));
+  const d = drawn.map(([a0, a1]) => {
+    const [x0, y0] = arcPoint(layer.radius, a0);
+    const [x1, y1] = arcPoint(layer.radius, a1);
+    return `M ${x0} ${y0} A ${layer.radius} ${layer.radius} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+  });
+  path.setAttribute("d", d.join(" "));
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", layer.strokeColor);
+  path.setAttribute("stroke-width", layer.strokeWidth);
+  turn.appendChild(path);
 }
 
 function drawMotifFlat(g, layer, items) {
@@ -1988,6 +2184,46 @@ function applyGlobalMask(content, mask, viewW, viewH, idPrefix) {
   content.setAttribute("mask", `url(#${maskId})`);
 }
 
+// Mirror twins reference the layer's rendered group instead of re-drawing it, so a twin
+// is guaranteed to be an exact reflection (flipped images, reversed spin) and the
+// layer's <defs> ids stay unique. Each <use> sits in its own data-layer-id group because
+// hit-testing can't see inside a <use> instance — that wrapper is what makes a twin
+// clickable. Reflection is about the canvas centre lines, not the layer's own origin.
+function appendMirrorTwins(content, layerG, layer, mirror) {
+  const flips = { x: [[-1, 1]], y: [[1, -1]], xy: [[-1, 1], [1, -1], [-1, -1]] }[mirror];
+  if (!flips) return;
+  layerG.setAttribute("id", `layer-grp-${layer.id}`);
+  for (const [sx, sy] of flips) {
+    const wrap = document.createElementNS(SVG_NS, "g");
+    wrap.dataset.layerId = layer.id;
+    wrap.classList.add("layer-hit");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", `#layer-grp-${layer.id}`);
+    use.setAttribute("transform", `translate(${sx < 0 ? 2 * CENTER : 0} ${sy < 0 ? 2 * CENTER : 0}) scale(${sx} ${sy})`);
+    wrap.appendChild(use);
+    content.appendChild(wrap);
+  }
+}
+
+// Editor-only grab handles for the origin of every selected layer. Sized in screen px
+// (via the artboard's current scale) so they stay the same size at any zoom. Any of them
+// drags the whole selection — see the origin drag handlers below.
+function appendOriginHandles(svg) {
+  const ctm = svg.getScreenCTM();
+  const unit = 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2); // SVG units per screen px
+  for (const layer of getSelectedLayers()) {
+    const p = placementOf(layer);
+    const h = document.createElementNS(SVG_NS, "g");
+    h.setAttribute("class", "editor-only origin-handle");
+    h.dataset.originHandle = layer.id;
+    h.setAttribute("transform", `translate(${CENTER + p.originX} ${CENTER + p.originY}) scale(${unit})`);
+    h.innerHTML = `<circle r="14" fill="transparent" pointer-events="all" />
+      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+    svg.appendChild(h);
+  }
+}
+
 function render() {
   const svg = document.getElementById("canvas");
   svg.innerHTML = "";
@@ -1998,16 +2234,27 @@ function render() {
   const content = document.createElementNS(SVG_NS, "g");
 
   for (const layer of state.layers) {
-    const g = document.createElementNS(SVG_NS, "g");
-    g.dataset.layerId = layer.id;
-    g.classList.add("layer-hit");
-    g.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
+    const layerG = document.createElementNS(SVG_NS, "g");
+    layerG.dataset.layerId = layer.id;
+    layerG.classList.add("layer-hit");
+    layerG.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
 
     if (layer.visible === false) {
       // Nothing to draw, but keep the (empty) <g> so layer order/indexing stays
       // consistent with the layers array — same reasoning as every other layer type.
-      content.appendChild(g);
+      content.appendChild(layerG);
       continue;
+    }
+
+    // Everything below is built around CENTER; a non-zero origin just shifts the whole
+    // layer, so spin, arcs and copies all turn about the layer's own centre for free.
+    // Skipped at 0,0 so an unmoved layer's markup is unchanged.
+    const place = placementOf(layer);
+    let g = layerG;
+    if (place.originX || place.originY) {
+      g = document.createElementNS(SVG_NS, "g");
+      g.setAttribute("transform", `translate(${place.originX} ${place.originY})`);
+      layerG.appendChild(g);
     }
 
     if (layer.type === "ring") {
@@ -2097,7 +2344,8 @@ function render() {
       }
     }
 
-    content.appendChild(g);
+    content.appendChild(layerG);
+    appendMirrorTwins(content, layerG, layer, place.mirror);
   }
 
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle");
@@ -2108,8 +2356,9 @@ function render() {
   const active = getActiveLayer();
   if (active) {
     const indicator = document.createElementNS(SVG_NS, "circle");
-    indicator.setAttribute("cx", CENTER);
-    indicator.setAttribute("cy", CENTER);
+    const activePlace = placementOf(active);
+    indicator.setAttribute("cx", CENTER + activePlace.originX);
+    indicator.setAttribute("cy", CENTER + activePlace.originY);
     indicator.setAttribute("r", active.radius);
     indicator.setAttribute("fill", "none");
     indicator.setAttribute("stroke", "#4f8cff");
@@ -2146,6 +2395,8 @@ function render() {
   cross.innerHTML = `<line x1="${CENTER - 32}" y1="${CENTER}" x2="${CENTER + 32}" y2="${CENTER}" />
     <line x1="${CENTER}" y1="${CENTER - 32}" x2="${CENTER}" y2="${CENTER + 32}" />`;
   svg.appendChild(cross);
+
+  appendOriginHandles(svg);
 }
 
 // Click-to-select: delegated once (not re-added on every render, since render() only
@@ -2202,8 +2453,80 @@ function makeLayerClickCycler() {
 
 const pickCircleClickLayer = makeLayerClickCycler();
 
+// --- Origin drag ---
+// render() throws away and rebuilds every SVG child on each animation frame, including the
+// handle being dragged, so nothing can hold on to the handle itself: the pointer is
+// captured on the <svg> element (which survives) and each move re-derives everything from
+// the numbers stored at drag start. One undo entry is pushed on the first real movement,
+// so a plain click on the handle changes nothing and costs no history.
+const ORIGIN_SNAP_PX = 6;
+let originDrag = null;
+
+function clientToSvgPoint(svg, clientX, clientY) {
+  const p = new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM().inverse());
+  return { x: p.x, y: p.y };
+}
+
+function moveOriginDrag(e) {
+  const svg = document.getElementById("canvas");
+  const drag = originDrag;
+  const pt = clientToSvgPoint(svg, e.clientX, e.clientY);
+  let dx = pt.x - drag.start.x;
+  let dy = pt.y - drag.start.y;
+  if (e.shiftKey) {
+    if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+    else dx = 0;
+  }
+  // Snap the ACTIVE layer onto the centre line, and shift the rest of the selection by
+  // that same snapped delta so they stay in formation.
+  const snapUnits = ORIGIN_SNAP_PX / svg.getScreenCTM().a;
+  const lead = drag.origins.get(state.activeLayerId) || [...drag.origins.values()][0];
+  if (Math.abs(lead.x + dx) < snapUnits) dx = -lead.x;
+  if (Math.abs(lead.y + dy) < snapUnits) dy = -lead.y;
+  dx = Math.round(dx);
+  dy = Math.round(dy);
+  if (!drag.moved) {
+    if (dx === 0 && dy === 0) return;
+    drag.moved = true;
+    pushHistory();
+  }
+  for (const layer of getSelectedLayers()) {
+    const o = drag.origins.get(layer.id);
+    if (!o) continue;
+    layer.originX = o.x + dx;
+    layer.originY = o.y + dy;
+  }
+  refreshControls();
+  render();
+}
+
+function endOriginDrag(e) {
+  if (!originDrag) return;
+  const svg = document.getElementById("canvas");
+  if (svg.hasPointerCapture(originDrag.pointerId)) svg.releasePointerCapture(originDrag.pointerId);
+  originDrag = null;
+}
+
+document.getElementById("canvas").addEventListener("pointermove", (e) => {
+  if (originDrag && e.pointerId === originDrag.pointerId) moveOriginDrag(e);
+});
+document.getElementById("canvas").addEventListener("pointerup", endOriginDrag);
+document.getElementById("canvas").addEventListener("pointercancel", endOriginDrag);
+
 document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+  if (e.target.closest("[data-origin-handle]")) {
+    const svg = document.getElementById("canvas");
+    const origins = new Map();
+    for (const layer of getSelectedLayers()) {
+      const p = placementOf(layer);
+      origins.set(layer.id, { x: p.originX, y: p.originY });
+    }
+    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, moved: false };
+    svg.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
   const id = pickCircleClickLayer(e.clientX, e.clientY);
   if (id != null) selectLayer(id);
 });
@@ -2514,6 +2837,52 @@ function syncStraightPreviewToRing(makeRoom = false) {
   straightSyncScrollCarry = { x: Math.abs(rx) < 1 ? rx : 0, y: Math.abs(ry) < 1 ? ry : 0 };
 }
 
+// A cut/gapped ring unrolled: each visible piece becomes a straight run, split where it
+// crosses the seam (angle 180 from the centred angle 0) so no run spans the whole strip.
+// Drawn at the unspun angles — the strip's ring has never followed animation, and the
+// roughened runs are cached by their angles.
+function drawStraightRingArcs(g, layer, maxR, padY, centerX) {
+  const y = radiusToStraightY(layer.radius, maxR, padY);
+  const toX = (deg) => centerX + ((deg * Math.PI) / 180) * layer.radius;
+  const runs = [];
+  for (const [a0, a1] of visibleArc(layer).pieces) {
+    let from = a0;
+    while (from < a1 - 1e-9) {
+      const seam = Math.floor((from + 180) / 360) * 360 + 180; // next seam at or after `from`
+      const to = Math.min(a1, seam);
+      // Shift the run into (-180, 180] around the centre before converting to x.
+      const shift = Math.round((from + to) / 2 / 360) * 360;
+      runs.push([from - shift, to - shift]);
+      from = to;
+    }
+  }
+  if (state.roughness > 0) {
+    const passes = getRoughPiecePasses(
+      layer, "ringStraightArc", `${layer.radius}|${y}`, runs,
+      ([a, b]) => sampleSegmentPoints(toX(a), y, toX(b), y, ROUGH_SAMPLE_SPACING),
+      state.roughness
+    );
+    const defId = `rough-ringstraight-${layer.id}`;
+    const defs = document.createElementNS(SVG_NS, "defs");
+    appendRoughOutlineDef(defs, defId, passes, layer.strokeColor);
+    g.appendChild(defs);
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", `#${defId}`);
+    g.appendChild(use);
+    return;
+  }
+  for (const [a, b] of runs) {
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", toX(a));
+    line.setAttribute("y1", y);
+    line.setAttribute("x2", toX(b));
+    line.setAttribute("y2", y);
+    line.setAttribute("stroke", layer.strokeColor);
+    line.setAttribute("stroke-width", layer.strokeWidth);
+    g.appendChild(line);
+  }
+}
+
 function renderStraight() {
   const svg = document.getElementById("straightCanvas");
   svg.innerHTML = "";
@@ -2553,7 +2922,9 @@ function renderStraight() {
       continue;
     }
 
-    if (layer.type === "ring") {
+    if (layer.type === "ring" && !visibleArc(layer).full) {
+      drawStraightRingArcs(g, layer, maxR, padY, centerX);
+    } else if (layer.type === "ring") {
       const y = radiusToStraightY(layer.radius, maxR, padY);
       const half = Math.PI * layer.radius; // half this ring's own circumference
       if (state.roughness > 0) {
@@ -2886,8 +3257,10 @@ async function exportLayersZip() {
   const originalLayers = state.layers;
   const originalOverride = animTimeOverride;
 
-  const ringLayers = originalLayers.filter((l) => l.type === "ring");
-  const otherLayers = originalLayers.filter((l) => l.type !== "ring");
+  // A cut or gapped ring visibly turns, so it needs its own file like any other layer.
+  const isPlainRing = (l) => l.type === "ring" && visibleArc(l).full;
+  const ringLayers = originalLayers.filter(isPlainRing);
+  const otherLayers = originalLayers.filter((l) => !isPlainRing(l));
   const totalSteps = (ringLayers.length > 0 ? 1 : 0) + otherLayers.length;
 
   if (totalSteps === 0) {
@@ -4344,6 +4717,12 @@ function setProjectStatus(message, isError) {
   el.style.color = isError ? "#ff8a8a" : "";
 }
 
+// Files saved before Placement existed lack its fields; filling them in on load keeps
+// the mixed-value check from seeing "undefined" next to 0 as a disagreement.
+function withPlacementDefaults(layers) {
+  return layers.map((l) => ({ ...placementDefaults(), ...l }));
+}
+
 function maxLayerId(layers) {
   return layers.reduce((max, l) => Math.max(max, l.id), 0);
 }
@@ -4363,7 +4742,7 @@ function saveProject() {
 // this function is deliberately not exposed to it.
 function applyDefaultProject(data) {
   pushHistory();
-  state.layers = snapshotLayers(data.circle.layers);
+  state.layers = withPlacementDefaults(snapshotLayers(data.circle.layers));
   state.activeLayerId = data.circle.activeLayerId ?? null;
   state.mask = data.circle.mask ? JSON.parse(JSON.stringify(data.circle.mask)) : createDefaultMask();
   state.roughness = data.circle.roughness ?? 50;
@@ -4410,7 +4789,7 @@ function applyProjectData(data) {
   }
   if (data.mode === "circle") {
     pushHistory();
-    state.layers = snapshotLayers(data.layers);
+    state.layers = withPlacementDefaults(snapshotLayers(data.layers));
     state.activeLayerId = data.activeLayerId ?? null;
     state.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     state.roughness = data.roughness ?? 50;

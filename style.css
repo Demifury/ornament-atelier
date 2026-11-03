@@ -731,6 +731,10 @@ svg#canvas {
   cursor: pointer;
 }
 
+.origin-handle {
+  cursor: move;
+}
+
 svg.straight-canvas {
   /* Not sized here at all — setStraightPreviewScale() sets an explicit px width/height
      from the viewBox so this strip renders at a FIXED units-per-pixel, the same scale as

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=38" />
+<link rel="stylesheet" href="style.css?v=39" />
 </head>
 <body>
 <div class="app">
@@ -307,6 +307,68 @@
         </label>
       </section>
 
+      <section class="panel" id="placementPanel">
+        <h2>Placement</h2>
+        <label class="field">
+          <span>Origin X (offset from center)</span>
+          <div class="range-row">
+            <input type="range" id="placeOriginX" min="-2048" max="2048" step="1" />
+            <button type="button" class="reset-btn" data-reset-target="placeOriginX" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+            <input type="text" inputmode="decimal" id="placeOriginXNum" min="-2048" max="2048" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Origin Y (offset from center)</span>
+          <div class="range-row">
+            <input type="range" id="placeOriginY" min="-2048" max="2048" step="1" />
+            <button type="button" class="reset-btn" data-reset-target="placeOriginY" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+            <input type="text" inputmode="decimal" id="placeOriginYNum" min="-2048" max="2048" step="1" class="num-input" />
+          </div>
+        </label>
+        <div class="btn-row">
+          <button type="button" id="placeCentreBtn">Centre</button>
+        </div>
+        <label class="field">
+          <span>Mirror</span>
+          <select id="placeMirror">
+            <option value="" disabled hidden>–</option>
+            <option value="none">None</option>
+            <option value="x">Left-right</option>
+            <option value="y">Top-bottom</option>
+            <option value="xy">Both (4 quadrants)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Arc start (degrees)</span>
+          <div class="range-row">
+            <input type="range" id="placeArcStart" min="0" max="359" step="1" />
+            <button type="button" class="reset-btn" data-reset-target="placeArcStart" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+            <input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="359" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Arc sweep (degrees)</span>
+          <div class="range-row">
+            <input type="range" id="placeArcSweep" min="1" max="360" step="1" />
+            <input type="text" inputmode="decimal" id="placeArcSweepNum" min="1" max="360" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Gaps</span>
+          <div class="range-row">
+            <input type="range" id="placeGapCount" min="0" max="24" step="1" />
+            <input type="text" inputmode="decimal" id="placeGapCountNum" min="0" max="24" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Gap size (degrees)</span>
+          <div class="range-row">
+            <input type="range" id="placeGapSize" min="0" max="90" step="1" />
+            <input type="text" inputmode="decimal" id="placeGapSizeNum" min="0" max="90" step="1" class="num-input" />
+          </div>
+        </label>
+      </section>
+
       <div class="ornament-divider ornament-divider-export"></div>
       <section class="panel">
         <h2>Export — Images</h2>
@@ -317,6 +379,7 @@
           <button id="exportSvgBtn">SVG</button>
         </div>
         <p class="hint">Straight preview</p>
+        <p class="hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored.</p>
         <div class="btn-row">
           <button id="exportStraightPngBtn">PNG</button>
           <button id="exportStraightSvgBtn">SVG</button>
@@ -908,6 +971,6 @@
     </div>
   </main>
 </div>
-<script src="app.js?v=62"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>
