@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=64`, `style.css?v=40`); bump those
+`index.html` cache-busts with query strings (`app.js?v=65`, `style.css?v=41`); bump those
 when changing either file.
 
 ## Two modes
@@ -39,14 +39,34 @@ export.
 
 Both modes share the layers, roughness and mask panels.
 
-**Text layers** (both modes) turn a word or phrase into a motif: type the text (multi-line,
-with left/centre/right alignment), choose a colour and letter spacing, and place it like an
-asset — size, count, rotation, flips, animation and, in Circle mode, bend. One copy bent to the
-ring makes coin-style lettering. Pick a font with **Load font file…** (`.ttf`, `.otf`, `.woff`,
-`.woff2`) or, in Chrome and Edge, **Installed fonts…** to choose from the fonts installed on
-your computer. Fonts are embedded in saved projects, so they open anywhere. A text layer can be
-converted to an asset layer, which keeps the lettering as a plain bitmap.
+**Text layers** (both modes) turn a word or phrase into lettering. Type the text (multi-line, with
+left/centre/right alignment), choose a colour and letter spacing, and place it like an asset —
+count, rotation, flips and animation. **Letter size** is the size of the letters themselves, in
+both modes: more text makes a longer line, never smaller letters.
+
+- **Circle:** the text runs along the ring letter by letter, so a whole sentence wraps around
+  the circle. Count repeats the phrase evenly. Alignment sets where it sits: centred on the
+  start angle (the top, by default), starting at it, or ending at it; on an arc cut (see
+  Placement) it starts at, is centred in, or ends at the arc. **Fit to arc** spreads the letters
+  so the text fills the circle or arc end to end; with it off, text longer than the ring simply
+  runs on and overlaps, and a hint in the Text panel shows the text length against the ring
+  length so you can tune Letter size. Extra lines become concentric rows one line further in.
+  Follow ring off keeps the letters upright; flip vertically mirrors them top to bottom.
+- **Straight:** one flat line (or block) of text whose width grows with the text.
+
+Pick a font with **Load font file…** (`.ttf`, `.otf`, `.woff`, `.woff2`) or, in Chrome and Edge,
+**Installed fonts…** to choose from the fonts installed on your computer. Fonts are embedded in
+saved projects, so they open anywhere. A text layer can be converted to an asset layer, which
+keeps the lettering as a flat bitmap (very long text is scaled down to fit the Size range).
 
 **Placement** (Circle mode, every layer): move a layer's centre with the origin fields or by
 dragging its handle in the preview, cut the circle down to an arc, break it into pieces with
 gaps, and mirror the layer about the canvas centre lines.
+
+**Camera** (both modes): the preview can show things outside the artboard, so there are controls
+to move around it. Zoom at the pointer with <kbd>Ctrl</kbd> + scroll (also a trackpad pinch) or
+<kbd>Alt</kbd> + scroll; pan with <kbd>Space</kbd> + drag or the middle mouse button, anywhere over
+the preview. **Fit design** (<kbd>F</kbd>) frames all the visible artwork, including parts outside
+the artboard and mirror twins; **Fit artboard** (<kbd>0</kbd>) frames the artboard; **100%**
+(<kbd>1</kbd>) resets the zoom. In the Ring editor, artwork outside the artboard is shaded and the
+artboard edge drawn: exports still cover only the artboard.

@@ -753,7 +753,9 @@ input[type="file"] {
   align-self: flex-start;
   width: max-content;
   min-width: 100%;
-  margin: var(--slack-top, 0px) var(--slack-right, 0px) var(--slack-bottom, 0px) var(--slack-left, 0px);
+  /* slack: room made on demand; over: standing room for artwork outside the artboard */
+  margin: calc(var(--slack-top, 0px) + var(--over-top, 0px)) calc(var(--slack-right, 0px) + var(--over-right, 0px))
+    calc(var(--slack-bottom, 0px) + var(--over-bottom, 0px)) calc(var(--slack-left, 0px) + var(--over-left, 0px));
 }
 
 .artboard-block {
@@ -944,6 +946,36 @@ kbd {
 
 .viewport-tools .num-input {
   width: 54px;
+}
+
+.zoom-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #e4e4e6;
+  cursor: pointer;
+}
+
+.zoom-btn:hover {
+  background: #232429;
+}
+
+.zoom-btn[hidden] {
+  display: none;
+}
+
+/* Space held / dragging: the whole preview is a pan handle, whatever is under the pointer. */
+.preview.pan-ready,
+.preview.pan-ready * {
+  cursor: grab !important;
+}
+
+.preview.panning,
+.preview.panning * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 /* Second line of the Ring editor's label: the current on-screen size, dimmer than the

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=40" />
+<link rel="stylesheet" href="style.css?v=41" />
 </head>
 <body>
 <div class="app">
@@ -73,13 +73,18 @@
           </div>
         </label>
         <label class="field">
-          <span>Line alignment</span>
+          <span>Alignment</span>
           <select id="textAlign">
-            <option value="left">Left</option>
-            <option value="center">Centre</option>
-            <option value="right">Right</option>
+            <option value="left">Left (starts at the start angle)</option>
+            <option value="center">Centre (centred on it)</option>
+            <option value="right">Right (ends at it)</option>
           </select>
         </label>
+        <label class="field row-field">
+          <span>Fit to arc (spread letters to fill it)</span>
+          <input type="checkbox" id="textFitArc" />
+        </label>
+        <p class="hint" id="textFitHint"></p>
       </section>
 
       <section class="panel" id="motifPanel">
@@ -101,7 +106,7 @@
           </div>
         </label>
         <label class="field">
-          <span>Size</span>
+          <span id="motifSizeLabel">Size</span>
           <div class="range-row">
             <input type="range" id="motifSize" min="25" max="1250" step="1" />
             <input type="text" inputmode="decimal" id="motifSizeNum" min="25" max="1250" step="1" class="num-input" />
@@ -139,7 +144,7 @@
           </label>
         </div>
 
-        <label class="field">
+        <label class="field" id="motifBendField">
           <span>Bend (fit to circle)</span>
           <div class="range-row">
             <input type="range" id="motifBend" min="0" max="100" step="1" />
@@ -511,7 +516,7 @@
           </div>
         </label>
         <label class="field">
-          <span>Size</span>
+          <span id="smMotifSizeLabel">Size</span>
           <div class="range-row">
             <input type="range" id="smMotifSize" min="25" max="1250" step="1" />
             <input type="text" inputmode="decimal" id="smMotifSizeNum" min="25" max="1250" step="1" class="num-input" />
@@ -780,7 +785,9 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>S</kbd></td><td>Save Project</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>F</kbd></td><td>Open Project</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Export PNG</td></tr>
-        <tr><td><kbd>Alt</kbd> + <kbd>Scroll</kbd></td><td>Zoom the artboard</td></tr>
+        <tr><td><kbd>Ctrl</kbd> / <kbd>Alt</kbd> + <kbd>Scroll</kbd></td><td>Zoom at the pointer (also pinch)</td></tr>
+        <tr><td><kbd>Space</kbd> + drag</td><td>Pan the preview (or middle-mouse drag)</td></tr>
+        <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit artboard / 100%</td></tr>
         <tr><td><kbd>Delete</kbd></td><td>Remove selected layer</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>Confirm layer rename</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Cancel layer rename</td></tr>
@@ -1039,10 +1046,13 @@
     </div>
 
     <div class="viewport-tools" id="viewportTools">
-      <div class="zoom-control" title="Magnification of the Ring editor (Alt + Scroll over it also zooms)">
+      <div class="zoom-control" title="Magnification of the artboard. Ctrl + Scroll (or Alt + Scroll, or a trackpad pinch) zooms around the pointer; Space + drag or middle-mouse drag pans.">
         <span>Zoom</span>
-        <input type="text" inputmode="decimal" id="ringZoomNum" min="25" max="800" step="10" class="num-input" />
+        <input type="text" inputmode="decimal" id="ringZoomNum" min="10" max="800" step="10" class="num-input" />
         <span class="zoom-unit">%</span>
+        <button type="button" class="zoom-btn" id="zoomFitDesignBtn" title="Frame all the artwork, including parts outside the artboard (F)">Fit design</button>
+        <button type="button" class="zoom-btn" id="zoomFitArtboardBtn" title="Frame the whole artboard (0)">Fit artboard</button>
+        <button type="button" class="zoom-btn" id="zoom100Btn" title="Zoom to 100% (1)">100%</button>
       </div>
     </div>
   </main>
@@ -1060,6 +1070,6 @@
   </div>
 </div>
 
-<script src="app.js?v=64"></script>
+<script src="app.js?v=65"></script>
 </body>
 </html>

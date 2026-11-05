@@ -132,14 +132,16 @@ function createTextLayer(name, radius) {
     radius,
     visible: true,
     ...textDefaults(),
-    // One bent copy reads as lettering around the ring; "size" is the width of the whole
-    // text block, exactly like an asset's width.
-    size: 800,
+    // "size" is the LETTER size (font size in canvas units), so more text means a longer
+    // run, never smaller letters. The run is laid out glyph by glyph along the ring
+    // (ringTextLayout); bend does not apply to text.
+    size: 140,
     count: 1,
+    fitArc: false,
     startAngle: 0,
     followRing: true,
     rotation: 0,
-    bend: 100,
+    bend: 0,
     flip: false,
     flipHorizontal: false,
     alternateFlip: false,
@@ -164,7 +166,9 @@ const MAX_FONT_BYTES = 12 * 1024 * 1024; // a project embeds its fonts, so refus
 const fontRegistry = new Map(); // id -> { id, name, dataUrl, family, status, ready }
 
 function textDefaults() {
-  return { text: "ORNAMENT", fontId: BUILTIN_FONT_ID, textColor: "#e0e0e0", letterSpacing: 0, textAlign: "center" };
+  // textLayout 2 = "size" is the letter size. Layers saved before that (size was the
+  // width of the whole text block) have no marker and are converted on load.
+  return { text: "ORNAMENT", fontId: BUILTIN_FONT_ID, textColor: "#e0e0e0", letterSpacing: 0, textAlign: "center", textLayout: 2 };
 }
 
 // 53-bit string hash (cyrb53): content-addressed font ids mean the same font file is the
@@ -299,27 +303,34 @@ async function restoreProjectFonts(fonts, layers) {
 // --- Rasterising ---
 const textRasterCache = new Map(); // key -> { key, dataUrl, canvas, w, h }  (insertion order = age)
 const TEXT_RASTER_MAX_PX = 4096;
+const TEXT_SIZE_MIN = 8;
+const TEXT_SIZE_MAX = 600;
 const TEXT_CACHE_MAX_PIXELS = 48e6;
 const textRasterTimers = new WeakMap();
 
-// Bitmap width: ~2x the width the text is displayed at (so a full-size export stays
-// crisp), rounded up to a multiple of 128 so dragging Size doesn't redo it every tick.
-function textRasterWidth(layer) {
-  return Math.min(TEXT_RASTER_MAX_PX, Math.max(128, Math.ceil(((layer.size || 1) * 2) / 128) * 128));
+// The block bitmap (Straight mode, and Text -> Asset) is drawn at about 2 bitmap px per
+// canvas unit of the layer's letter size, with the size rounded up to steps of 16 so
+// dragging Letter size doesn't redo it every tick. Long text is scaled down to stay
+// within TEXT_RASTER_MAX_PX; the layer still DISPLAYS it at the true letter size.
+const TEXT_REF = 200; // block layout is measured at this font size, then scaled
+
+function textSizeBucket(layer) {
+  return Math.max(16, Math.ceil((layer.size || 1) / 16) * 16);
 }
 
 function textRasterKey(layer) {
   const font = resolveFont(layer.fontId);
-  return [layer.text ?? "", font ? font.id : "", layer.textColor, layer.letterSpacing || 0, layer.textAlign || "center", textRasterWidth(layer)].join("\u0001");
+  return [layer.text ?? "", font ? font.id : "", layer.textColor, layer.letterSpacing || 0, layer.textAlign || "center", textSizeBucket(layer)].join("\u0001");
 }
 
-function rasterizeText(layer, key, font) {
-  const REF = 200; // layout is measured and drawn at this size, then scaled to fit
+// Lays the (multi-line) text out as one block at TEXT_REF, in TEXT_REF px. Independent
+// of the letter size, so it also tells how wide a legacy layer's block was.
+function layoutTextBlock(layer, font) {
   const lines = String(layer.text ?? "").split(/\r?\n/);
-  if (lines.every((l) => l.trim() === "")) return { key, dataUrl: null, canvas: null, w: 0, h: 0 };
-  const spacing = (((layer.letterSpacing || 0) / 100) * REF);
+  if (lines.every((l) => l.trim() === "")) return null;
+  const spacing = (((layer.letterSpacing || 0) / 100) * TEXT_REF);
   const align = layer.textAlign || "center";
-  const fontCss = `${REF}px "${font.family}"`;
+  const fontCss = `${TEXT_REF}px "${font.family}"`;
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = fontCss;
   const native = "letterSpacing" in probe;
@@ -343,7 +354,7 @@ function rasterizeText(layer, key, font) {
     return { adv: x - spacing, l, r, asc, desc };
   };
 
-  const LH = REF * 1.2;
+  const LH = TEXT_REF * 1.2;
   const info = lines.map(measure);
   const maxAdv = Math.max(...info.map((i) => i.adv));
   const xs = info.map((i) => (align === "left" ? 0 : align === "right" ? maxAdv - i.adv : (maxAdv - i.adv) / 2));
@@ -353,21 +364,31 @@ function rasterizeText(layer, key, font) {
     minX = Math.min(minX, xs[k] - i.l);
     maxX = Math.max(maxX, xs[k] + i.r);
   });
-  const top = -(lines[0] ? info[0].asc : REF * 0.7);
+  const top = -(lines[0] ? info[0].asc : TEXT_REF * 0.7);
   const last = info.length - 1;
   const bottom = last * LH + (lines[last] ? info[last].desc : 0);
-  const pad = REF * 0.04;
-  const boxW = Math.max(1, maxX - minX + 2 * pad);
-  const boxH = Math.max(1, bottom - top + 2 * pad);
-  let scale = textRasterWidth(layer) / boxW;
-  if (boxH * scale > TEXT_RASTER_MAX_PX) scale = TEXT_RASTER_MAX_PX / boxH;
+  const pad = TEXT_REF * 0.04;
+  return {
+    lines, xs, native, spacing, fontCss, LH, minX, pad, top,
+    boxW: Math.max(1, maxX - minX + 2 * pad),
+    boxH: Math.max(1, bottom - top + 2 * pad),
+  };
+}
+
+function rasterizeText(layer, key, font) {
+  const lay = layoutTextBlock(layer, font);
+  if (!lay) return { key, dataUrl: null, canvas: null, w: 0, h: 0, boxW: 0, boxH: 0 };
+  const { lines, xs, native, spacing, LH } = lay;
+  // bitmap px per TEXT_REF px: 2 px per canvas unit at the bucketed letter size
+  let scale = (2 * textSizeBucket(layer)) / TEXT_REF;
+  scale = Math.min(scale, TEXT_RASTER_MAX_PX / lay.boxW, TEXT_RASTER_MAX_PX / lay.boxH);
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.ceil(boxW * scale));
-  canvas.height = Math.max(1, Math.ceil(boxH * scale));
+  canvas.width = Math.max(1, Math.ceil(lay.boxW * scale));
+  canvas.height = Math.max(1, Math.ceil(lay.boxH * scale));
   const ctx = canvas.getContext("2d");
-  ctx.setTransform(scale, 0, 0, scale, -(minX - pad) * scale, -(top - pad) * scale);
-  ctx.font = fontCss;
+  ctx.setTransform(scale, 0, 0, scale, -(lay.minX - lay.pad) * scale, -(lay.top - lay.pad) * scale);
+  ctx.font = lay.fontCss;
   if (native) ctx.letterSpacing = spacing + "px";
   ctx.fillStyle = layer.textColor || "#e0e0e0";
   ctx.textBaseline = "alphabetic";
@@ -384,7 +405,32 @@ function rasterizeText(layer, key, font) {
       }
     }
   });
-  return { key, dataUrl: canvas.toDataURL("image/png"), canvas, w: canvas.width, h: canvas.height };
+  return { key, dataUrl: canvas.toDataURL("image/png"), canvas, w: canvas.width, h: canvas.height, boxW: lay.boxW, boxH: lay.boxH };
+}
+
+// How big the block bitmap is DISPLAYED, in canvas units: the layout box scaled from
+// TEXT_REF to the letter size. Null until the bitmap exists.
+function textBlockSize(layer) {
+  if (!layer.textBoxW) return null;
+  const k = (layer.size || 1) / TEXT_REF;
+  return { w: layer.textBoxW * k, h: layer.textBoxH * k };
+}
+
+// Projects saved before "size" meant letter size stored the width of the whole block.
+// Once the font is available, the letter size that gives the same block width is
+// size = TEXT_REF * oldWidth / layoutWidth, so such a layer looks the same as before.
+function convertLegacyTextSize(layer) {
+  if (layer.textLayout === 2) return;
+  const font = resolveFont(layer.fontId);
+  if (!font) return; // retried on the next render, once the font has loaded
+  const lay = layoutTextBlock(layer, font);
+  if (lay) layer.size = Math.min(TEXT_SIZE_MAX, Math.max(TEXT_SIZE_MIN, Math.round((TEXT_REF * (layer.size || 1)) / lay.boxW)));
+  layer.textLayout = 2;
+  // the panels were filled in with the old width a moment ago
+  queueMicrotask(() => {
+    refreshControls();
+    smRefreshControls();
+  });
 }
 
 function setLayerRaster(layer, r) {
@@ -393,6 +439,8 @@ function setLayerRaster(layer, r) {
     imageEl: r.canvas,
     naturalWidth: r.w,
     naturalHeight: r.h,
+    textBoxW: r.boxW,
+    textBoxH: r.boxH,
     rasterKey: r.key,
   };
   for (const [k, v] of Object.entries(values)) {
@@ -424,6 +472,7 @@ function rerenderLayerMode(layer) {
 // edits keep showing the previous bitmap until typing pauses, then re-rasterise.
 // `immediate` skips that wait — used before exports so they never capture a stale bitmap.
 function ensureTextRaster(layer, immediate = false) {
+  convertLegacyTextSize(layer);
   const key = textRasterKey(layer);
   if (layer.rasterKey === key) return;
   const cached = textRasterCache.get(key);
@@ -446,14 +495,322 @@ function ensureTextRaster(layer, immediate = false) {
   setLayerRaster(layer, r);
 }
 
+// Circle text is drawn from per-glyph bitmaps made on the spot (getGlyph), so only
+// Straight mode's block bitmaps can be stale here.
 function flushTextRasters() {
-  for (const l of allTextLayers()) ensureTextRaster(l, true);
+  for (const l of allTextLayers()) {
+    if (smState.layers.includes(l)) ensureTextRaster(l, true);
+    else convertLegacyTextSize(l);
+  }
 }
 
 // Short text snippet shown next to a text layer's name in the layer list.
 function textSnippet(layer) {
   const t = String(layer.text ?? "").replace(/\s+/g, " ").trim();
   return t.length > 24 ? t.slice(0, 23) + "…" : t;
+}
+
+// --- Text along the ring (Circle mode) ---
+// Circle text is laid out letter by letter: each glyph is a small bitmap drawn at the
+// layer's letter size and placed on the ring by how far along the run it sits. One
+// bitmap for the whole phrase would have to span thousands of units (a sentence round a
+// big ring) and either blur or hit the bitmap size cap; glyphs stay small, are shared by
+// every repeat of a letter, and are cached by (font, character, size step, colour).
+// The same layout also draws the unrolled Straight preview.
+const GLYPH_MEASURE_SIZE = 400; // advances are measured at this size (em fractions are kept)
+const GLYPH_CACHE_MAX_PIXELS = 48e6;
+const glyphCache = new Map(); // key -> glyph record, or false for a blank (insertion order = age)
+let glyphCachePixels = 0;
+const runMeasureCache = new Map();
+const capRatioCache = new Map();
+let measureContext = null;
+let graphemeSegmenter = null;
+
+function getMeasureContext() {
+  if (!measureContext) measureContext = document.createElement("canvas").getContext("2d");
+  return measureContext;
+}
+
+// Letters as the user sees them (a base letter with its accents is one), not UTF-16 units.
+function splitClusters(str) {
+  if (typeof Intl !== "undefined" && Intl.Segmenter) {
+    if (!graphemeSegmenter) graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    return Array.from(graphemeSegmenter.segment(str), (s) => s.segment);
+  }
+  return Array.from(str);
+}
+
+// Pen position and width of every letter of a line, in em, WITH kerning: a letter's pen
+// position is the width of the text up to and including it minus its own width, so the
+// pair adjustments with the letter before it are included. Letter spacing is added by
+// the caller (i * spacing), which keeps this measure independent of it.
+function measureRun(font, line) {
+  const key = font.id + "\u0001" + line;
+  const hit = runMeasureCache.get(key);
+  if (hit) return hit;
+  const ctx = getMeasureContext();
+  ctx.font = `${GLYPH_MEASURE_SIZE}px "${font.family}"`;
+  if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
+  let prefix = "";
+  const clusters = splitClusters(line).map((ch) => {
+    prefix += ch;
+    const w = ctx.measureText(ch).width;
+    return { ch, pen: (ctx.measureText(prefix).width - w) / GLYPH_MEASURE_SIZE, w: w / GLYPH_MEASURE_SIZE };
+  });
+  const run = { clusters, total: ctx.measureText(line).width / GLYPH_MEASURE_SIZE };
+  if (runMeasureCache.size > 200) runMeasureCache.clear();
+  runMeasureCache.set(key, run);
+  return run;
+}
+
+// Cap height as a fraction of the font size: letters are centred on the ring by their cap
+// height, so caps sit on the layer's radius whatever the font.
+function capRatioOf(font) {
+  let r = capRatioCache.get(font.id);
+  if (r === undefined) {
+    const ctx = getMeasureContext();
+    ctx.font = `200px "${font.family}"`;
+    r = ctx.measureText("H").actualBoundingBoxAscent / 200;
+    if (!(r > 0.2 && r < 1.5)) r = 0.7;
+    capRatioCache.set(font.id, r);
+  }
+  return r;
+}
+
+// Where along visible-arc length `t` (degrees, 0 = start of the visible arc) a point is,
+// as an angle in the app's convention. Walks the pieces so letters hop over gaps; past
+// either end it simply continues, which is how text longer than the arc overlaps on.
+function angleAtVisibleParam(pieces, t) {
+  if (t < 0) return pieces[0][0] + t;
+  let rest = t;
+  for (const [a, b] of pieces) {
+    if (rest <= b - a) return a + rest;
+    rest -= b - a;
+  }
+  return pieces[pieces.length - 1][1] + rest;
+}
+
+const TEXT_LINE_HEIGHT = 1.2; // rows of multi-line circle text, in letter sizes
+
+// Length of the text (the longest line, at the layer's own radius) against the length
+// of the visible ring: what the Text panel's hint shows.
+function ringTextStats(layer) {
+  const font = resolveFont(layer.fontId);
+  if (!font) return null;
+  const S = Math.max(1, layer.size);
+  const sp = ((layer.letterSpacing || 0) / 100) * S;
+  let len = 0;
+  for (const line of String(layer.text ?? "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const run = measureRun(font, line);
+    len = Math.max(len, run.total * S + (run.clusters.length - 1) * sp);
+  }
+  const arc = visibleArc(layer);
+  const deg = arc.pieces.reduce((sum, [a, b]) => sum + (b - a), 0);
+  const ring = (deg * Math.PI * layer.radius) / 180;
+  const count = Math.max(1, Math.floor(layer.count) || 1);
+  return { len: len * count, ring, full: arc.full };
+}
+
+// "Text 4,120 of 9,425 units (44%)" under the Fit to arc checkbox, so Letter size can be
+// tuned until the phrase fills the ring (or the arc) the way you want.
+function updateTextFitHint(layer) {
+  const el = document.getElementById("textFitHint");
+  const st = ringTextStats(layer);
+  if (!st) {
+    el.textContent = "";
+    return;
+  }
+  const where = st.full ? "the ring" : "the arc";
+  const pct = st.ring > 0 ? Math.round((st.len / st.ring) * 100) : 0;
+  const n = (v) => Math.round(v).toLocaleString("en-US");
+  el.textContent = `Text length ${n(st.len)} of ${n(st.ring)} units around ${where} (${pct}%).` +
+    (pct > 100 && !layer.fitArc ? " Longer than " + where + ": the letters run on and overlap." : "");
+}
+
+// The glyph positions of a Circle text layer, before the animation spin is added.
+// Each repeat (`count`) gets its own slot of the visible arc, so the repeats are even;
+// within a slot the alignment decides where the run sits. On a full circle the anchor is
+// the layer's start angle (the top by default): left starts there, centre is centred on
+// it, right ends there. On a cut arc the slot is the arc itself: left starts at the start
+// of the arc, right ends at its end, centre sits in the middle. Fit to arc spreads extra
+// spacing so a slot is filled end to end (on a full circle the repeats then run on
+// seamlessly). Further lines are rows one line height further inward.
+function ringTextLayout(layer) {
+  const font = resolveFont(layer.fontId);
+  if (!font) return null;
+  const S = Math.max(1, layer.size);
+  const sp = ((layer.letterSpacing || 0) / 100) * S;
+  const align = layer.textAlign || "center";
+  const arc = visibleArc(layer);
+  const totalDeg = arc.pieces.reduce((sum, [a, b]) => sum + (b - a), 0);
+  const count = Math.max(1, Math.floor(layer.count) || 1);
+  const slotDeg = totalDeg / count;
+  const glyphs = [];
+  String(layer.text ?? "").split(/\r?\n/).forEach((line, row) => {
+    const rowR = layer.radius - row * S * TEXT_LINE_HEIGHT;
+    if (!line.trim() || rowR <= 0) return;
+    const run = measureRun(font, line);
+    const n = run.clusters.length;
+    const runLen = run.total * S + (n - 1) * sp;
+    const slotLen = ((slotDeg * Math.PI) / 180) * rowR;
+    let extra = 0;
+    if (layer.fitArc && n > 1) {
+      // closed circle: n gaps per repeat (the one after the last letter included)
+      extra = Math.max(-0.25 * S, (slotLen - runLen) / (arc.full ? n : n - 1));
+    }
+    const fitted = runLen + (n - 1) * extra;
+    const from = align === "left" ? 0 : align === "right" ? -fitted : -fitted / 2;
+    for (let c = 0; c < count; c++) {
+      const slotStart = c * slotDeg;
+      const anchor = arc.full ? slotStart : slotStart + (align === "left" ? 0 : align === "right" ? slotDeg : slotDeg / 2);
+      // Flip horizontally mirrors the whole run: reflected about the anchor (full
+      // circle) or the middle of the slot (cut arc), so it stays where the arc is.
+      const pivot = arc.full ? anchor : slotStart + slotDeg / 2;
+      run.clusters.forEach((cl, i) => {
+        const centre = from + cl.pen * S + i * (sp + extra) + (cl.w * S) / 2; // length from the anchor
+        let t = anchor + ((centre / rowR) * 180) / Math.PI;
+        if (layer.flipHorizontal) t = 2 * pivot - t;
+        glyphs.push({ ch: cl.ch, angle: angleAtVisibleParam(arc.pieces, t), row, rowR, copy: c, adv: cl.w * S });
+      });
+    }
+  });
+  return { font, glyphs, capHalf: (capRatioOf(font) * S) / 2 };
+}
+
+// --- Glyph bitmaps ---
+// Drawn at 2 bitmap px per canvas unit, with the size rounded up to steps of 20 units so
+// dragging Letter size doesn't re-make every glyph on each tick.
+function glyphRasterSize(S) {
+  return Math.min(960, Math.max(40, Math.ceil(S / 20) * 40));
+}
+
+function rasterizeGlyph(font, ch, F, colour) {
+  const ctx = getMeasureContext();
+  ctx.font = `${F}px "${font.family}"`;
+  const m = ctx.measureText(ch);
+  const left = m.actualBoundingBoxLeft;
+  const right = m.actualBoundingBoxRight;
+  const asc = m.actualBoundingBoxAscent;
+  const desc = m.actualBoundingBoxDescent;
+  if (!(left + right > 0) || !(asc + desc > 0)) return false; // blank (a space)
+  const pad = Math.ceil(F * 0.04) + 1;
+  const ox = Math.ceil(left) + pad; // pen position inside the bitmap
+  const oy = Math.ceil(asc) + pad; // baseline inside the bitmap
+  const w = ox + Math.ceil(right) + pad;
+  const h = oy + Math.ceil(desc) + pad;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, w);
+  canvas.height = Math.max(1, h);
+  const c = canvas.getContext("2d");
+  c.font = `${F}px "${font.family}"`;
+  c.fillStyle = colour;
+  c.textBaseline = "alphabetic";
+  c.fillText(ch, ox, oy);
+  return { url: canvas.toDataURL("image/png"), w, h, ox, oy, F };
+}
+
+function getGlyph(font, ch, S, colour) {
+  const F = glyphRasterSize(S);
+  const key = [font.id, ch, F, colour].join("\u0001");
+  let rec = glyphCache.get(key);
+  if (rec === undefined) {
+    rec = rasterizeGlyph(font, ch, F, colour);
+    if (rec) {
+      rec.key = key;
+      glyphCachePixels += rec.w * rec.h;
+    }
+    glyphCache.set(key, rec);
+    for (const k of glyphCache.keys()) {
+      if (glyphCachePixels <= GLYPH_CACHE_MAX_PIXELS || glyphCache.size <= 1) break;
+      const old = glyphCache.get(k);
+      if (old) glyphCachePixels -= old.w * old.h;
+      glyphCache.delete(k);
+    }
+  }
+  return rec;
+}
+
+const fmt = (n) => Math.round(n * 1000) / 1000;
+
+// Shared by the ring editor and the unrolled preview: draws every glyph of `layout`
+// into `g`. `place(glyph)` gives the glyph's position and its upright rotation; the
+// flips, Rotation and the centring on the cap height are common to both.
+function appendTextGlyphs(g, layer, layout, idPrefix, place) {
+  const S = Math.max(1, layer.size);
+  const colour = layer.textColor || "#e0e0e0";
+  const defs = document.createElementNS(SVG_NS, "defs");
+  const ids = new Map();
+  const items = [];
+  for (const gl of layout.glyphs) {
+    const rec = getGlyph(layout.font, gl.ch, S, colour);
+    if (!rec) continue;
+    let id = ids.get(rec.key);
+    if (!id) {
+      id = `${idPrefix}-${layer.id}-${ids.size}`;
+      ids.set(rec.key, id);
+      const u = S / rec.F;
+      const img = document.createElementNS(SVG_NS, "image");
+      img.setAttribute("id", id);
+      img.setAttribute("href", rec.url);
+      img.setAttribute("x", fmt(-rec.ox * u));
+      img.setAttribute("y", fmt(-rec.oy * u));
+      img.setAttribute("width", fmt(rec.w * u));
+      img.setAttribute("height", fmt(rec.h * u));
+      defs.appendChild(img);
+    }
+    const p = place(gl);
+    // Same flip rules as every motif layer: Flip vertically mirrors each letter top to
+    // bottom (alternate flip does it on every other repeat), Flip horizontally mirrors
+    // the run (positions are mirrored in ringTextLayout) and each letter too.
+    const flippedV = layer.alternateFlip ? (gl.copy % 2 === 1) !== !!layer.flip : !!layer.flip;
+    const sx = layer.flipHorizontal ? -1 : 1;
+    const sy = flippedV ? -1 : 1;
+    const scalePart = sx !== 1 || sy !== 1 ? ` scale(${sx},${sy})` : "";
+    const itemG = document.createElementNS(SVG_NS, "g");
+    itemG.setAttribute(
+      "transform",
+      `translate(${fmt(p.x)} ${fmt(p.y)}) rotate(${fmt(p.rotation)})${scalePart} translate(${fmt(-gl.adv / 2)} ${fmt(layout.capHalf)})`
+    );
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", `#${id}`);
+    itemG.appendChild(use);
+    items.push(itemG);
+  }
+  if (items.length === 0) return;
+  g.appendChild(defs);
+  for (const el of items) g.appendChild(el);
+}
+
+function drawRingText(g, layer) {
+  convertLegacyTextSize(layer);
+  const layout = ringTextLayout(layer);
+  if (!layout) return;
+  // Same continuous degrees/second spin as distributeAngles: it shifts the POSITION.
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  appendTextGlyphs(g, layer, layout, "tg", (gl) => {
+    const angle = gl.angle + spin;
+    const a = ((angle - 90) * Math.PI) / 180;
+    return {
+      x: CENTER + gl.rowR * Math.cos(a),
+      y: CENTER + gl.rowR * Math.sin(a),
+      rotation: (layer.followRing ? angle : 0) + layer.rotation,
+    };
+  });
+}
+
+// The same run on the unrolled strip: arc length along the glyph's own row becomes x,
+// the row's radius becomes y (like distributeStraight, letters stay upright there).
+function drawRingTextStrip(g, layer, maxR, padY, centerX) {
+  convertLegacyTextSize(layer);
+  const layout = ringTextLayout(layer);
+  if (!layout) return;
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  appendTextGlyphs(g, layer, layout, "tgs", (gl) => {
+    let norm = (((gl.angle + spin) % 360) + 360) % 360;
+    if (norm > 180) norm -= 360;
+    return { x: centerX + ((norm * Math.PI) / 180) * gl.rowR, y: radiusToStraightY(gl.rowR, maxR, padY), rotation: layer.rotation };
+  });
 }
 
 function getActiveLayer() {
@@ -485,7 +842,7 @@ const CONTROL_PROPERTY = {
   shapeStrokeWidth: "strokeWidth", shapeStrokeColor: "strokeColor",
   shapeCount: "count", shapeStartAngle: "startAngle",
   shapeFlip: "flip", shapeFlipHorizontal: "flipHorizontal", shapeAlternateFlip: "alternateFlip", shapeFlipOffset: "flipOffset",
-  textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign",
+  textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign", textFitArc: "fitArc",
   placeOriginX: "originX", placeOriginY: "originY", placeMirror: "mirror",
   placeArcStart: "arcStart", placeArcSweep: "arcSweep", placeGapCount: "gapCount", placeGapSize: "gapSize",
 
@@ -595,23 +952,28 @@ function convertLayerType(layer, newType) {
   return fresh;
 }
 
-// Asset <-> Text: same width and bend, so the conversion looks the same. Text -> Asset
-// bakes the current bitmap into a normal asset layer.
+// Asset <-> Text. Text -> Asset bakes the text into a flat bitmap of the whole block, as
+// wide as the text is at its letter size but at most 1250 units (the Size slider's range),
+// so a long sentence is scaled down. Asset -> Text keeps the new layer's default letter
+// size: an asset's width says nothing about letter size.
 function carryMotifLook(from, to) {
-  const fromMotif = from.type === "motif" || from.type === "text";
-  const toMotif = to.type === "motif" || to.type === "text";
-  if (!fromMotif || !toMotif) return;
-  to.size = from.size;
-  if ("bend" in from) to.bend = from.bend;
   if (from.type === "text" && to.type === "motif") {
     ensureTextRaster(from, true);
     if (from.imageDataUrl) {
+      const block = textBlockSize(from);
+      to.size = Math.min(1250, Math.max(25, Math.round(block.w)));
+      to.bend = 0;
       to.imageDataUrl = from.imageDataUrl;
       to.imageName = textSnippet(from) || "text";
       to.naturalWidth = from.naturalWidth;
       to.naturalHeight = from.naturalHeight;
       to.imageEl = from.imageEl;
     }
+    return;
+  }
+  if (from.type === "motif" && to.type === "motif") {
+    to.size = from.size;
+    if ("bend" in from) to.bend = from.bend;
   }
 }
 
@@ -1090,7 +1452,17 @@ function refreshControls() {
       document.getElementById("textColor").value = active.textColor;
       setFieldValue("textLetterSpacing", active.letterSpacing || 0);
       document.getElementById("textAlign").value = active.textAlign || "center";
+      document.getElementById("textFitArc").checked = !!active.fitArc;
+      updateTextFitHint(active);
     }
+    // For text the size field is the letter size (and its range is different).
+    document.getElementById("motifSizeLabel").textContent = isText ? "Letter size (font size)" : "Size";
+    for (const id of ["motifSize", "motifSizeNum"]) {
+      document.getElementById(id).setAttribute("min", isText ? TEXT_SIZE_MIN : 25);
+      document.getElementById(id).setAttribute("max", isText ? TEXT_SIZE_MAX : 1250);
+    }
+    // Text always follows the ring letter by letter, so there is nothing to bend.
+    document.getElementById("motifBendField").style.display = isText ? "none" : "";
     if (hasImage) {
       document.getElementById("motifPreviewImg").src = active.imageDataUrl;
       document.getElementById("motifFileName").textContent = active.imageName || "Image loaded";
@@ -1322,6 +1694,7 @@ bindControl("textFont", (l, el) => {
 bindControl("textColor", (l, el) => (l.textColor = el.value));
 bindControl("textLetterSpacing", (l, el) => (l.letterSpacing = Number(el.value)));
 bindControl("textAlign", (l, el) => (l.textAlign = el.value));
+bindControl("textFitArc", (l, el) => (l.fitArc = el.checked));
 // bindControl closes an undo gesture on 'change', which for a textarea only fires on
 // blur — so a whole typing session would be ONE undo step. Close it after a pause too:
 // one undo entry per burst of typing.
@@ -1723,8 +2096,9 @@ function radiusToStraightY(radius, maxR, padY) {
 function layerHalfExtent(layer) {
   if (layer.type === "motif") return layer.size * 0.75;
   if (layer.type === "text") {
-    const aspect = layer.naturalWidth ? layer.naturalHeight / layer.naturalWidth : 1;
-    return Math.max(1, aspect) * layer.size * 0.75;
+    // circle text: a letter plus the extra rows further in
+    const rows = String(layer.text ?? "").split(/\r?\n/).length;
+    return layer.size * (0.75 + (rows - 1) * TEXT_LINE_HEIGHT);
   }
   if (layer.type === "shape") {
     const sizeY = layer.sizeY != null ? layer.sizeY : layer.size;
@@ -2141,8 +2515,10 @@ function drawRingArcs(g, layer, pieces, roughness) {
 function drawMotifFlat(g, layer, items) {
   if (!layer.imageDataUrl) return;
   const aspect = layer.naturalWidth && layer.naturalHeight ? layer.naturalHeight / layer.naturalWidth : 1;
-  const w = layer.size;
-  const h = layer.size * aspect;
+  // A text block is as wide as its text at the letter size; an asset is `size` wide.
+  const block = layer.type === "text" ? textBlockSize(layer) : null;
+  const w = block ? block.w : layer.size;
+  const h = block ? block.h : layer.size * aspect;
 
   // Every copy shares the exact same image bytes — defining the <image> once in <defs>
   // and referencing it per-copy via <use> keeps that (often large) base64 payload out
@@ -2639,6 +3015,23 @@ function appendOriginHandles(svg) {
   }
 }
 
+// Artwork outside the artboard stays visible in the editor but is not exported. So that
+// it is clear what the export covers, the area outside the artboard (as far as there is
+// artwork) is shaded and the artboard edge drawn. Editor-only: exports strip it.
+function appendArtboardShade(svg) {
+  const b = designBox;
+  if (!b) return;
+  const x0 = Math.min(0, b.x), y0 = Math.min(0, b.y);
+  const x1 = Math.max(CANVAS_SIZE, b.x + b.width), y1 = Math.max(CANVAS_SIZE, b.y + b.height);
+  if (x0 === 0 && y0 === 0 && x1 === CANVAS_SIZE && y1 === CANVAS_SIZE) return;
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "editor-only");
+  g.setAttribute("pointer-events", "none");
+  g.innerHTML = `<path fill-rule="evenodd" fill="rgba(11,12,14,0.6)" d="M ${x0} ${y0} H ${x1} V ${y1} H ${x0} Z M 0 0 V ${CANVAS_SIZE} H ${CANVAS_SIZE} V 0 Z" />
+    <rect x="0" y="0" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="none" stroke="#8fb8f0" stroke-opacity="0.8" stroke-width="1.5" vector-effect="non-scaling-stroke" />`;
+  svg.appendChild(g);
+}
+
 function render() {
   const svg = document.getElementById("canvas");
   svg.innerHTML = "";
@@ -2674,8 +3067,9 @@ function render() {
 
     if (layer.type === "ring") {
       drawRing(g, layer, state.roughness);
-    } else if (layer.type === "motif" || layer.type === "text") {
-      if (layer.type === "text") ensureTextRaster(layer);
+    } else if (layer.type === "text") {
+      drawRingText(g, layer);
+    } else if (layer.type === "motif") {
       // imageEl can briefly be missing right after loading a saved project — it isn't
       // part of the file (see snapshotLayers) and gets reloaded from imageDataUrl
       // asynchronously, so bend falls back to flat for the instant before that finishes
@@ -2766,6 +3160,8 @@ function render() {
 
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle");
   svg.appendChild(content);
+  designBox = measureDesignBox(content, svg);
+  appendArtboardShade(svg);
 
   renderStraight();
 
@@ -2813,6 +3209,7 @@ function render() {
   svg.appendChild(cross);
 
   appendOriginHandles(svg);
+  syncOverhang();
 }
 
 // Click-to-select: delegated once (not re-added on every render, since render() only
@@ -2947,12 +3344,15 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (id != null) selectLayer(id);
 });
 
-// --- Artboard zoom (Alt + scroll) ---
+// --- Camera: zoom, pan, fit (Ring editor and Straight tile) ---
 // A pure viewing preference, like the preview-fps buttons: not saved with the project and
-// not tracked by undo. Requires Alt so an ordinary scroll still scrolls the preview pane,
-// which is the far more common thing to want. Each mode keeps its own factor, since the
-// two artboards are different shapes and you rarely want them at the same magnification.
-const ZOOM_MIN = 0.25;
+// not tracked by undo. Zooming needs Ctrl (which is also what a trackpad pinch sends) or
+// Alt, so an ordinary scroll still scrolls the preview pane, which is the far more common
+// thing to want. Each mode keeps its own factor, since the two artboards are different
+// shapes and you rarely want them at the same magnification. The camera is the zoom
+// factor plus the pane's scroll offset: zooming and panning work by scrolling, and
+// scrollPreviewBy makes room on demand, so the view can go anywhere.
+const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 8;
 
 let ringZoom = 1;
@@ -2991,6 +3391,7 @@ function applyZoom() {
   // The unrolled preview is pinned to the ring's scale, so it has to be resized in the same
   // breath as the ring — otherwise zooming in leaves it behind at its old size.
   syncStraightPreviewToRing();
+  syncOverhang(); // the room for off-artboard artwork is in screen px, so it follows the zoom
   updateOnScreenSizes();
 }
 
@@ -3018,9 +3419,70 @@ function setRingZoom(percent) {
 // whole screen into nothing.
 const previewSlack = { top: 0, right: 0, bottom: 0, left: 0 };
 
+// A second, standing kind of margin: room around the Ring editor for artwork that lies
+// outside the artboard (origin offsets, mirror twins), so the scrollbars reach all of it.
+// Unlike the slack it is sized from the design (syncOverhang), and is only added to the
+// slack in the CSS margin.
+const previewOver = { top: 0, right: 0, bottom: 0, left: 0 };
+
 function applyPreviewSlack() {
   const style = document.querySelector(".preview").style;
-  for (const side in previewSlack) style.setProperty(`--slack-${side}`, `${previewSlack[side]}px`);
+  for (const side in previewSlack) {
+    style.setProperty(`--slack-${side}`, `${previewSlack[side]}px`);
+    style.setProperty(`--over-${side}`, `${previewOver[side]}px`);
+  }
+}
+
+// Bounding box (artboard units) of everything the Ring editor draws, mirror twins and
+// off-artboard parts included. Measured at the end of each render().
+let designBox = null;
+
+function measureDesignBox(content, svg) {
+  // A hidden SVG can't be measured; keep the last good box.
+  if (!(svg.getBoundingClientRect().width > 0)) return designBox;
+  try {
+    const b = content.getBBox();
+    if (!(b.width > 0 || b.height > 0)) return null;
+    const m = 12; // half a typical stroke, which getBBox leaves out
+    return { x: b.x - m, y: b.y - m, width: b.width + 2 * m, height: b.height + 2 * m };
+  } catch (err) {
+    return designBox;
+  }
+}
+
+// Sizes previewOver from designBox at the current zoom: just enough room, in steps of
+// 32px, growing at once and shrinking only when a lot is spare, so a design that is
+// being edited or animated doesn't make the pane twitch. The Ring editor is held still
+// when it changes.
+function syncOverhang() {
+  const ring = document.getElementById("canvas");
+  const want = { top: 0, right: 0, bottom: 0, left: 0 };
+  const inCircle = currentMode === "circle";
+  const before = ring.getBoundingClientRect();
+  if (inCircle) {
+    if (!(before.width > 0)) return;
+    if (designBox) {
+      const s = before.width / CANVAS_SIZE;
+      const room = (units) => (units > 0 ? Math.ceil((units * s + 24) / 32) * 32 : 0);
+      want.left = room(-designBox.x);
+      want.top = room(-designBox.y);
+      want.right = room(designBox.x + designBox.width - CANVAS_SIZE);
+      want.bottom = room(designBox.y + designBox.height - CANVAS_SIZE);
+    }
+  }
+  let changed = false;
+  for (const side in want) {
+    const cur = previewOver[side];
+    if (!inCircle ? cur !== 0 : want[side] > cur || want[side] < cur - 96) {
+      previewOver[side] = want[side];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  applyPreviewSlack();
+  if (!inCircle) return; // setMode re-centres the view
+  const after = ring.getBoundingClientRect();
+  scrollPreviewBy(after.left - before.left, after.top - before.top);
 }
 
 // Scrolls the pane by (dx, dy) exactly, adding room first wherever the pane couldn't
@@ -3076,7 +3538,8 @@ function settlePreview(x, y) {
 }
 
 // Where the showing mode's artboards end, in the pane's scroll coordinates, counting the
-// pane's own end padding but not the end room itself (a box's rect excludes its margins).
+// pane's own end padding and the standing room for off-artboard artwork, but not the
+// on-demand end room itself (a box's rect excludes its margins).
 function previewContentEnd() {
   const preview = document.querySelector(".preview");
   const box = document.getElementById(currentMode === "circle" ? "circleModePreview" : "straightModePreview");
@@ -3084,8 +3547,8 @@ function previewContentEnd() {
   const rect = box.getBoundingClientRect();
   const style = getComputedStyle(preview);
   return {
-    x: rect.right - pane.left + preview.scrollLeft + parseFloat(style.paddingRight),
-    y: rect.bottom - pane.top + preview.scrollTop + parseFloat(style.paddingBottom),
+    x: rect.right - pane.left + preview.scrollLeft + parseFloat(style.paddingRight) + previewOver.right,
+    y: rect.bottom - pane.top + preview.scrollTop + parseFloat(style.paddingBottom) + previewOver.bottom,
   };
 }
 
@@ -3117,48 +3580,184 @@ function resetPreviewView() {
   straightSyncScrollCarry = { x: 0, y: 0 };
   applyPreviewSlack();
   const preview = document.querySelector(".preview");
-  preview.scrollTop = 0;
-  preview.scrollLeft = (preview.scrollWidth - preview.clientWidth) / 2;
+  // The standing room around the Ring editor (previewOver) is scrolled past, so the
+  // resting view is the same with or without off-artboard artwork.
+  preview.scrollTop = previewOver.top;
+  preview.scrollLeft = (preview.scrollWidth - preview.clientWidth) / 2 + (previewOver.left - previewOver.right) / 2;
 }
 
-function attachAltWheelZoom(svgId, getZoom, setZoom) {
-  document.getElementById(svgId).addEventListener(
-    "wheel",
+// Zooms to `zoom` keeping the artwork point under (clientX, clientY) under it. The
+// pointer's position is taken as a fraction of the artboard (it may lie outside 0..1, over
+// off-artboard artwork) and put back after the resize with scrollPreviewBy, which makes
+// scroll room where the pane has none, so the anchor holds even against an edge.
+function zoomAtPoint(zoom, clientX, clientY) {
+  const target = currentZoomTarget();
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+  if (next === target.get()) return;
+  const svg = document.getElementById(target.svgId);
+  const before = svg.getBoundingClientRect();
+  const relX = (clientX - before.left) / before.width;
+  const relY = (clientY - before.top) / before.height;
+  target.set(next);
+  applyZoom();
+  const after = svg.getBoundingClientRect();
+  scrollPreviewBy(after.left + relX * after.width - clientX, after.top + relY * after.height - clientY);
+}
+
+function previewCentre() {
+  const preview = document.querySelector(".preview");
+  const r = preview.getBoundingClientRect();
+  // clientWidth/Height leave out the scrollbars
+  return { x: r.left + preview.clientWidth / 2, y: r.top + preview.clientHeight / 2 };
+}
+
+// Ctrl + wheel (also a trackpad pinch, which browsers send as ctrl + wheel) or Alt +
+// wheel, anywhere over the preview, zooms around the pointer. A mouse wheel steps 10%
+// per notch; the small fractional deltas of a pinch zoom smoothly.
+document.querySelector(".preview").addEventListener(
+  "wheel",
+  (e) => {
+    if (!e.ctrlKey && !e.altKey) return;
+    e.preventDefault(); // otherwise the browser zooms the whole page (Ctrl) or navigates (Alt)
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    if (dy === 0) return;
+    const factor = Math.abs(dy) >= 50 ? (dy < 0 ? 1.1 : 1 / 1.1) : Math.exp(-dy * 0.01);
+    zoomAtPoint(currentZoomTarget().get() * factor, e.clientX, e.clientY);
+  },
+  { passive: false }
+);
+
+// Frames `box` (artboard units of the showing mode's SVG, whose viewBox is vbW wide) in
+// the pane with a margin: picks the zoom, then centres the box.
+function fitBoxInView(box, vbW) {
+  const target = currentZoomTarget();
+  const svg = document.getElementById(target.svgId);
+  const preview = document.querySelector(".preview");
+  const rect = svg.getBoundingClientRect();
+  if (!(rect.width > 0)) return;
+  const margin = 0.07;
+  const availW = preview.clientWidth * (1 - 2 * margin);
+  const availH = preview.clientHeight * (1 - 2 * margin);
+  const fit = Math.min(availW / box.width, availH / box.height); // screen px per unit
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, (target.get() * fit) / (rect.width / vbW)));
+  target.set(zoom);
+  applyZoom();
+  const now = svg.getBoundingClientRect();
+  const k = now.width / vbW;
+  const centre = previewCentre();
+  scrollPreviewBy(now.left + (box.x + box.width / 2) * k - centre.x, now.top + (box.y + box.height / 2) * k - centre.y);
+}
+
+function artboardBox() {
+  if (currentMode === "circle") return { box: { x: 0, y: 0, width: CANVAS_SIZE, height: CANVAS_SIZE }, vbW: CANVAS_SIZE };
+  const vb = document.getElementById("tileCanvas").viewBox.baseVal;
+  return { box: { x: 0, y: 0, width: vb.width, height: vb.height }, vbW: vb.width };
+}
+
+function fitArtboardView() {
+  const { box, vbW } = artboardBox();
+  fitBoxInView(box, vbW);
+}
+
+// Everything visible in the Ring editor, off-artboard artwork and mirror twins included.
+// Straight mode has no such artwork, so there it is the same as fitting the artboard.
+function fitDesignView() {
+  if (currentMode !== "circle" || !designBox) return fitArtboardView();
+  fitBoxInView(designBox, CANVAS_SIZE);
+}
+
+function zoomToHundred() {
+  const c = previewCentre();
+  zoomAtPoint(1, c.x, c.y);
+}
+
+document.getElementById("zoomFitDesignBtn").addEventListener("click", fitDesignView);
+document.getElementById("zoomFitArtboardBtn").addEventListener("click", fitArtboardView);
+document.getElementById("zoom100Btn").addEventListener("click", zoomToHundred);
+
+// --- Pan: Space + drag or middle-mouse drag, anywhere over the preview ---
+// Handled in the capture phase and stopped there, so the layer click-select and the
+// origin-handle drag never see a pan gesture.
+{
+  const preview = document.querySelector(".preview");
+  let spaceHeld = false;
+  let pointerOver = false;
+  let pan = null;
+
+  preview.addEventListener("pointerenter", () => (pointerOver = true));
+  preview.addEventListener("pointerleave", () => (pointerOver = false));
+
+  const setSpace = (held) => {
+    spaceHeld = held;
+    preview.classList.toggle("pan-ready", held);
+  };
+
+  document.addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const el = document.activeElement;
+    // Typing a space (or pressing it on a select) must keep working. Elsewhere Space is
+    // only the pan key while the pointer is over the preview or nothing has focus, so it
+    // still presses a focused button when you are working in the sidebar.
+    if (isTextEditingTarget(el) || (el && el.tagName === "SELECT")) return;
+    if (!pointerOver && el && el !== document.body) return;
+    e.preventDefault(); // no page scroll, no button press
+    setSpace(true);
+  });
+  document.addEventListener("keyup", (e) => {
+    if (e.code === "Space") setSpace(false);
+  });
+  window.addEventListener("blur", () => setSpace(false));
+
+  preview.addEventListener(
+    "pointerdown",
     (e) => {
-      if (!e.altKey) return;
-      e.preventDefault(); // Alt+wheel otherwise triggers browser-level scroll/navigation
-
-      const svg = document.getElementById(svgId);
-      const preview = document.querySelector(".preview");
-      // Where the cursor sits within the artboard, as a fraction of its size — captured
-      // BEFORE resizing so the same point of the artwork can be nudged back under the
-      // cursor afterwards. Measured again after the resize rather than predicted, since
-      // .preview centres its children and its scroll extent is driven by whichever child
-      // is widest, not necessarily this one.
-      //
-      // Best-effort by design: the scroll can only compensate as far as the pane actually
-      // has room to scroll, so at the extremes (already hard against an edge) the zoom
-      // falls back to expanding about the centre. That's strictly better than not
-      // compensating at all, and fully anchoring would mean restructuring the preview
-      // layout — far more than this shortcut is worth.
-      const before = svg.getBoundingClientRect();
-      const relX = (e.clientX - before.left) / before.width;
-      const relY = (e.clientY - before.top) / before.height;
-
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, getZoom() * factor)));
-      applyZoom();
-
-      const after = svg.getBoundingClientRect();
-      preview.scrollLeft += after.left + relX * after.width - e.clientX;
-      preview.scrollTop += after.top + relY * after.height - e.clientY;
+      if (!(e.button === 1 || (e.button === 0 && spaceHeld))) return;
+      // the zoom box and fps buttons keep working
+      if (e.target.closest && e.target.closest(".viewport-tools, .preview-fps-control")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pan = { id: e.pointerId, x: e.clientX, y: e.clientY, doneX: 0, doneY: 0 };
+      preview.setPointerCapture(e.pointerId);
+      preview.classList.add("panning");
     },
-    { passive: false }
+    true
   );
+  // keeps the browser's middle-click auto-scroll from starting
+  preview.addEventListener("mousedown", (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+  preview.addEventListener("pointermove", (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    // Scrolling is in whole pixels: steer by the total distance from where the drag
+    // began, so rounding errors don't add up over a long drag.
+    const wantX = Math.round(pan.x - e.clientX);
+    const wantY = Math.round(pan.y - e.clientY);
+    scrollPreviewBy(wantX - pan.doneX, wantY - pan.doneY);
+    pan.doneX = wantX;
+    pan.doneY = wantY;
+  });
+  const endPan = (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    pan = null;
+    preview.classList.remove("panning");
+  };
+  preview.addEventListener("pointerup", endPan);
+  preview.addEventListener("pointercancel", endPan);
 }
 
-attachAltWheelZoom("canvas", () => ringZoom, (z) => (ringZoom = z));
-attachAltWheelZoom("tileCanvas", () => tileZoom, (z) => (tileZoom = z));
+// F frames the whole design, 0 the artboard, 1 sets 100% (not while typing, and never
+// with Ctrl/Cmd/Alt, which belong to the other shortcuts).
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (isTextEditingTarget(document.activeElement)) return;
+  if (!document.getElementById("localFontsDialog").hidden) return;
+  const key = e.key.toLowerCase();
+  if (key === "f") fitDesignView();
+  else if (e.code === "Digit0" || key === "0") fitArtboardView();
+  else if (e.code === "Digit1" || key === "1") zoomToHundred();
+  else return;
+  e.preventDefault();
+});
 
 {
   const zoomBox = document.getElementById("ringZoomNum");
@@ -3370,8 +3969,9 @@ function renderStraight() {
         line.setAttribute("stroke-width", layer.strokeWidth);
         g.appendChild(line);
       }
-    } else if (layer.type === "motif" || layer.type === "text") {
-      if (layer.type === "text") ensureTextRaster(layer);
+    } else if (layer.type === "text") {
+      drawRingTextStrip(g, layer, maxR, padY, centerX);
+    } else if (layer.type === "motif") {
       // Bend has no meaning without curvature, so the straight view always shows the
       // flat artwork even for a bent layer.
       drawMotifFlat(g, layer, distributeStraight(layer, maxR, padY, centerX));
@@ -3899,7 +4499,7 @@ function smCreateTextLayer(name) {
     position: 0,
     visible: true,
     ...textDefaults(),
-    size: 300,
+    size: 60,
     count: 2,
     startOffset: 0,
     rotation: 0,
@@ -4527,6 +5127,11 @@ function smRefreshControls() {
       document.getElementById("smTextColor").value = active.textColor;
       smSetFieldValue("smTextLetterSpacing", active.letterSpacing || 0);
       document.getElementById("smTextAlign").value = active.textAlign || "center";
+    }
+    document.getElementById("smMotifSizeLabel").textContent = isText ? "Letter size (font size)" : "Size";
+    for (const id of ["smMotifSize", "smMotifSizeNum"]) {
+      document.getElementById(id).setAttribute("min", isText ? TEXT_SIZE_MIN : 25);
+      document.getElementById(id).setAttribute("max", isText ? TEXT_SIZE_MAX : 1250);
     }
     if (hasImage) {
       document.getElementById("smMotifPreviewImg").src = active.imageDataUrl;
@@ -5572,6 +6177,9 @@ function setMode(mode) {
   document.getElementById("circleModePreview").style.display = mode === "circle" ? "" : "none";
   document.getElementById("straightModePreview").style.display = mode === "straight" ? "" : "none";
   if (mode === "straight") smRender();
+  // "Fit design" only means something for the Ring editor's off-artboard artwork.
+  document.getElementById("zoomFitDesignBtn").hidden = mode !== "circle";
+  syncOverhang();
   // The Zoom box follows whichever artboard is showing, and the on-screen readouts can
   // only be measured once the newly visible mode is laid out.
   applyZoom();
