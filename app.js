@@ -150,6 +150,31 @@ function createTextLayer(name, radius) {
   };
 }
 
+// A free straight line (Circle mode only), not tied to any ring: it has no radius and no
+// arc cut, only an angle (0 = up, clockwise, like everywhere else), a length and an offset
+// (where its middle sits along its own direction, measured from the layer's origin: 0 puts
+// the origin at the middle, length / 2 makes a ray that starts at the origin). Copies are
+// rotated about the origin; see drawStraightLine.
+function createStraightLayer(name) {
+  return {
+    id: nextLayerId++,
+    type: "straight",
+    name,
+    visible: true,
+    angle: 0,
+    length: 3000,
+    offset: 0,
+    strokeWidth: 10,
+    strokeColor: "#e0e0e0",
+    lineStyle: "solid", // solid | dashed | dotted
+    dashLength: 40,
+    dashGap: 30,
+    count: 1,
+    animSpeed: 0,
+    ...placementDefaults(),
+  };
+}
+
 // --- Fonts & text rasterising (Text layers, both modes) ---
 // A Text layer is an asset layer whose bitmap is drawn from a string: the text is
 // rasterised onto an offscreen canvas and handed to the same motif pipeline (copies,
@@ -843,6 +868,9 @@ const CONTROL_PROPERTY = {
   shapeCount: "count", shapeStartAngle: "startAngle",
   shapeFlip: "flip", shapeFlipHorizontal: "flipHorizontal", shapeAlternateFlip: "alternateFlip", shapeFlipOffset: "flipOffset",
   textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign", textFitArc: "fitArc",
+  straightAngle: "angle", straightLength: "length", straightOffset: "offset", straightStrokeWidth: "strokeWidth",
+  straightStrokeColor: "strokeColor", straightStyle: "lineStyle", straightDashLength: "dashLength",
+  straightDashGap: "dashGap", straightCount: "count",
   placeOriginX: "originX", placeOriginY: "originY", placeMirror: "mirror",
   placeArcStart: "arcStart", placeArcSweep: "arcSweep", placeGapCount: "gapCount", placeGapSize: "gapSize",
 
@@ -1124,6 +1152,16 @@ function addTextLayer() {
   render();
 }
 
+function addStraightLayer() {
+  pushHistory();
+  const layer = createStraightLayer(`Straight ${nextLayerId}`);
+  state.layers.push(layer);
+  state.activeLayerId = layer.id;
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
 function duplicateLayer() {
   const active = getActiveLayer();
   if (!active) return;
@@ -1307,7 +1345,7 @@ function updateLayerListSelection() {
 // maps a key to what the user should SEE. "motif" is shown as "asset" — the rename was
 // user-facing only, and changing the stored key would break every project file already
 // out there.
-const TYPE_DISPLAY_NAMES = { motif: "asset" };
+const TYPE_DISPLAY_NAMES = { motif: "asset", straight: "straight line" };
 
 function layerTypeLabel(layer) {
   const raw = layer.type === "shape" ? layer.shapeKind : layer.type;
@@ -1386,6 +1424,7 @@ function refreshControls() {
   const motifPanel = document.getElementById("motifPanel");
   const linePanel = document.getElementById("linePanel");
   const textPanel = document.getElementById("textPanel");
+  const straightPanel = document.getElementById("straightPanel");
 
   const shapePanel = document.getElementById("shapePanel");
 
@@ -1401,7 +1440,9 @@ function refreshControls() {
   const typeSelect = document.getElementById("layerTypeSelect");
   const canChangeType = active && CONVERTIBLE_TYPES.includes(active.type);
   typeField.classList.toggle("disabled", !canChangeType);
-  typeSelect.value = canChangeType ? active.type : "motif";
+  // A straight line has no counterpart to convert to (nothing to carry over), so its
+  // selector just shows its own, disabled, entry.
+  typeSelect.value = canChangeType ? active.type : active && active.type === "straight" ? "straight" : "motif";
 
   // Animation speed: same "lives in the Layers panel" reasoning as opacity. A full,
   // unbroken ring looks identical at every rotation, but a cut or gapped one visibly
@@ -1412,7 +1453,7 @@ function refreshControls() {
 
   const placementPanel = document.getElementById("placementPanel");
   if (!active) {
-    [ringPanel, motifPanel, linePanel, shapePanel, textPanel, placementPanel].forEach((p) => p.classList.add("disabled", "hidden"));
+    [ringPanel, motifPanel, linePanel, shapePanel, textPanel, straightPanel, placementPanel].forEach((p) => p.classList.add("disabled", "hidden"));
     return;
   }
 
@@ -1425,8 +1466,10 @@ function refreshControls() {
   setFieldValue("placeArcSweep", place.arcSweep);
   setFieldValue("placeGapCount", place.gapCount);
   setFieldValue("placeGapSize", place.gapSize);
+  // A straight line has no circle to cut, so the arc and gap fields don't apply to it.
+  document.querySelectorAll("#placementPanel [data-arc-only]").forEach((el) => (el.style.display = active.type === "straight" ? "none" : ""));
 
-  [ringPanel, motifPanel, linePanel, shapePanel, textPanel].forEach((p) => p.classList.remove("disabled"));
+  [ringPanel, motifPanel, linePanel, shapePanel, textPanel, straightPanel].forEach((p) => p.classList.remove("disabled"));
   const isText = active.type === "text";
   ringPanel.classList.toggle("hidden", active.type !== "ring");
   // A Text layer uses the Asset panel for everything except the bitmap itself.
@@ -1434,8 +1477,23 @@ function refreshControls() {
   textPanel.classList.toggle("hidden", !isText);
   linePanel.classList.toggle("hidden", active.type !== "line");
   shapePanel.classList.toggle("hidden", active.type !== "shape");
+  straightPanel.classList.toggle("hidden", active.type !== "straight");
 
-  if (active.type === "ring") {
+  if (active.type === "straight") {
+    setFieldValue("straightAngle", active.angle);
+    setFieldValue("straightLength", active.length);
+    setFieldValue("straightOffset", active.offset);
+    setFieldValue("straightStrokeWidth", active.strokeWidth);
+    document.getElementById("straightStrokeColor").value = active.strokeColor;
+    document.getElementById("straightStyle").value = active.lineStyle;
+    setFieldValue("straightDashLength", active.dashLength);
+    setFieldValue("straightDashGap", active.dashGap);
+    setFieldValue("straightCount", active.count);
+    // A dot has no length of its own, only a spacing.
+    document.getElementById("straightDashLengthField").style.display = active.lineStyle === "dashed" ? "" : "none";
+    document.getElementById("straightDashGapField").style.display = active.lineStyle === "solid" ? "none" : "";
+    document.getElementById("straightCountHint").textContent = active.offset ? "Copies spread over 360°." : "Copies spread over 180° (the line is symmetric).";
+  } else if (active.type === "ring") {
     setFieldValue("ringRadius", active.radius);
     setFieldValue("ringStrokeWidth", active.strokeWidth);
     document.getElementById("ringStrokeColor").value = active.strokeColor;
@@ -1638,6 +1696,18 @@ bindControl("lineStartAngle", (l, el) => (l.startAngle = Number(el.value)));
 bindControl("lineRotation", (l, el) => (l.rotation = Number(el.value)));
 bindControl("lineFollowRing", (l, el) => (l.followRing = el.checked));
 
+bindControl("straightAngle", (l, el) => (l.angle = Number(el.value)));
+bindControl("straightLength", (l, el) => (l.length = Math.max(1, Number(el.value))));
+bindControl("straightOffset", (l, el) => (l.offset = Number(el.value)));
+bindControl("straightStrokeWidth", (l, el) => (l.strokeWidth = Number(el.value)));
+bindControl("straightStrokeColor", (l, el) => (l.strokeColor = el.value));
+bindControl("straightStyle", (l, el) => {
+  if (el.value) l.lineStyle = el.value;
+});
+bindControl("straightDashLength", (l, el) => (l.dashLength = Math.max(1, Number(el.value))));
+bindControl("straightDashGap", (l, el) => (l.dashGap = Math.max(1, Number(el.value))));
+bindControl("straightCount", (l, el) => (l.count = Math.max(1, Math.round(Number(el.value)))));
+
 bindControl("shapeKind", (l, el) => {
   const kind = el.value;
   if (l.lockRatio !== false) {
@@ -1744,6 +1814,7 @@ document.getElementById("addMotifBtn").addEventListener("click", addMotifLayer);
 document.getElementById("addLineBtn").addEventListener("click", addLineLayer);
 document.getElementById("addShapeBtn").addEventListener("click", addShapeLayer);
 document.getElementById("addTextBtn").addEventListener("click", addTextLayer);
+document.getElementById("addStraightBtn").addEventListener("click", addStraightLayer);
 document.getElementById("duplicateLayerBtn").addEventListener("click", duplicateLayer);
 document.getElementById("renameLayerBtn").addEventListener("click", () => {
   if (state.activeLayerId != null) startRename(state.activeLayerId);
@@ -2814,6 +2885,78 @@ function drawLine(g, layer, items, roughness, roughScale = ROUGH_SCALE) {
   }
 }
 
+// Where the copies of a straight line point, in degrees (0 = up, clockwise), spin included.
+// A line through the origin looks the same turned half a lap, so with offset 0 the copies
+// share 180 degrees; otherwise (a ray, or any line off to one side) they share the full 360.
+function straightLineAngles(layer) {
+  const n = Math.max(1, Math.floor(layer.count || 1));
+  const span = layer.offset ? 360 : 180;
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  const angles = [];
+  for (let i = 0; i < n; i++) angles.push(layer.angle + spin + (i * span) / n);
+  return angles;
+}
+
+// A free straight line (Circle mode). Drawn in a frame centred on CENTER and pointing up,
+// then turned by each copy's angle, so the roughened outline can be shared by every copy
+// and the offset stays a plain translation along the line. The rough cache key therefore
+// only needs the length: neither offset, angle nor dash style changes the sampled points.
+// Dashes are a stroke-dasharray inherited by the paths below it (dotted = zero-length
+// dashes + round caps); a roughened line keeps its own random breaks, so its dashes simply
+// restart after each one.
+function drawStraightLine(g, layer, roughness) {
+  const half = layer.length / 2;
+  const style = layer.lineStyle || "solid";
+  let roughDefId = null;
+  if (roughness > 0) {
+    const passes = getRoughOutlinePasses(
+      layer, "straight", String(layer.length),
+      () => sampleSegmentPoints(0, half, 0, -half, roughSampleSpacing(ROUGH_SCALE)),
+      false, roughness
+    );
+    roughDefId = `rough-straight-${layer.id}`;
+    const defs = document.createElementNS(SVG_NS, "defs");
+    appendRoughOutlineDef(defs, roughDefId, passes, layer.strokeColor);
+    g.appendChild(defs);
+  }
+  const hitWidth = Math.max(24, layer.strokeWidth);
+  for (const angle of straightLineAngles(layer)) {
+    const copy = document.createElementNS(SVG_NS, "g");
+    copy.setAttribute("transform", `translate(${CENTER} ${CENTER}) rotate(${angle}) translate(0 ${-layer.offset})`);
+    if (style === "dashed") copy.setAttribute("stroke-dasharray", `${layer.dashLength} ${layer.dashGap}`);
+    else if (style === "dotted") copy.setAttribute("stroke-dasharray", `0 ${layer.dashGap}`);
+    // Dashed and dotted lines have little to click on, so give every line a generous,
+    // invisible hit area (editor-only: it is not part of the artwork or any export).
+    const hit = document.createElementNS(SVG_NS, "line");
+    hit.setAttribute("class", "editor-only");
+    hit.setAttribute("x1", 0);
+    hit.setAttribute("y1", half);
+    hit.setAttribute("x2", 0);
+    hit.setAttribute("y2", -half);
+    hit.setAttribute("stroke", "transparent");
+    hit.setAttribute("stroke-width", hitWidth);
+    hit.setAttribute("stroke-dasharray", "none");
+    hit.setAttribute("pointer-events", "stroke");
+    copy.appendChild(hit);
+    if (roughDefId) {
+      const use = document.createElementNS(SVG_NS, "use");
+      use.setAttribute("href", `#${roughDefId}`);
+      copy.appendChild(use);
+    } else {
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("x1", 0);
+      line.setAttribute("y1", half);
+      line.setAttribute("x2", 0);
+      line.setAttribute("y2", -half);
+      line.setAttribute("stroke", layer.strokeColor);
+      line.setAttribute("stroke-width", layer.strokeWidth);
+      line.setAttribute("stroke-linecap", style === "dashed" ? "butt" : "round");
+      copy.appendChild(line);
+    }
+    g.appendChild(copy);
+  }
+}
+
 // A vertical flip mirrors a shape about its OWN centre, so any shape that isn't
 // symmetric top-to-bottom (a triangle, a half circle) lands somewhere different from its
 // un-flipped neighbours — with Alternate flip on, every other copy looks out of line
@@ -3015,6 +3158,106 @@ function appendOriginHandles(svg) {
   }
 }
 
+// Editor-only handles on the selected layers, next to the origin handle:
+//  - radius (rings, assets, lines, shapes, text): on the ring at the start of the visible
+//    arc, drag in or out to change the radius;
+//  - rotate: a little further out along the same ray, drag around the layer's origin;
+//  - straight lines: a handle on each end, plus the rotate handle beyond the far end.
+// Each handle group is drawn in screen px (scale(unit)) and remembers its anchor in
+// data-h* so rescaleHandles() can keep it a constant size when only the zoom changes.
+const HANDLE_REACH_PX = 38; // how far the rotate handle sits beyond its anchor, in screen px
+const RADIUS_MIN = 10;
+const RADIUS_MAX = 8192;
+const HANDLE_SNAP_RADIUS = 10;
+const HANDLE_SNAP_DEG = 15;
+const HANDLE_BLUE = "#4f8cff";
+const HANDLE_AMBER = "#ffb454";
+
+function layerSpin(layer) {
+  return (layer.animSpeed || 0) * getAnimElapsedSeconds();
+}
+
+function svgUnitsPerPx(svg) {
+  const ctm = svg.getScreenCTM();
+  return 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2);
+}
+
+function unitVector(deg) {
+  const a = (deg * Math.PI) / 180;
+  return { x: Math.sin(a), y: -Math.cos(a) };
+}
+
+// Ends of a straight line's first copy in canvas coordinates, with the angle it points at
+// (spin included): p1 is the near end (offset - length / 2), p2 the far end.
+function straightEnds(layer) {
+  const p = placementOf(layer);
+  const o = { x: CENTER + p.originX, y: CENTER + p.originY };
+  const ang = layer.angle + layerSpin(layer);
+  const d = unitVector(ang);
+  const at = (t) => ({ x: o.x + d.x * t, y: o.y + d.y * t });
+  return { o, ang, p1: at(layer.offset - layer.length / 2), p2: at(layer.offset + layer.length / 2) };
+}
+
+function appendHandleGroup(svg, x, y, rotDeg, unit, markup) {
+  const h = document.createElementNS(SVG_NS, "g");
+  h.setAttribute("class", "editor-only layer-handle");
+  h.dataset.hx = x;
+  h.dataset.hy = y;
+  h.dataset.hrot = rotDeg;
+  h.setAttribute("transform", `translate(${x} ${y}) rotate(${rotDeg}) scale(${unit})`);
+  h.innerHTML = markup;
+  svg.appendChild(h);
+}
+
+const ROTATE_HANDLE_MARKUP = (id) => `
+  <line x1="0" y1="0" x2="0" y2="${-HANDLE_REACH_PX}" stroke="${HANDLE_AMBER}" stroke-width="1.5" stroke-opacity="0.8" pointer-events="none" />
+  <g data-handle="rotate" data-handle-layer="${id}" transform="translate(0 ${-HANDLE_REACH_PX})">
+    <circle r="14" fill="transparent" pointer-events="all" />
+    <circle r="8" fill="#1d2026" stroke="${HANDLE_AMBER}" stroke-width="2" />
+    <path d="M -4 1 A 4 4 0 1 0 0 -4" fill="none" stroke="${HANDLE_AMBER}" stroke-width="1.8" />
+    <path d="M -2 -7 L 2 -4 L -2 -1 Z" fill="${HANDLE_AMBER}" />
+  </g>`;
+
+function appendLayerHandles(svg) {
+  const unit = svgUnitsPerPx(svg);
+  for (const layer of getSelectedLayers()) {
+    if (layer.visible === false) continue;
+    if (layer.type === "straight") {
+      const e = straightEnds(layer);
+      const end = (kind) => `<g data-handle="${kind}" data-handle-layer="${layer.id}">
+        <circle r="14" fill="transparent" pointer-events="all" />
+        <rect x="-6" y="-6" width="12" height="12" fill="#1d2026" stroke="${HANDLE_BLUE}" stroke-width="2" /></g>`;
+      appendHandleGroup(svg, e.p1.x, e.p1.y, e.ang, unit, end("end1"));
+      appendHandleGroup(svg, e.p2.x, e.p2.y, e.ang, unit, end("end2") + ROTATE_HANDLE_MARKUP(layer.id));
+      continue;
+    }
+    if (!(layer.radius > 0)) continue;
+    const p = placementOf(layer);
+    const ang = visibleArc(layer).pieces[0][0] + layerSpin(layer);
+    const [px, py] = arcPoint(layer.radius, ang);
+    appendHandleGroup(svg, px + p.originX, py + p.originY, ang, unit, `
+      <g data-handle="radius" data-handle-layer="${layer.id}">
+        <circle r="14" fill="transparent" pointer-events="all" />
+        <circle r="7" fill="#1d2026" stroke="${HANDLE_BLUE}" stroke-width="2" />
+        <path d="M 0 -11 L -3.5 -7 H 3.5 Z M 0 11 L -3.5 7 H 3.5 Z" fill="${HANDLE_BLUE}" />
+      </g>` + ROTATE_HANDLE_MARKUP(layer.id));
+  }
+}
+
+// Zooming changes how big a screen px is in canvas units without rebuilding the SVG, so
+// the handles are re-scaled in place.
+function rescaleHandles() {
+  const svg = document.getElementById("canvas");
+  const unit = svgUnitsPerPx(svg);
+  svg.querySelectorAll(".layer-handle").forEach((h) => {
+    h.setAttribute("transform", `translate(${h.dataset.hx} ${h.dataset.hy}) rotate(${h.dataset.hrot}) scale(${unit})`);
+  });
+  svg.querySelectorAll(".origin-handle").forEach((h) => {
+    const m = /translate\(([^)]*)\)/.exec(h.getAttribute("transform"));
+    if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${unit})`);
+  });
+}
+
 // Artwork outside the artboard stays visible in the editor but is not exported. So that
 // it is clear what the export covers, the area outside the artboard (as far as there is
 // artwork) is shaded and the artboard edge drawn. Editor-only: exports strip it.
@@ -3118,6 +3361,8 @@ function render() {
       }
     } else if (layer.type === "line") {
       drawLine(g, layer, distributeAngles(layer), state.roughness);
+    } else if (layer.type === "straight") {
+      drawStraightLine(g, layer, state.roughness);
     } else if (layer.type === "shape") {
       if (!layer.bend) {
         drawShape(g, layer, distributeAngles(layer), state.roughness);
@@ -3166,7 +3411,8 @@ function render() {
   renderStraight();
 
   const active = getActiveLayer();
-  if (active) {
+  // (a straight line has no ring to outline; its end handles show where it is instead)
+  if (active && active.type !== "straight") {
     const indicator = document.createElementNS(SVG_NS, "circle");
     const activePlace = placementOf(active);
     indicator.setAttribute("cx", CENTER + activePlace.originX);
@@ -3208,6 +3454,8 @@ function render() {
     <line x1="${CENTER}" y1="${CENTER - 32}" x2="${CENTER}" y2="${CENTER + 32}" />`;
   svg.appendChild(cross);
 
+  // Under the origin handle: where a ray starts at the origin, that one stays grabbable.
+  appendLayerHandles(svg);
   appendOriginHandles(svg);
   syncOverhang();
 }
@@ -3320,11 +3568,185 @@ function endOriginDrag(e) {
   originDrag = null;
 }
 
+// --- Radius / rotate / end-point handle drags ---
+// Same shape as the origin drag: the pointer is captured on the <svg>, every move re-derives
+// the result from the values stored at drag start (so rounding never accumulates), and one
+// undo entry is pushed on the first real change. The sidebar fields are refreshed on every
+// move, and a small readout follows the pointer (a plain DOM element, so it is never part
+// of the SVG that render() rebuilds and never exported).
+let handleDrag = null;
+
+function rotateKeyOf(layer) {
+  return layer.type === "ring" ? "arcStart" : layer.type === "straight" ? "angle" : "startAngle";
+}
+
+function wrapDegrees(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+
+function showDragReadout(e, text) {
+  let el = document.getElementById("dragReadout");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "dragReadout";
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.style.left = `${e.clientX + 16}px`;
+  el.style.top = `${e.clientY + 16}px`;
+  el.hidden = false;
+}
+
+function beginHandleDrag(e, kind, layerId) {
+  const lead = state.layers.find((l) => l.id === layerId);
+  if (!lead) return;
+  const svg = document.getElementById("canvas");
+  const p = placementOf(lead);
+  const base = new Map();
+  for (const l of getSelectedLayers()) {
+    const rk = rotateKeyOf(l);
+    base.set(l.id, {
+      radius: l.radius,
+      rot: l[rk],
+      angle: l.angle, length: l.length, offset: l.offset,
+      originX: placementOf(l).originX,
+      originY: placementOf(l).originY,
+    });
+  }
+  handleDrag = {
+    kind,
+    pointerId: e.pointerId,
+    leadId: lead.id,
+    start: clientToSvgPoint(svg, e.clientX, e.clientY),
+    origin: { x: CENTER + p.originX, y: CENTER + p.originY },
+    base,
+    moved: false,
+  };
+  svg.setPointerCapture(e.pointerId);
+}
+
+function moveHandleDrag(e) {
+  const d = handleDrag;
+  const svg = document.getElementById("canvas");
+  const lead = state.layers.find((l) => l.id === d.leadId);
+  if (!lead) return;
+  const pt = clientToSvgPoint(svg, e.clientX, e.clientY);
+  const targets = getSelectedLayers();
+  let readout = "";
+
+  if (d.kind === "radius") {
+    const rings = targets.filter((l) => d.base.get(l.id) && l.radius != null);
+    const dist = (q) => Math.hypot(q.x - d.origin.x, q.y - d.origin.y);
+    let delta = dist(pt) - dist(d.start);
+    const r0 = d.base.get(lead.id).radius;
+    delta = e.shiftKey ? Math.round((r0 + delta) / HANDLE_SNAP_RADIUS) * HANDLE_SNAP_RADIUS - r0 : Math.round(delta);
+    // One shared delta, held back as a whole so the smallest/largest layer stops at the limit
+    // without the others drifting out of step.
+    delta = Math.max(delta, RADIUS_MIN - Math.min(...rings.map((l) => d.base.get(l.id).radius)));
+    delta = Math.min(delta, RADIUS_MAX - Math.max(...rings.map((l) => d.base.get(l.id).radius)));
+    if (!d.moved) {
+      if (delta === 0) return;
+      d.moved = true;
+      pushHistory();
+    }
+    for (const l of rings) l.radius = d.base.get(l.id).radius + delta;
+    readout = `r ${lead.radius}`;
+  } else if (d.kind === "rotate") {
+    const angleOf = (q) => (Math.atan2(q.x - d.origin.x, -(q.y - d.origin.y)) * 180) / Math.PI;
+    let delta = angleOf(pt) - angleOf(d.start);
+    const v0 = d.base.get(lead.id).rot;
+    delta = e.shiftKey ? Math.round((v0 + delta) / HANDLE_SNAP_DEG) * HANDLE_SNAP_DEG - v0 : Math.round(delta);
+    if (!d.moved) {
+      if (wrapDegrees(delta) === 0) return;
+      d.moved = true;
+      pushHistory();
+    }
+    for (const l of targets) {
+      if (d.base.has(l.id)) l[rotateKeyOf(l)] = wrapDegrees(d.base.get(l.id).rot + delta);
+    }
+    readout = `${lead[rotateKeyOf(lead)]}°`;
+  } else {
+    // end1 / end2: only the layer whose end was grabbed changes.
+    const b = d.base.get(lead.id);
+    const o0 = { x: CENTER + b.originX, y: CENTER + b.originY };
+    // Back into the line's own, unspun frame (relative to its origin).
+    const spin = (-layerSpin(lead) * Math.PI) / 180;
+    const rx = pt.x - o0.x, ry = pt.y - o0.y;
+    const v = { x: rx * Math.cos(spin) - ry * Math.sin(spin), y: rx * Math.sin(spin) + ry * Math.cos(spin) };
+    const dir0 = unitVector(b.angle);
+    const grabbed2 = d.kind === "end2";
+    let p1, p2;
+    if (e.altKey) {
+      // symmetric about the origin
+      p1 = grabbed2 ? { x: -v.x, y: -v.y } : v;
+      p2 = grabbed2 ? v : { x: -v.x, y: -v.y };
+    } else {
+      const t = b.offset + (grabbed2 ? -1 : 1) * (b.length / 2);
+      const fixed = { x: dir0.x * t, y: dir0.y * t };
+      p1 = grabbed2 ? fixed : v;
+      p2 = grabbed2 ? v : fixed;
+    }
+    let len = Math.max(1, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+    let ang = (Math.atan2(p2.x - p1.x, -(p2.y - p1.y)) * 180) / Math.PI;
+    if (e.shiftKey) {
+      ang = Math.round(ang / HANDLE_SNAP_DEG) * HANDLE_SNAP_DEG;
+      const dd = unitVector(ang);
+      if (e.altKey) {
+        p2 = { x: (dd.x * len) / 2, y: (dd.y * len) / 2 };
+        p1 = { x: -p2.x, y: -p2.y };
+      } else if (grabbed2) {
+        p2 = { x: p1.x + dd.x * len, y: p1.y + dd.y * len };
+      } else {
+        p1 = { x: p2.x - dd.x * len, y: p2.y - dd.y * len };
+      }
+    }
+    ang = Math.round(wrapDegrees(ang) * 100) / 100;
+    len = Math.round(len * 10) / 10;
+    const dir = unitVector(ang);
+    // The origin keeps its place along the line (a ray stays a ray, a centred line stays
+    // centred) and follows the line when it moves; Alt keeps it where it is.
+    const offset = e.altKey ? 0 : Math.round(((b.length ? b.offset / b.length : 0) * len) * 10) / 10;
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    const ox = e.altKey ? o0.x : o0.x + mid.x - dir.x * offset;
+    const oy = e.altKey ? o0.y : o0.y + mid.y - dir.y * offset;
+    if (!d.moved) {
+      if (ang === b.angle && len === b.length && offset === b.offset && ox === o0.x && oy === o0.y) return;
+      d.moved = true;
+      pushHistory();
+    }
+    lead.angle = ang;
+    lead.length = len;
+    lead.offset = offset;
+    lead.originX = Math.round((ox - CENTER) * 10) / 10;
+    lead.originY = Math.round((oy - CENTER) * 10) / 10;
+    readout = `${ang}° · ${len}`;
+  }
+  showDragReadout(e, readout);
+  refreshControls();
+  render();
+}
+
+function endHandleDrag(e) {
+  if (!handleDrag) return;
+  const svg = document.getElementById("canvas");
+  if (svg.hasPointerCapture(handleDrag.pointerId)) svg.releasePointerCapture(handleDrag.pointerId);
+  handleDrag = null;
+  const el = document.getElementById("dragReadout");
+  if (el) el.hidden = true;
+}
+
 document.getElementById("canvas").addEventListener("pointermove", (e) => {
   if (originDrag && e.pointerId === originDrag.pointerId) moveOriginDrag(e);
+  else if (handleDrag && e.pointerId === handleDrag.pointerId) moveHandleDrag(e);
 });
-document.getElementById("canvas").addEventListener("pointerup", endOriginDrag);
-document.getElementById("canvas").addEventListener("pointercancel", endOriginDrag);
+document.getElementById("canvas").addEventListener("pointerup", (e) => {
+  endOriginDrag(e);
+  endHandleDrag(e);
+});
+document.getElementById("canvas").addEventListener("pointercancel", (e) => {
+  endOriginDrag(e);
+  endHandleDrag(e);
+});
 
 document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
@@ -3337,6 +3759,12 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
     }
     originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, moved: false };
     svg.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
+  const handle = e.target.closest("[data-handle]");
+  if (handle) {
+    beginHandleDrag(e, handle.dataset.handle, Number(handle.dataset.handleLayer));
     e.preventDefault();
     return;
   }
@@ -3393,6 +3821,7 @@ function applyZoom() {
   syncStraightPreviewToRing();
   syncOverhang(); // the room for off-artboard artwork is in screen px, so it follows the zoom
   updateOnScreenSizes();
+  rescaleHandles();
 }
 
 function setCurrentZoom(percent) {
@@ -3776,6 +4205,7 @@ document.addEventListener("keydown", (e) => {
   window.addEventListener("resize", () => {
     syncStraightPreviewToRing();
     updateOnScreenSizes();
+    rescaleHandles();
   });
   applyZoom();
 }
@@ -3901,7 +4331,9 @@ function drawStraightRingArcs(g, layer, maxR, padY, centerX) {
 function renderStraight() {
   const svg = document.getElementById("straightCanvas");
   svg.innerHTML = "";
-  if (state.layers.length === 0) {
+  // Free straight lines belong to no ring, so there is nothing to unroll for them.
+  const stripLayers = state.layers.filter((l) => l.type !== "straight");
+  if (stripLayers.length === 0) {
     straightExportWidth = CANVAS_SIZE;
     straightExportHeight = 400;
     svg.setAttribute("viewBox", `0 0 ${straightExportWidth} ${straightExportHeight}`);
@@ -3911,11 +4343,11 @@ function renderStraight() {
     return;
   }
 
-  const radii = state.layers.map((l) => l.radius);
+  const radii = stripLayers.map((l) => l.radius);
   const minR = Math.min(...radii);
   const maxR = Math.max(...radii);
 
-  const pad = Math.max(50, ...state.layers.map(layerHalfExtent));
+  const pad = Math.max(50, ...stripLayers.map(layerHalfExtent));
   const padX = pad;
   const padY = pad;
   const contentWidth = Math.max(1, Math.ceil(2 * Math.PI * maxR));
@@ -3928,7 +4360,7 @@ function renderStraight() {
     `${Math.round(straightExportWidth)} × ${Math.round(straightExportHeight)} px`;
   const centerX = straightExportWidth / 2;
 
-  for (const layer of state.layers) {
+  for (const layer of stripLayers) {
     const g = document.createElementNS(SVG_NS, "g");
     g.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
 

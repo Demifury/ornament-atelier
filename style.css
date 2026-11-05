@@ -811,6 +811,28 @@ svg#canvas {
   cursor: move;
 }
 
+.layer-handle [data-handle] {
+  cursor: grab;
+}
+
+/* Live value next to the pointer while a radius / rotate / end handle is dragged. */
+#dragReadout {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(11, 12, 14, 0.88);
+  border: 1px solid rgba(143, 184, 240, 0.5);
+  color: #e8eefc;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+#dragReadout[hidden] {
+  display: none;
+}
+
 svg.straight-canvas {
   /* Not sized here at all — setStraightPreviewScale() sets an explicit px width/height
      from the viewBox so this strip renders at a FIXED units-per-pixel, the same scale as

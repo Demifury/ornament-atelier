@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=65`, `style.css?v=41`); bump those
+`index.html` cache-busts with query strings (`app.js?v=66`, `style.css?v=42`); bump those
 when changing either file.
 
 ## Two modes
@@ -62,6 +62,27 @@ keeps the lettering as a flat bitmap (very long text is scaled down to fit the S
 **Placement** (Circle mode, every layer): move a layer's centre with the origin fields or by
 dragging its handle in the preview, cut the circle down to an arc, break it into pieces with
 gaps, and mirror the layer about the canvas centre lines.
+
+**Straight line** (Circle mode, **+ Straight**): a free line that belongs to no ring — a vertical axis
+through a stack of circles, a long chord, or a starburst of lines through a centre. Set its **angle**
+(0 = up, clockwise), **length** and **offset** (where the line's middle sits along its own direction,
+measured from the origin: 0 centres the line on the origin, half the length makes a ray that starts
+there), plus stroke width and colour and a **style** of solid, dashed or dotted (with dash length and
+gap). **Count** turns copies about the origin, over 180° for a centred line and 360° otherwise.
+Origin, mirror, animation speed, opacity and roughness work as for other layers; the arc and gap
+fields do not apply, and the unrolled Straight preview leaves these lines out.
+
+**Handles** (Circle mode): selected layers get handles in the preview, all editor-only and a constant
+size at any zoom. One undo step per drag, and the sidebar fields follow live.
+
+- **Origin** (crosshair): move the layer. <kbd>Shift</kbd> locks to one axis.
+- **Radius** (on the ring, at the start of the visible arc): drag in or out. Every selected layer changes
+  by the same amount. <kbd>Shift</kbd> snaps the radius to a multiple of 10.
+- **Rotate** (just outside the ring, on a connector): drag around the origin. Rings turn their arc
+  start, other layers their start angle, straight lines their angle; every selected layer turns by
+  the same amount. <kbd>Shift</kbd> snaps to 15°.
+- **Straight line ends** (squares): drag one end while the other stays put. <kbd>Alt</kbd> mirrors the
+  move about the origin (a centred line); <kbd>Shift</kbd> snaps the angle to 15°.
 
 **Camera** (both modes): the preview can show things outside the artboard, so there are controls
 to move around it. Zoom at the pointer with <kbd>Ctrl</kbd> + scroll (also a trackpad pinch) or

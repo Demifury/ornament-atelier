@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=41" />
+<link rel="stylesheet" href="style.css?v=42" />
 </head>
 <body>
 <div class="app">
@@ -225,6 +225,79 @@
         </div>
       </section>
 
+      <section class="panel" id="straightPanel">
+        <h2>Straight line</h2>
+        <label class="field">
+          <span>Angle (0 = up, clockwise)</span>
+          <div class="range-row">
+            <input type="range" id="straightAngle" min="0" max="359" step="1" />
+            <button type="button" class="reset-btn" data-reset-target="straightAngle" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+            <input type="text" inputmode="decimal" id="straightAngleNum" min="0" max="359" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Length</span>
+          <div class="range-row">
+            <input type="range" id="straightLength" min="10" max="6000" step="1" />
+            <input type="text" inputmode="decimal" id="straightLengthNum" min="10" max="6000" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field">
+          <span>Offset (middle of the line, from the origin)</span>
+          <div class="range-row">
+            <input type="range" id="straightOffset" min="-3000" max="3000" step="1" />
+            <button type="button" class="reset-btn" data-reset-target="straightOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+            <input type="text" inputmode="decimal" id="straightOffsetNum" min="-3000" max="3000" step="1" class="num-input" />
+          </div>
+        </label>
+        <p class="hint">Offset = half the length makes a ray that starts at the origin.</p>
+        <label class="field">
+          <span>Stroke width</span>
+          <div class="range-row">
+            <input type="range" id="straightStrokeWidth" min="1" max="100" step="1" />
+            <input type="text" inputmode="decimal" id="straightStrokeWidthNum" min="1" max="100" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field row-field">
+          <span>Stroke color</span>
+          <input type="color" id="straightStrokeColor" />
+        </label>
+        <label class="field">
+          <span>Style</span>
+          <select id="straightStyle">
+            <option value="" disabled hidden>–</option>
+            <option value="solid">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+          </select>
+        </label>
+        <label class="field" id="straightDashLengthField">
+          <span>Dash length</span>
+          <div class="range-row">
+            <input type="range" id="straightDashLength" min="1" max="400" step="1" />
+            <input type="text" inputmode="decimal" id="straightDashLengthNum" min="1" max="400" step="1" class="num-input" />
+          </div>
+        </label>
+        <label class="field" id="straightDashGapField">
+          <span>Gap (between dashes / dots)</span>
+          <div class="range-row">
+            <input type="range" id="straightDashGap" min="1" max="400" step="1" />
+            <input type="text" inputmode="decimal" id="straightDashGapNum" min="1" max="400" step="1" class="num-input" />
+          </div>
+        </label>
+        <div class="field-group">
+          <div class="field-group-label">Distribution</div>
+        <label class="field">
+          <span>Count (rotated about the origin)</span>
+          <div class="range-row">
+            <input type="range" id="straightCount" min="1" max="72" step="1" />
+            <input type="text" inputmode="decimal" id="straightCountNum" min="1" max="72" step="1" class="num-input" />
+          </div>
+        </label>
+          <p class="hint" id="straightCountHint"></p>
+        </div>
+      </section>
+
       <section class="panel" id="shapePanel">
         <h2>Shape</h2>
         <label class="field">
@@ -379,7 +452,7 @@
             <option value="xy">Both (4 quadrants)</option>
           </select>
         </label>
-        <label class="field">
+        <label class="field" data-arc-only>
           <span>Arc start (degrees)</span>
           <div class="range-row">
             <input type="range" id="placeArcStart" min="0" max="359" step="1" />
@@ -387,21 +460,21 @@
             <input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="359" step="1" class="num-input" />
           </div>
         </label>
-        <label class="field">
+        <label class="field" data-arc-only>
           <span>Arc sweep (degrees)</span>
           <div class="range-row">
             <input type="range" id="placeArcSweep" min="1" max="360" step="1" />
             <input type="text" inputmode="decimal" id="placeArcSweepNum" min="1" max="360" step="1" class="num-input" />
           </div>
         </label>
-        <label class="field">
+        <label class="field" data-arc-only>
           <span>Gaps</span>
           <div class="range-row">
             <input type="range" id="placeGapCount" min="0" max="24" step="1" />
             <input type="text" inputmode="decimal" id="placeGapCountNum" min="0" max="24" step="1" class="num-input" />
           </div>
         </label>
-        <label class="field">
+        <label class="field" data-arc-only>
           <span>Gap size (degrees)</span>
           <div class="range-row">
             <input type="range" id="placeGapSize" min="0" max="90" step="1" />
@@ -420,7 +493,7 @@
           <button id="exportSvgBtn">SVG</button>
         </div>
         <p class="hint">Straight preview</p>
-        <p class="hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored.</p>
+        <p class="hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored, and straight line layers are not shown.</p>
         <div class="btn-row">
           <button id="exportStraightPngBtn">PNG</button>
           <button id="exportStraightSvgBtn">SVG</button>
@@ -809,6 +882,7 @@
           <button id="addLineBtn" title="Add a line layer">+ Line</button>
           <button id="addShapeBtn" title="Add a shape layer">+ Shape</button>
           <button id="addTextBtn" title="Add a text layer">+ Text</button>
+          <button id="addStraightBtn" title="Add a free straight line (axis, chord, ray)">+ Straight</button>
         </div>
         <div class="btn-row">
           <button id="duplicateLayerBtn" title="Duplicate selected layer">Duplicate</button>
@@ -834,6 +908,7 @@
             <option value="line">Line</option>
             <option value="shape">Shape</option>
             <option value="text">Text</option>
+            <option value="straight" disabled hidden>Straight line</option>
           </select>
         </label>
         <label class="field" id="layerOpacityField">
@@ -1070,6 +1145,6 @@
   </div>
 </div>
 
-<script src="app.js?v=65"></script>
+<script src="app.js?v=66"></script>
 </body>
 </html>
