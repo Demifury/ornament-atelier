@@ -624,26 +624,20 @@ input[type="file"] {
 }
 
 #duplicateLayerBtn,
-#smDuplicateLayerBtn,
-#randomizeSpeedsBtn,
-#smRandomizeSpeedsBtn {
+#smDuplicateLayerBtn {
   background: #1B211A;
   border-color: #1B211A;
 }
 
 #renameLayerBtn,
-#smRenameLayerBtn,
-#zeroSpeedsBtn,
-#smZeroSpeedsBtn {
+#smRenameLayerBtn {
   background: #132440;
   border-color: #132440;
   color: #e4e4e6;
 }
 
 #removeLayerBtn,
-#smRemoveLayerBtn,
-#clearLayersBtn,
-#smClearLayersBtn {
+#smRemoveLayerBtn {
   background: #280905;
   border-color: #280905;
 }
@@ -653,13 +647,7 @@ input[type="file"] {
 #removeLayerBtn:hover,
 #smDuplicateLayerBtn:hover,
 #smRenameLayerBtn:hover,
-#smRemoveLayerBtn:hover,
-#clearLayersBtn:hover,
-#smClearLayersBtn:hover,
-#randomizeSpeedsBtn:hover,
-#smRandomizeSpeedsBtn:hover,
-#zeroSpeedsBtn:hover,
-#smZeroSpeedsBtn:hover {
+#smRemoveLayerBtn:hover {
   filter: brightness(1.25);
 }
 
@@ -1084,6 +1072,16 @@ kbd {
   display: none;
 }
 
+/* Rubber-band selection rectangle, drawn in screen space over everything. */
+#marqueeBox {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  border: 1px dashed #4f8cff;
+  background: rgba(79, 140, 255, 0.16);
+  box-sizing: border-box;
+}
+
 /* Space held / dragging: the whole preview is a pan handle, whatever is under the pointer. */
 .preview.pan-ready,
 .preview.pan-ready * {
@@ -1398,6 +1396,8 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .sf-btns > button:hover { background: #232429; }
 .sf-btns > button:disabled { opacity: 0.45; cursor: not-allowed; }
 .sf-btns > button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.sf-btns > #clearLayersBtn, .sf-btns > #smClearLayersBtn { grid-column: 1 / -1; color: #e57373; border-color: #4a1a14; }
+.sf-btns > #clearLayersBtn:hover, .sf-btns > #smClearLayersBtn:hover { background: #280905; }
 .sidebar .hint.sf-hint, .layers-sidebar .hint.sf-hint { font-size: 11.5px; line-height: 1.35; color: #8a8a92; margin: 2px 0 10px; }
 .sf-grid > .hint.sf-hint { margin: 0; }
 .hint.sf-hint:empty { display: none; }

@@ -4564,7 +4564,163 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   const multi = e.ctrlKey || e.metaKey || e.shiftKey;
   const id = pickCircleClickLayer(e.clientX, e.clientY, multi);
   if (id != null) selectLayer(id, { toggle: multi });
+  else beginMarquee(e, "circle");
 });
+
+// --- Rubber-band (marquee) selection, Ring editor and Straight tile ---
+// Press on empty artboard and drag: a dashed rectangle (screen space, a plain DOM element so
+// render() never wipes it) and, on release, every visible layer whose DRAWN geometry meets it
+// is selected. Shift/Ctrl adds to the selection. Under 4 px is a plain click on empty space,
+// which does nothing (as before). Escape cancels. The pointer is captured on the svg.
+const MARQUEE_MIN_PX = 4;
+let marquee = null;
+
+function beginMarquee(e, mode) {
+  const svg = document.getElementById(mode === "circle" ? "canvas" : "tileCanvas");
+  marquee = { mode, svg, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, add: e.ctrlKey || e.metaKey || e.shiftKey, active: false };
+  try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+  e.preventDefault(); // no text selection while dragging
+}
+
+function marqueeBox() {
+  let el = document.getElementById("marqueeBox");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "marqueeBox";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function endMarquee() {
+  if (!marquee) return;
+  const m = marquee;
+  marquee = null;
+  try { if (m.svg.hasPointerCapture(m.pointerId)) m.svg.releasePointerCapture(m.pointerId); } catch (_) { /* gone */ }
+  const el = document.getElementById("marqueeBox");
+  if (el) el.hidden = true;
+}
+
+// Does the layer's drawn geometry meet the screen rectangle r = {l, t, r, b}? Per leaf element:
+// a line is a segment, a ring's stroke is a circle outline (or its sampled arc path), anything
+// else (a copy of an asset, shape, text) counts by its bounds.
+function layerMeetsRect(svg, layer, r) {
+  const rectHit = (b) => b.right >= r.l && b.left <= r.r && b.bottom >= r.t && b.top <= r.b;
+  const segHit = (x1, y1, x2, y2, tol) => {
+    let t0 = 0, t1 = 1;
+    const dx = x2 - x1, dy = y2 - y1;
+    for (const [p, q] of [[-dx, x1 - (r.l - tol)], [dx, r.r + tol - x1], [-dy, y1 - (r.t - tol)], [dy, r.b + tol - y1]]) {
+      if (p === 0) { if (q < 0) return false; continue; }
+      const k = q / p;
+      if (p < 0) { if (k > t1) return false; if (k > t0) t0 = k; }
+      else { if (k < t0) return false; if (k < t1) t1 = k; }
+    }
+    return true;
+  };
+  const ringHit = (cx, cy, R, tol) => {
+    const nx = Math.min(Math.max(cx, r.l), r.r), ny = Math.min(Math.max(cy, r.t), r.b);
+    const dmin = Math.hypot(cx - nx, cy - ny);
+    const dmax = Math.max(Math.hypot(cx - r.l, cy - r.t), Math.hypot(cx - r.r, cy - r.t), Math.hypot(cx - r.l, cy - r.b), Math.hypot(cx - r.r, cy - r.b));
+    return dmin <= R + tol && dmax >= R - tol;
+  };
+  const place = placementOf(layer);
+  for (const lg of svg.querySelectorAll(`g[data-layer-id="${layer.id}"]`)) {
+    for (const el of lg.querySelectorAll("circle,path,line,ellipse,rect,polygon,polyline,image,use,text")) {
+      if (el.closest("defs,clipPath,mask,pattern,symbol,marker,.editor-only")) continue;
+      const ctm = el.getScreenCTM();
+      if (!ctm) continue;
+      const s = Math.hypot(ctm.a, ctm.b);
+      const sw = (parseFloat(el.getAttribute("stroke-width")) || 0) * s / 2;
+      const tag = el.tagName.toLowerCase();
+      const toScreen = (x, y) => { const p = new DOMPoint(x, y).matrixTransform(ctm); return [p.x, p.y]; };
+      if (layer.type === "ring" && (tag === "circle" || tag === "use")) {
+        const [cx, cy] = toScreen(CENTER, CENTER);
+        if (ringHit(cx, cy, layer.radius * s, sw)) return true;
+        continue;
+      }
+      if (layer.type === "ring" && tag === "path" && el.getTotalLength) {
+        const len = el.getTotalLength();
+        const step = Math.max(len / 1500, 4 / (s || 1));
+        let prev = null;
+        for (let d = 0; d <= len + step; d += step) {
+          const q = el.getPointAtLength(Math.min(d, len));
+          const [x, y] = toScreen(q.x, q.y);
+          if (x >= r.l - sw && x <= r.r + sw && y >= r.t - sw && y <= r.b + sw) return true;
+          if (prev && Math.hypot(q.x - prev.q.x, q.y - prev.q.y) < step * 2 && segHit(prev.x, prev.y, x, y, sw)) return true;
+          prev = { q, x, y };
+        }
+        continue;
+      }
+      if (tag === "line") {
+        const [ax, ay] = toScreen(+el.getAttribute("x1"), +el.getAttribute("y1"));
+        const [bx, by] = toScreen(+el.getAttribute("x2"), +el.getAttribute("y2"));
+        if (segHit(ax, ay, bx, by, sw)) return true;
+        continue;
+      }
+      const b = el.getBoundingClientRect();
+      if ((b.width > 0 || b.height > 0) && rectHit(b)) return true;
+    }
+  }
+  return false;
+}
+
+function finishMarquee(m, cancelled) {
+  const moved = m.active;
+  endMarquee();
+  if (cancelled || !moved) return;
+  const rect = { l: Math.min(m.x0, m.x1), t: Math.min(m.y0, m.y1), r: Math.max(m.x0, m.x1), b: Math.max(m.y0, m.y1) };
+  const circle = m.mode === "circle";
+  const t = circle ? state : smState;
+  const hit = [];
+  for (const layer of t.layers) {
+    if (layerIsHidden(t, layer)) continue;
+    if (layerMeetsRect(m.svg, layer, rect)) hit.push(layer.id);
+  }
+  if (!hit.length) return;
+  const ids = m.add ? [...new Set([...getSelectedLayersFrom(t).map((l) => l.id), ...hit])] : hit;
+  t.selectedLayerIds = ids;
+  t.activeLayerId = hit[hit.length - 1];
+  if (circle) { updateLayerListSelection(); refreshControls(); render(); }
+  else { smUpdateLayerListSelection(); smRefreshControls(); smRender(); }
+}
+
+for (const id of ["canvas", "tileCanvas"]) {
+  const svg = document.getElementById(id);
+  svg.addEventListener("pointermove", (e) => {
+    const m = marquee;
+    if (!m || e.pointerId !== m.pointerId) return;
+    m.x1 = e.clientX;
+    m.y1 = e.clientY;
+    if (!m.active && Math.hypot(m.x1 - m.x0, m.y1 - m.y0) >= MARQUEE_MIN_PX) m.active = true;
+    if (!m.active) return;
+    const el = marqueeBox();
+    el.hidden = false;
+    el.style.left = `${Math.min(m.x0, m.x1)}px`;
+    el.style.top = `${Math.min(m.y0, m.y1)}px`;
+    el.style.width = `${Math.abs(m.x1 - m.x0)}px`;
+    el.style.height = `${Math.abs(m.y1 - m.y0)}px`;
+  });
+  svg.addEventListener("pointerup", (e) => {
+    const m = marquee;
+    if (!m || e.pointerId !== m.pointerId) return;
+    m.x1 = e.clientX;
+    m.y1 = e.clientY;
+    if (Math.hypot(m.x1 - m.x0, m.y1 - m.y0) >= MARQUEE_MIN_PX) m.active = true;
+    finishMarquee(m, false);
+  });
+  svg.addEventListener("pointercancel", (e) => {
+    if (marquee && e.pointerId === marquee.pointerId) finishMarquee(marquee, true);
+  });
+}
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.key !== "Escape" || !marquee) return;
+    e.stopPropagation();
+    finishMarquee(marquee, true);
+  },
+  true
+);
 
 // --- Camera: zoom, pan, fit (Ring editor and Straight tile) ---
 // A pure viewing preference, like the preview-fps buttons: not saved with the project and
@@ -6553,6 +6709,7 @@ document.getElementById("tileCanvas").addEventListener("pointerdown", (e) => {
   const multi = e.ctrlKey || e.metaKey || e.shiftKey;
   const id = pickStraightClickLayer(e.clientX, e.clientY, multi);
   if (id != null) smSelectLayer(id, { toggle: multi });
+  else beginMarquee(e, "straight");
 });
 
 // --- Controls ---
