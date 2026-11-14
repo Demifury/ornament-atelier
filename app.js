@@ -7999,3 +7999,66 @@ resetPreviewView();
     if (!SKIP.has(s.id) && !s.multiple) enhance(s);
   });
 })();
+
+// Fold any settings panel or sub-section by clicking its heading. Each one folds on its own,
+// and the folded set is remembered in this browser (localStorage, best effort).
+(function initFoldableSections() {
+  const STORE = "atelier.folded.v1";
+  let folded;
+  try {
+    folded = new Set(JSON.parse(localStorage.getItem(STORE) || "[]"));
+  } catch (e) {
+    folded = new Set();
+  }
+  const save = () => {
+    try {
+      localStorage.setItem(STORE, JSON.stringify([...folded]));
+    } catch (e) {
+      /* storage blocked: folding still works for this visit */
+    }
+  };
+  const panels = [...document.querySelectorAll(".sidebar .panel, .layers-sidebar .panel")];
+  const panelKey = (p) => p.id || `${(p.closest("[id]") || {}).id || "panel"}#${panels.indexOf(p)}`;
+  // Loose controls that follow a sub-section (e.g. the Centre button after Origin) belong to it,
+  // so they fold with it.
+  panels.forEach((p) => {
+    let last = null;
+    [...p.children].forEach((c) => {
+      if (c.classList.contains("sf-group")) last = c;
+      else if (last && c.tagName !== "H2" && !c.classList.contains("ornament-divider")) last.appendChild(c);
+    });
+  });
+  const targets = [];
+  panels.forEach((p) => {
+    const h = p.querySelector(":scope > h2");
+    if (h) targets.push({ el: p, head: h, key: panelKey(p), cls: "is-folded" });
+    p.querySelectorAll(".sf-group").forEach((g, i) => {
+      const lab = g.querySelector(":scope > .sf-group-label");
+      if (lab) targets.push({ el: g, head: lab, key: `${panelKey(p)}/${i}`, cls: "is-folded" });
+    });
+  });
+  targets.forEach((t) => {
+    t.head.classList.add("fold-head");
+    t.head.setAttribute("role", "button");
+    t.head.setAttribute("tabindex", "0");
+    const apply = () => {
+      const on = folded.has(t.key);
+      t.el.classList.toggle(t.cls, on);
+      t.head.setAttribute("aria-expanded", String(!on));
+    };
+    apply();
+    const toggle = () => {
+      if (folded.has(t.key)) folded.delete(t.key);
+      else folded.add(t.key);
+      apply();
+      save();
+    };
+    t.head.addEventListener("click", toggle);
+    t.head.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
+})();
