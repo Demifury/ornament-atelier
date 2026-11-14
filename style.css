@@ -272,6 +272,42 @@ input[type="range"] {
   accent-color: #ffffff;
 }
 
+/* Slim thumbs: half the browser default (16px -> 8px), track kept centred on them. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3b42;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  margin-top: -2px; /* (track 4px - thumb 8px) / 2 */
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff;
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3b42;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
 .num-input {
   width: 62px;
   flex-shrink: 0;
@@ -717,6 +753,34 @@ input[type="file"] {
   color: #8a8a92;
 }
 
+/* Groups: the group row has a collapse arrow before its eye; members sit indented below. */
+.layer-grouped {
+  margin-left: 18px;
+}
+
+.layer-group-item .layer-item-main > span {
+  font-weight: 600;
+}
+
+.layer-collapse-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
+  margin: -4px -2px -4px -4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.layer-collapse-btn:hover {
+  color: #e4e4e6;
+}
+
 .preview {
   flex: 1;
   display: flex;
@@ -813,6 +877,38 @@ svg#canvas {
 
 .layer-handle [data-handle] {
   cursor: grab;
+}
+
+/* Count / size badges beside the origin handle (editor-only); the typing box that opens on
+   a click is a plain element laid over the badge, so the preview redrawing never touches it. */
+.value-badge {
+  cursor: ew-resize;
+}
+
+/* While a badge is being scrubbed the pointer is captured on the <svg>, so the cursor has to
+   be forced there rather than coming from the (rebuilt every move) badge under it. */
+svg#canvas.badge-scrubbing,
+svg#canvas.badge-scrubbing * {
+  cursor: ew-resize !important;
+}
+
+.badge-editor {
+  position: fixed;
+  z-index: 70;
+  box-sizing: border-box;
+  width: 60px;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid #4f8cff;
+  border-radius: 13px;
+  background: #0b0c0e;
+  color: #e8eefc;
+  font: 600 12px/1 system-ui, sans-serif;
+  text-align: center;
+}
+
+.badge-editor:focus {
+  outline: none;
 }
 
 /* Live value next to the pointer while a radius / rotate / end handle is dragged. */
@@ -1009,3 +1105,356 @@ kbd {
   font-size: 11px;
 }
 
+
+/* --- Left sidebar readability ---------------------------------------------------------
+   Bigger, brighter panel headings, more air between panels, and easier field labels. Each
+   family of panels gets its own subtle accent (a left border and a tinted heading) so the
+   long column reads in groups: pattern settings (gold: Ring, Asset), geometry (teal: Line, Shape, Straight,
+   Guide), Type (violet) and the neutral Placement (steel) and Export (stone). Look only; nothing here changes what
+   a control does. Scoped to .sidebar so the layer panel on the right keeps its own style. */
+.sidebar .panel {
+  --fam: #3a3c46;
+  --fam-ink: #d2d2da;
+  padding: 14px 14px 6px 16px;
+  margin-bottom: 26px;
+  border-left: 3px solid var(--fam);
+}
+
+.sidebar .panel.fam-pattern { --fam: #c9a24a; --fam-ink: #e6c987; }
+.sidebar .panel.fam-geom { --fam: #4fa3a0; --fam-ink: #94d3d0; }
+.sidebar .panel.fam-type { --fam: #b07cc6; --fam-ink: #d4b2e4; }
+.sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
+.sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
+
+.sidebar .panel h2 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--fam-ink);
+  margin: 0 0 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fam) 35%, #202127);
+}
+
+.sidebar .field {
+  gap: 5px;
+  margin-bottom: 13px;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.sidebar .field > span {
+  color: #d9d9e0;
+}
+
+.sidebar .hint {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #a3a3ad;
+}
+
+.sidebar .field-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b4b4be;
+}
+
+.sidebar .num-input {
+  font-size: 13px;
+}
+
+/* Layer toolbar: add buttons sorted into colour families, actions as icons. */
+.layers-sidebar .add-family { --fam: #3a3c46; margin-bottom: 8px; }
+.layers-sidebar .fam-pattern { --fam: #c9a24a; }
+.layers-sidebar .fam-geom { --fam: #4fa3a0; }
+.layers-sidebar .fam-type { --fam: #b07cc6; }
+.add-family-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8b909a;
+  margin: 0 0 4px 2px;
+}
+.add-family-row { display: flex; gap: 6px; }
+.add-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--fam);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.add-btn svg, .icon-btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.add-btn svg { stroke: var(--fam); }
+.layer-actions { display: flex; gap: 6px; margin: 10px 0 8px; }
+.icon-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 4px;
+}
+.icon-btn-danger { color: #e57373; }
+.layer-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 2px;
+  background: #6b7080;
+}
+.layer-dot.fam-pattern { background: #c9a24a; }
+.layer-dot.fam-geom { background: #4fa3a0; }
+.layer-dot.fam-type { background: #b07cc6; }
+.layer-dot.fam-group { border-radius: 2px; background: none; border: 1.5px solid #8b909a; }
+.add-btn, .icon-btn {
+  min-width: 0;
+  font-size: 12px;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  background: #1a1b1f;
+  color: #e4e4e6;
+  cursor: pointer;
+}
+.add-btn {
+  gap: 5px;
+  padding: 4px 6px;
+  border-left: 3px solid var(--fam);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  white-space: nowrap;
+}
+.add-btn:hover, .icon-btn:hover { background: #232429; }
+.layer-actions .icon-btn { background: #1a1b1f; border-color: #2c2d33; }
+.layer-actions .icon-btn:hover { background: #232429; }
+.layer-actions .icon-btn-danger { color: #e57373; border-color: #4a1a14; }
+.layer-actions .icon-btn-danger:hover { background: #280905; }
+.icon-btn:disabled, .add-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.layer-actions #duplicateLayerBtn, .layer-actions #smDuplicateLayerBtn,
+.layer-actions #renameLayerBtn, .layer-actions #smRenameLayerBtn { background: #1a1b1f; border-color: #2c2d33; }
+.layer-actions #removeLayerBtn, .layer-actions #smRemoveLayerBtn { background: #1a1b1f; border-color: #4a1a14; color: #e57373; }
+.layer-actions #duplicateLayerBtn:hover, .layer-actions #smDuplicateLayerBtn:hover,
+.layer-actions #renameLayerBtn:hover, .layer-actions #smRenameLayerBtn:hover { background: #232429; }
+.layer-actions #removeLayerBtn:hover, .layer-actions #smRemoveLayerBtn:hover { background: #280905; }
+
+/* --- Compact fields ("name above the box") -------------------------------------------------
+   Reusable: .sf-group (small heading) > .sf-grid (two columns) > .sf (label row + .sf-box).
+   The range input stays in the DOM, hidden, so the bindControl wiring keeps working; the
+   .sf-num box is scrubbed by dragging (see initScrubFields in app.js). .sf-toggles is an even
+   2x2 grid of toggle buttons made from real (hidden) checkboxes. Used by the two Shape panels. */
+.sf-select { margin-bottom: 12px; }
+.sf-select select { width: 100%; }
+.sf-group { margin-bottom: 12px; }
+.sf-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fam-ink, #b4b4be);
+  margin: 0 0 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fam, #3a3c46) 30%, #202127);
+}
+.sf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.sf { min-width: 0; }
+.sf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 20px;
+  font-size: 13px;
+  color: #d9d9e0;
+}
+.sf-head label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sf-box { display: flex; align-items: center; gap: 6px; }
+.sf-box input[type="range"] { display: none; }
+.sf-box .sf-num {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  flex: 1;
+  height: 28px;
+  cursor: ew-resize;
+}
+.sf-box .sf-num:focus { cursor: text; border-color: var(--fam, #4f8cff); outline: none; }
+.sf-box-color {
+  background: #0b0c0e;
+  border: 1px solid #2c2d33;
+  border-radius: 4px;
+  padding-left: 4px;
+}
+.sf-box-color .sf-num { border: 0; background: transparent; }
+.sf-swatch {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #3a3b42;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+.sf .reset-btn, .sf .lock-ratio-btn.sf-lock {
+  position: static;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+.sf .lock-ratio-btn svg, .sf .reset-btn svg { width: 12px; height: 12px; }
+body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-select: none !important; }
+.sf-toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; margin: 4px 0 10px; }
+.sf-toggle { position: relative; display: flex; }
+.sf-toggle input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
+.sf-toggle span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 13px;
+  line-height: 1.2;
+  color: #b4b4be;
+  background: #1a1b1f;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.sf-toggle span:hover { background: #232429; }
+.sf-toggle input:checked + span { border-color: var(--fam, #4fa3a0); color: var(--fam-ink, #94d3d0); }
+.sf-toggle input:indeterminate + span { border-style: dashed; }
+.sf-toggle input:focus-visible + span { outline: 2px solid var(--fam, #4fa3a0); outline-offset: 1px; }
+
+/* Instant tooltip (one shared element, positioned by initTips in app.js) */
+#tipBubble {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  max-width: 220px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #f2f2f3;
+  background: #26272d;
+  border: 1px solid #3a3b42;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+#tipBubble.show { opacity: 1; }
+
+/* Odd count of toggles: the last one spans the full row, so rows stay even. */
+.sf-toggles > .sf-toggle:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+/* --- Compact fields, rolled out to every other settings panel ------------------------------ */
+.sf-wide { grid-column: 1 / -1; }
+.sf.disabled { opacity: 0.5; pointer-events: none; }
+.sf-grid-top { margin-bottom: 10px; }
+.sf-box select, .sf-box textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.sf-box textarea { resize: vertical; }
+.sf-box input[type="file"] { width: 100%; min-width: 0; box-sizing: border-box; font-size: 12px; }
+.sf-swatch-wide { flex: 1; width: auto; height: 22px; margin: 3px 4px 3px 0; }
+.sf-sub {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fam-ink, #b4b4be);
+  margin: 4px 0 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fam, #3a3c46) 30%, #202127);
+}
+.sf-btns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; margin: 4px 0 10px; }
+.sf-btns > button {
+  min-height: 30px;
+  padding: 5px 6px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #e4e4e6;
+  background: #1a1b1f;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sf-btns > button:hover { background: #232429; }
+.sf-btns > button:disabled { opacity: 0.45; cursor: not-allowed; }
+.sf-btns > button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.sidebar .hint.sf-hint, .layers-sidebar .hint.sf-hint { font-size: 11.5px; line-height: 1.35; color: #8a8a92; margin: 2px 0 10px; }
+.sf-grid > .hint.sf-hint { margin: 0; }
+.hint.sf-hint:empty { display: none; }
+.layers-sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
+.layers-sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
+.layers-sidebar .panel .sf-group { margin-top: 10px; }
+
+/* Families: Geometry (ring, line, straight, guide) teal; Asset gold; Shape coral; Text violet. */
+.sidebar .panel.fam-asset { --fam: #c9a24a; --fam-ink: #e6c987; }
+.sidebar .panel.fam-shape { --fam: #d0805a; --fam-ink: #eab096; }
+.layers-sidebar .fam-asset { --fam: #c9a24a; }
+.layers-sidebar .fam-shape { --fam: #d0805a; }
+.layer-dot.fam-asset { background: #c9a24a; }
+.layer-dot.fam-shape { background: #d0805a; }
+.add-family-trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+.add-family-trio .add-family { margin-bottom: 0; }
+.add-family-trio .add-btn { width: 100%; }
+
+/* Toolbar families are told apart by colour alone; no category labels. */
+.add-family-label { display: none; }
+
+/* Select -> button group (initSelectButtons in app.js): even grid on a 6-column track, equal buttons,
+   an odd or short last row spans the row. The source <select> stays in the DOM, hidden. */
+.sf-opts-source { display: none !important; }
+.sf-opts { display: grid; gap: 6px; width: 100%; }
+.sf-select > .sf-opts { margin-bottom: 0; }
+.sf-opts button {
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  color: #b4b4be;
+  background: #1a1b1f;
+  border: 1px solid #2c2d33;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.sf-opts button:hover:not(:disabled) { background: #232429; }
+.sf-opts button.on { border-color: var(--fam, #4fa3a0); color: var(--fam-ink, #94d3d0); }
+.sf-opts button:disabled { opacity: 0.4; cursor: default; }
+.sf-opts button:focus-visible { outline: 2px solid var(--fam, #4fa3a0); outline-offset: 1px; }
+
+/* "Change selected layer to": each type button carries its family colour, like the add toolbar. */
+#layerTypeField .sf-opts button, #smLayerTypeField .sf-opts button {
+  border-left: 3px solid var(--opt-fam, #3a3c46);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+#layerTypeField .sf-opts button[data-value="ring"], #layerTypeField .sf-opts button[data-value="line"],
+#smLayerTypeField .sf-opts button[data-value="guide"], #smLayerTypeField .sf-opts button[data-value="line"] { --opt-fam: #4fa3a0; --opt-ink: #94d3d0; }
+#layerTypeField .sf-opts button[data-value="motif"], #smLayerTypeField .sf-opts button[data-value="motif"] { --opt-fam: #c9a24a; --opt-ink: #e6c987; }
+#layerTypeField .sf-opts button[data-value="shape"], #smLayerTypeField .sf-opts button[data-value="shape"] { --opt-fam: #d0805a; --opt-ink: #eab096; }
+#layerTypeField .sf-opts button[data-value="text"], #smLayerTypeField .sf-opts button[data-value="text"] { --opt-fam: #b07cc6; --opt-ink: #d4b2e4; }
+#layerTypeField .sf-opts button.on, #smLayerTypeField .sf-opts button.on {
+  border-color: var(--opt-fam);
+  color: var(--opt-ink);
+  background: #1f2128;
+}

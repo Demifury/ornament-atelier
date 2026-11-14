@@ -13,6 +13,7 @@ function createDefaultMask() {
 
 const state = {
   layers: [],
+  groups: [], // layer groups (see "Groups" below); each member layer carries groupId
   activeLayerId: null,
   mask: createDefaultMask(),
   roughness: 50,
@@ -901,17 +902,15 @@ function getSelectedLayersFrom(target) {
   return target.selectedLayerIds.map((id) => target.layers.find((l) => l.id === id)).filter(Boolean);
 }
 
-// Resolves a click into a new selection. Multi-select is restricted to layers of the SAME
-// type, because the whole point is editing shared parameters — a Ring and a Shape have
-// almost no fields in common, so a mixed selection would leave the panel showing controls
-// that only apply to some of it.
+// Resolves a click into a new selection. Ctrl/Shift-click combines layers of ANY types: a
+// mixed selection edits only what every one of them has (see refreshControls), and moves,
+// duplicates and removes as a whole.
 function resolveSelection(target, id, opts) {
   const layer = target.layers.find((l) => l.id === id);
   if (!layer) return;
-  const current = getSelectedLayersFrom(target);
-  const sameType = current.length > 0 && current[0].type === layer.type;
+  getSelectedLayersFrom(target);
 
-  if (opts.toggle && sameType) {
+  if (opts.toggle) {
     const ids = new Set(target.selectedLayerIds);
     if (ids.has(id) && ids.size > 1) ids.delete(id);
     else ids.add(id);
@@ -919,11 +918,11 @@ function resolveSelection(target, id, opts) {
     target.activeLayerId = ids.has(id) ? id : target.selectedLayerIds[target.selectedLayerIds.length - 1];
     return;
   }
-  if (opts.range && sameType) {
+  if (opts.range && target.activeLayerId != null) {
     const a = target.layers.findIndex((l) => l.id === target.activeLayerId);
     const b = target.layers.findIndex((l) => l.id === id);
     const [lo, hi] = a < b ? [a, b] : [b, a];
-    target.selectedLayerIds = target.layers.slice(lo, hi + 1).filter((l) => l.type === layer.type).map((l) => l.id);
+    target.selectedLayerIds = target.layers.slice(lo, hi + 1).map((l) => l.id);
     target.activeLayerId = id;
     return;
   }
@@ -1029,6 +1028,7 @@ function snapshotLayers(layers) {
 function pushHistory() {
   historyStack.push({
     layers: snapshotLayers(state.layers),
+    groups: JSON.parse(JSON.stringify(state.groups)),
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
@@ -1057,12 +1057,14 @@ function undo() {
   if (historyStack.length === 0) return;
   redoStack.push({
     layers: snapshotLayers(state.layers),
+    groups: JSON.parse(JSON.stringify(state.groups)),
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
   });
   const snap = historyStack.pop();
   state.layers = snap.layers;
+  state.groups = snap.groups || [];
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
@@ -1082,12 +1084,14 @@ function redo() {
   if (redoStack.length === 0) return;
   historyStack.push({
     layers: snapshotLayers(state.layers),
+    groups: JSON.parse(JSON.stringify(state.groups)),
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
   });
   const snap = redoStack.pop();
   state.layers = snap.layers;
+  state.groups = snap.groups || [];
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
@@ -1163,44 +1167,18 @@ function addStraightLayer() {
 }
 
 function duplicateLayer() {
-  const active = getActiveLayer();
-  if (!active) return;
-  pushHistory();
-  const clone = JSON.parse(JSON.stringify(active));
-  clone.id = nextLayerId++;
-  clone.name = active.name + " copy";
-  clone.imageEl = active.imageEl; // JSON clone can't carry the loaded Image object
-  if (active.type === "text") {
-    // derived bitmap: rebuilt (from the raster cache) on first render, not copied
-    delete clone.imageEl;
-    delete clone.bendCache;
-    delete clone.bendCacheFlipped;
-  }
-  const idx = state.layers.findIndex((l) => l.id === active.id);
-  state.layers.splice(idx + 1, 0, clone);
-  state.activeLayerId = clone.id;
-  renderLayerList();
-  refreshControls();
-  render();
+  duplicateSelection(circleApi);
 }
 
 function removeLayer() {
-  const active = getActiveLayer();
-  if (!active) return;
-  pushHistory();
-  const idx = state.layers.findIndex((l) => l.id === active.id);
-  state.layers.splice(idx, 1);
-  const next = state.layers[idx] || state.layers[idx - 1] || null;
-  state.activeLayerId = next ? next.id : null;
-  renderLayerList();
-  refreshControls();
-  render();
+  removeSelection(circleApi);
 }
 
 function clearLayers() {
   if (state.layers.length === 0) return;
   pushHistory();
   state.layers = [];
+  state.groups = [];
   state.activeLayerId = null;
   renderLayerList();
   refreshControls();
@@ -1233,15 +1211,7 @@ function zeroAnimSpeeds() {
 }
 
 function moveLayer(direction) {
-  const active = getActiveLayer();
-  if (!active) return;
-  const idx = state.layers.findIndex((l) => l.id === active.id);
-  const targetIdx = direction === "up" ? idx + 1 : idx - 1;
-  if (targetIdx < 0 || targetIdx >= state.layers.length) return;
-  pushHistory();
-  [state.layers[idx], state.layers[targetIdx]] = [state.layers[targetIdx], state.layers[idx]];
-  renderLayerList();
-  render();
+  moveSelection(circleApi, direction);
 }
 
 function getSelectedLayers() {
@@ -1255,90 +1225,504 @@ function selectLayer(id, opts = {}) {
   render();
 }
 
-let editingLayerId = null;
+// --- Groups, and layer operations that act on the whole selection (both modes) ---
+// A group is a named, collapsible folder of layers, one level deep. It is stored as an
+// entry in target.groups ({ id, name, visible }) plus a groupId on each member layer
+// (absent on loose layers, so projects without groups are byte-for-byte what they were).
+// The invariant everything below keeps: a group's members are ADJACENT in the layers
+// array, so the group is one block in the stacking order. Both modes share all of it;
+// each passes an "api" bundling its own state, history and redraw functions (circleApi
+// here, smApi in the Straight section), which is what keeps the sm* near-copies out.
+let nextGroupId = 1;
+const collapsedGroups = new Set(); // a view setting, like the zoom: not saved, not in undo
+
+function groupOf(target, layer) {
+  if (layer.groupId == null) return null;
+  return target.groups.find((g) => g.id === layer.groupId) || null;
+}
+
+// A group's own eye hides all its members without touching their own eye states, so
+// showing it again brings back exactly what was visible before.
+function groupHidden(target, layer) {
+  const g = groupOf(target, layer);
+  return !!g && g.visible === false;
+}
+
+// Set only while the layered SVG export draws hidden layers too (it marks them hidden itself).
+let exportShowHidden = false;
+
+function layerIsHidden(target, layer) {
+  if (exportShowHidden) return false;
+  return layer.visible === false || groupHidden(target, layer);
+}
+
+// Where a layer's <g> goes while the artwork is built: straight into `content`, or into a
+// wrapper <g> for its user group (one wrapper per run of members, which the invariant above
+// keeps adjacent). The wrapper carries the group's id and name so the SVG exports can name it.
+// With no groups nothing is wrapped and the markup is exactly what it always was.
+function layerParentFor(target, content, layer, cursor) {
+  const group = groupOf(target, layer);
+  if (!group) {
+    cursor.id = null;
+    cursor.el = null;
+    return content;
+  }
+  if (cursor.id !== group.id) {
+    const wrap = document.createElementNS(SVG_NS, "g");
+    wrap.dataset.groupId = group.id;
+    wrap.dataset.groupName = group.name;
+    content.appendChild(wrap);
+    cursor.id = group.id;
+    cursor.el = wrap;
+  }
+  return cursor.el;
+}
+
+function isMixedSelection(layers) {
+  return layers.length > 1 && layers.some((l) => l.type !== layers[0].type);
+}
+
+// Drops references to groups that don't exist, drops groups with no members, and gathers
+// each group's members into one block at the position of its topmost member. Called after
+// anything that could have split or emptied a group, and on load.
+function normalizeGroups(target) {
+  if (target.groups.length === 0 && !target.layers.some((l) => l.groupId != null)) return;
+  const ids = new Set(target.groups.map((g) => g.id));
+  for (const l of target.layers) if (l.groupId != null && !ids.has(l.groupId)) delete l.groupId;
+  const used = new Set(target.layers.filter((l) => l.groupId != null).map((l) => l.groupId));
+  target.groups = target.groups.filter((g) => used.has(g.id));
+  const out = []; // front to back
+  const placed = new Set();
+  for (let i = target.layers.length - 1; i >= 0; i--) {
+    const l = target.layers[i];
+    if (l.groupId == null) {
+      out.push(l);
+    } else if (!placed.has(l.groupId)) {
+      placed.add(l.groupId);
+      for (let j = target.layers.length - 1; j >= 0; j--) if (target.layers[j].groupId === l.groupId) out.push(target.layers[j]);
+    }
+  }
+  target.layers = out.reverse();
+}
+
+// Groups from a project file, checked rather than trusted.
+function sanitizeGroups(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const g of raw) {
+    if (!g || !Number.isFinite(g.id) || out.some((o) => o.id === g.id)) continue;
+    const group = { id: g.id, name: typeof g.name === "string" && g.name ? g.name : `Group ${g.id}`, visible: g.visible !== false };
+    if (Number.isFinite(g.scale) && g.scale > 0 && g.scale !== 100) group.scale = g.scale; // only groups that were scaled carry it
+    out.push(group);
+  }
+  for (const g of out) nextGroupId = Math.max(nextGroupId, g.id + 1);
+  return out;
+}
+
+// Clicking a group row selects all its members; the front-most one becomes the active layer.
+function resolveGroupSelection(target, gid, opts) {
+  const ids = target.layers.filter((l) => l.groupId === gid).map((l) => l.id);
+  if (ids.length === 0) return;
+  const top = ids[ids.length - 1];
+  if (opts.toggle || opts.range) {
+    const cur = new Set(getSelectedLayersFrom(target).map((l) => l.id));
+    if (ids.every((id) => cur.has(id)) && cur.size > ids.length) ids.forEach((id) => cur.delete(id));
+    else ids.forEach((id) => cur.add(id));
+    target.selectedLayerIds = [...cur];
+    target.activeLayerId = cur.has(top) ? top : target.selectedLayerIds[target.selectedLayerIds.length - 1];
+    return;
+  }
+  target.selectedLayerIds = ids;
+  target.activeLayerId = top;
+}
+
+function selectGroupIn(api, gid, opts = {}) {
+  resolveGroupSelection(api.target, gid, opts);
+  api.updateSelection();
+  api.refresh();
+  api.redraw();
+}
+
+// If the whole selection is exactly the members of one group (a group row was clicked, in
+// effect), that group; otherwise null.
+function selectedWholeGroup(target) {
+  const selected = getSelectedLayersFrom(target);
+  if (selected.length === 0 || selected[0].groupId == null) return null;
+  const g = groupOf(target, selected[0]);
+  if (!g) return null;
+  const members = target.layers.filter((l) => l.groupId === g.id);
+  return members.length === selected.length && members.every((m) => selected.some((l) => l.id === m.id)) ? g : null;
+}
+
+// One copy of a layer under a new id. The loaded Image object isn't part of the JSON
+// clone, so it is carried over by hand (a text layer's bitmap is derived data and rebuilt).
+function cloneLayerData(layer, newId) {
+  const clone = JSON.parse(JSON.stringify(layer));
+  clone.id = newId;
+  clone.name = layer.name + " copy";
+  clone.imageEl = layer.imageEl;
+  if (layer.type === "text") {
+    delete clone.imageEl;
+    delete clone.bendCache;
+    delete clone.bendCacheFlipped;
+  }
+  return clone;
+}
+
+// Copies every selected layer, each right above its original. Where the selection covers a
+// whole group, the copies form a new group (new id) above the original block instead.
+function duplicateSelection(api) {
+  const t = api.target;
+  const selected = getSelectedLayersFrom(t);
+  if (selected.length === 0) return;
+  api.push();
+  const sel = new Set(selected.map((l) => l.id));
+  const whole = new Map(); // groupId -> its members, for groups the selection covers entirely
+  for (const g of t.groups) {
+    const members = t.layers.filter((l) => l.groupId === g.id);
+    if (members.length && members.every((l) => sel.has(l.id))) whole.set(g.id, members);
+  }
+  const out = [];
+  const newIds = [];
+  for (const l of t.layers) {
+    out.push(l);
+    if (!sel.has(l.id)) continue;
+    const members = whole.get(l.groupId);
+    if (members) {
+      if (l !== members[members.length - 1]) continue;
+      const g = groupOf(t, l);
+      const copy = { id: nextGroupId++, name: g.name + " copy", visible: g.visible !== false };
+      if (g.scale) copy.scale = g.scale;
+      t.groups.push(copy);
+      for (const m of members) {
+        const c = cloneLayerData(m, api.nextId());
+        c.groupId = copy.id;
+        out.push(c);
+        newIds.push(c.id);
+      }
+    } else {
+      const c = cloneLayerData(l, api.nextId()); // a lone member stays in its group, next to the original
+      out.push(c);
+      newIds.push(c.id);
+    }
+  }
+  t.layers = out;
+  t.selectedLayerIds = newIds;
+  t.activeLayerId = newIds[newIds.length - 1];
+  api.renderList();
+  api.refresh();
+  api.redraw();
+}
+
+function removeSelection(api) {
+  const t = api.target;
+  const selected = getSelectedLayersFrom(t);
+  if (selected.length === 0) return;
+  api.push();
+  const sel = new Set(selected.map((l) => l.id));
+  const first = Math.min(...selected.map((l) => t.layers.indexOf(l)));
+  t.layers = t.layers.filter((l) => !sel.has(l.id));
+  const next = t.layers[first] || t.layers[first - 1] || null;
+  t.activeLayerId = next ? next.id : null;
+  t.selectedLayerIds = next ? [next.id] : [];
+  normalizeGroups(t); // a group left with no members goes with them
+  api.renderList();
+  api.refresh();
+  api.redraw();
+}
+
+// Moves the selection one step toward the front ("up") or back, keeping its internal order.
+// Loose layers and whole groups move as units, hopping over a group in one step; the
+// members of a group that is only partly selected move inside that group and never leave it.
+function moveSelection(api, direction) {
+  const t = api.target;
+  const sel = new Set(getSelectedLayersFrom(t).map((l) => l.id));
+  if (sel.size === 0) return;
+  const step = (arr, isSel) => {
+    if (direction === "up") {
+      for (let i = arr.length - 2; i >= 0; i--) if (isSel(arr[i]) && !isSel(arr[i + 1])) [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+    } else {
+      for (let i = 1; i < arr.length; i++) if (isSel(arr[i]) && !isSel(arr[i - 1])) [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+    }
+  };
+  const units = [];
+  const byGroup = new Map();
+  for (const l of t.layers) {
+    if (l.groupId == null) {
+      units.push({ layers: [l] });
+    } else {
+      let u = byGroup.get(l.groupId);
+      if (!u) {
+        u = { gid: l.groupId, layers: [] };
+        byGroup.set(l.groupId, u);
+        units.push(u);
+      }
+      u.layers.push(l);
+    }
+  }
+  const unitSelected = (u) => u.layers.every((l) => sel.has(l.id));
+  step(units, unitSelected);
+  for (const u of units) {
+    if (u.gid != null && !unitSelected(u) && u.layers.some((l) => sel.has(l.id))) step(u.layers, (l) => sel.has(l.id));
+  }
+  const order = units.flatMap((u) => u.layers);
+  if (order.every((l, i) => l === t.layers[i])) return;
+  api.push();
+  t.layers = order;
+  api.renderList();
+  api.redraw();
+}
+
+// Group: the selection becomes one new group, gathered at the position of its topmost
+// member (anything stacked between them keeps its order). A layer can only be in one
+// group, so it leaves any group it was in.
+function groupSelection(api) {
+  const t = api.target;
+  const selected = getSelectedLayersFrom(t);
+  if (selected.length === 0 || selectedWholeGroup(t)) return;
+  api.push();
+  const sel = new Set(selected.map((l) => l.id));
+  const gid = nextGroupId++;
+  t.groups.push({ id: gid, name: `Group ${gid}`, visible: true });
+  const topIdx = Math.max(...selected.map((l) => t.layers.indexOf(l)));
+  const insertAt = t.layers.slice(0, topIdx + 1).filter((l) => !sel.has(l.id)).length;
+  const block = t.layers.filter((l) => sel.has(l.id));
+  for (const l of block) l.groupId = gid;
+  const rest = t.layers.filter((l) => !sel.has(l.id));
+  rest.splice(insertAt, 0, ...block);
+  t.layers = rest;
+  normalizeGroups(t);
+  collapsedGroups.delete(gid);
+  api.renderList();
+  api.refresh();
+  api.redraw();
+}
+
+// Ungroup: the selected layers leave their groups and stay where they are. Selecting a
+// group's row selects all its members, so that dissolves the whole group.
+function ungroupSelection(api) {
+  const t = api.target;
+  const grouped = getSelectedLayersFrom(t).filter((l) => l.groupId != null);
+  if (grouped.length === 0) return;
+  api.push();
+  for (const l of grouped) delete l.groupId;
+  normalizeGroups(t);
+  api.renderList();
+  api.refresh();
+  api.redraw();
+}
+
+function toggleGroupVisibleIn(api, group) {
+  api.push();
+  group.visible = group.visible === false;
+  api.renderList();
+  api.redraw();
+}
+
+// A layer's eye: when the layer is part of a multi-selection it flips the whole selection
+// to the new state, otherwise just that layer.
+function toggleLayerVisibleIn(api, layer) {
+  const selected = getSelectedLayersFrom(api.target);
+  const targets = selected.length > 1 && selected.some((l) => l.id === layer.id) ? selected : [layer];
+  const show = layer.visible === false;
+  api.push();
+  for (const l of targets) l.visible = show;
+  api.renderList();
+  api.redraw();
+}
+
+function startRenameIn(api, kind, id) {
+  api.editing = { kind, id };
+  api.renderList();
+}
+
+function commitRenameIn(api, kind, id, newName) {
+  const item = kind === "group" ? api.target.groups.find((g) => g.id === id) : api.target.layers.find((l) => l.id === id);
+  if (item && newName && newName.trim() && newName.trim() !== item.name) {
+    api.push();
+    item.name = newName.trim();
+  }
+  api.editing = null;
+  api.renderList();
+}
+
+// The Rename button follows the selection: a whole selected group renames the group.
+function renameSelection(api) {
+  const g = selectedWholeGroup(api.target);
+  if (g) startRenameIn(api, "group", g.id);
+  else if (api.target.activeLayerId != null) startRenameIn(api, "layer", api.target.activeLayerId);
+}
+
+function collapseIconSvg(collapsed) {
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${collapsed ? '<polyline points="9 6 15 12 9 18"></polyline>' : '<polyline points="6 9 12 15 18 9"></polyline>'}</svg>`;
+}
+
+// The inline rename field, shared by layer and group rows. Enter or blur keeps the name,
+// Escape drops it.
+function buildRenameInput(api, item, kind, id, name) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "layer-name-input";
+  input.value = name;
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+    else if (e.key === "Escape") {
+      api.editing = null;
+      api.renderList();
+    }
+  });
+  input.addEventListener("blur", () => commitRenameIn(api, kind, id, input.value));
+  item.appendChild(input);
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+// Colour family of a layer kind, shared by the toolbar, list dots and sidebar accents.
+function layerFamily(layer) {
+  if (layer.type === "motif") return "asset";
+  if (layer.type === "shape") return "shape";
+  if (layer.type === "text") return "type";
+  return "geom";
+}
+
+function buildLayerRow(api, layer, grouped) {
+  const item = document.createElement("div");
+  item.className = "layer-item" + (grouped ? " layer-grouped" : "");
+  item.dataset.layerId = layer.id;
+  const ed = api.editing;
+  if (ed && ed.kind === "layer" && ed.id === layer.id) {
+    buildRenameInput(api, item, "layer", layer.id, layer.name);
+    return item;
+  }
+  const visible = layer.visible !== false;
+  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button><i class="layer-dot fam-${layerFamily(layer)}" aria-hidden="true"></i><span>${escapeHtml(api.displayName(layer))}</span></div><span class="layer-meta">${api.typeLabel(layer)}</span>`;
+  item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
+  item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleLayerVisibleIn(api, layer);
+  });
+  // Selecting must NOT rebuild this list (updateLayerListSelection only toggles a
+  // class) — a full rebuild here would destroy/replace this element mid-gesture and
+  // break the native dblclick sequence (click, click, dblclick all target this node).
+  item.addEventListener("click", (e) => api.select(layer.id, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }));
+  item.addEventListener("dblclick", () => startRenameIn(api, "layer", layer.id));
+  return item;
+}
+
+function buildGroupRow(api, group) {
+  const item = document.createElement("div");
+  item.className = "layer-item layer-group-item";
+  item.dataset.groupId = group.id;
+  const ed = api.editing;
+  if (ed && ed.kind === "group" && ed.id === group.id) {
+    buildRenameInput(api, item, "group", group.id, group.name);
+    return item;
+  }
+  const count = api.target.layers.filter((l) => l.groupId === group.id).length;
+  const collapsed = collapsedGroups.has(group.id);
+  const visible = group.visible !== false;
+  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button><i class="layer-dot fam-group" aria-hidden="true"></i><span>${escapeHtml(group.name)}</span></div><span class="layer-meta">group · ${count}</span>`;
+  item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
+  item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleGroupVisibleIn(api, group);
+  });
+  item.querySelector(".layer-collapse-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (collapsedGroups.has(group.id)) collapsedGroups.delete(group.id);
+    else collapsedGroups.add(group.id);
+    api.renderList();
+  });
+  item.addEventListener("click", (e) => api.selectGroup(group.id, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }));
+  item.addEventListener("dblclick", () => startRenameIn(api, "group", group.id));
+  return item;
+}
+
+function renderLayerListInto(api) {
+  const t = api.target;
+  const list = document.getElementById(api.listId);
+  list.innerHTML = "";
+  const shown = new Set();
+  // Top of the visible list = front of the stack (last in the array). A group's row sits
+  // above its members, which are indented under it unless it is collapsed.
+  for (let i = t.layers.length - 1; i >= 0; i--) {
+    const layer = t.layers[i];
+    const group = groupOf(t, layer);
+    if (!group) {
+      list.appendChild(buildLayerRow(api, layer, false));
+      continue;
+    }
+    if (shown.has(group.id)) continue;
+    shown.add(group.id);
+    list.appendChild(buildGroupRow(api, group));
+    if (collapsedGroups.has(group.id)) continue;
+    for (let j = t.layers.length - 1; j >= 0; j--) {
+      if (t.layers[j].groupId === group.id) list.appendChild(buildLayerRow(api, t.layers[j], true));
+    }
+  }
+  api.updateSelection();
+}
+
+function updateLayerListSelectionIn(api) {
+  const t = api.target;
+  const selected = new Set(getSelectedLayersFrom(t).map((l) => l.id));
+  document.querySelectorAll(`#${api.listId} .layer-item`).forEach((el) => {
+    if (el.dataset.groupId != null) {
+      const members = t.layers.filter((l) => l.groupId === Number(el.dataset.groupId));
+      const n = members.filter((l) => selected.has(l.id)).length;
+      el.classList.toggle("active", n > 0 && n === members.length);
+      el.classList.toggle("multi-selected", n > 0 && n < members.length);
+      return;
+    }
+    const id = Number(el.dataset.layerId);
+    el.classList.toggle("active", id === t.activeLayerId);
+    el.classList.toggle("multi-selected", selected.has(id) && id !== t.activeLayerId);
+  });
+}
+
+const circleApi = {
+  target: state,
+  listId: "layerList",
+  editing: null, // { kind: "layer" | "group", id } while a row's name is being edited
+  push: pushHistory,
+  renderList: renderLayerList,
+  refresh: refreshControls,
+  redraw: render,
+  updateSelection: updateLayerListSelection,
+  select: selectLayer,
+  selectGroup: (gid, opts) => selectGroupIn(circleApi, gid, opts),
+  nextId: () => nextLayerId++,
+  displayName: layerDisplayName,
+  typeLabel: layerMetaText,
+  historyLen: () => historyStack.length,
+  scale: { id: "groupScale", fieldId: "groupScaleField", mode: "circle", gesture: null, adhoc: { key: "", value: 100 } },
+};
 
 // Renaming is done with an inline <input> instead of window.prompt() — prompt()'s
 // native dialog is unreliable inside embedded/automated browser panes (it can be
 // auto-dismissed), so it silently "did nothing" there. An inline field has no such
 // dependency and works the same everywhere.
 function startRename(id) {
-  editingLayerId = id;
-  renderLayerList();
+  startRenameIn(circleApi, "layer", id);
 }
 
 function commitRename(id, newName) {
-  const layer = state.layers.find((l) => l.id === id);
-  if (layer && newName && newName.trim() && newName.trim() !== layer.name) {
-    pushHistory();
-    layer.name = newName.trim();
-  }
-  editingLayerId = null;
-  renderLayerList();
+  commitRenameIn(circleApi, "layer", id, newName);
 }
 
 function renderLayerList() {
-  const list = document.getElementById("layerList");
-  list.innerHTML = "";
-  // Top of the visible list = front of the stack (last in the array).
-  for (let i = state.layers.length - 1; i >= 0; i--) {
-    const layer = state.layers[i];
-    const item = document.createElement("div");
-    item.className = "layer-item";
-    item.dataset.layerId = layer.id;
-
-    if (layer.id === editingLayerId) {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "layer-name-input";
-      input.value = layer.name;
-      input.addEventListener("click", (e) => e.stopPropagation());
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") input.blur();
-        else if (e.key === "Escape") {
-          editingLayerId = null;
-          renderLayerList();
-        }
-      });
-      input.addEventListener("blur", () => commitRename(layer.id, input.value));
-      item.appendChild(input);
-      requestAnimationFrame(() => {
-        input.focus();
-        input.select();
-      });
-    } else {
-      const visible = layer.visible !== false;
-      item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button><span>${escapeHtml(layerDisplayName(layer))}</span></div><span class="layer-meta">${layerMetaText(layer)}</span>`;
-      item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
-      item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleLayerVisible(layer);
-      });
-      // Selecting must NOT rebuild this list (updateLayerListSelection only toggles a
-      // class) — a full rebuild here would destroy/replace this element mid-gesture and
-      // break the native dblclick sequence (click, click, dblclick all target this node).
-      item.addEventListener("click", (e) => selectLayer(layer.id, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }));
-      item.addEventListener("dblclick", () => startRename(layer.id));
-    }
-
-    list.appendChild(item);
-  }
-  updateLayerListSelection();
+  renderLayerListInto(circleApi);
 }
 
 function toggleLayerVisible(layer) {
-  pushHistory();
-  layer.visible = layer.visible === false ? true : false;
-  renderLayerList();
-  render();
+  toggleLayerVisibleIn(circleApi, layer);
 }
 
 function updateLayerListSelection() {
-  const selected = new Set(getSelectedLayers().map((l) => l.id));
-  document.querySelectorAll("#layerList .layer-item").forEach((el) => {
-    const id = Number(el.dataset.layerId);
-    el.classList.toggle("active", id === state.activeLayerId);
-    el.classList.toggle("multi-selected", selected.has(id) && id !== state.activeLayerId);
-  });
+  updateLayerListSelectionIn(circleApi);
 }
 
 // Internal type keys stay as they are so existing saved projects keep loading; this only
@@ -1431,6 +1815,7 @@ function refreshControls() {
   // Opacity applies uniformly to every layer type, so it lives in the Layers panel
   // itself rather than any one type panel — handled before the early return below so
   // it still reflects "no active layer" (disabled) correctly.
+  refreshGroupScale(circleApi);
   document.getElementById("layerOpacityField").classList.toggle("disabled", !active);
   setFieldValue("layerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
 
@@ -1438,7 +1823,11 @@ function refreshControls() {
   // CONVERTIBLE_TYPES) — Ring has no equivalent among them, so it's excluded here too.
   const typeField = document.getElementById("layerTypeField");
   const typeSelect = document.getElementById("layerTypeSelect");
-  const canChangeType = active && CONVERTIBLE_TYPES.includes(active.type);
+  // A mixed selection (different layer types) shows only what all of them share, so there is
+  // no single layer type to change either.
+  const selection = getSelectedLayers();
+  const mixedTypes = isMixedSelection(selection);
+  const canChangeType = active && !mixedTypes && CONVERTIBLE_TYPES.includes(active.type);
   typeField.classList.toggle("disabled", !canChangeType);
   // A straight line has no counterpart to convert to (nothing to carry over), so its
   // selector just shows its own, disabled, entry.
@@ -1466,10 +1855,17 @@ function refreshControls() {
   setFieldValue("placeArcSweep", place.arcSweep);
   setFieldValue("placeGapCount", place.gapCount);
   setFieldValue("placeGapSize", place.gapSize);
-  // A straight line has no circle to cut, so the arc and gap fields don't apply to it.
-  document.querySelectorAll("#placementPanel [data-arc-only]").forEach((el) => (el.style.display = active.type === "straight" ? "none" : ""));
+  // A straight line has no circle to cut, so the arc and gap fields don't apply to it (nor to
+  // a selection that includes one: those fields only show where every layer has them).
+  document.querySelectorAll("#placementPanel [data-arc-only]").forEach((el) => (el.style.display = selection.some((l) => l.type === "straight") ? "none" : ""));
 
   [ringPanel, motifPanel, linePanel, shapePanel, textPanel, straightPanel].forEach((p) => p.classList.remove("disabled"));
+  if (mixedTypes) {
+    [ringPanel, motifPanel, linePanel, shapePanel, textPanel, straightPanel].forEach((p) => p.classList.add("hidden"));
+    markMixedFields(selection);
+    updateLayerListMeta();
+    return;
+  }
   const isText = active.type === "text";
   ringPanel.classList.toggle("hidden", active.type !== "ring");
   // A Text layer uses the Asset panel for everything except the bitmap itself.
@@ -1618,6 +2014,13 @@ function shapeLockedRatio(layer) {
   return lockedRatioForGesture;
 }
 
+// True when `layer` has no property for control `id` to edit (opacity is optional on every
+// layer, so it never counts as missing).
+function lacksField(id, layer) {
+  const prop = CONTROL_PROPERTY[id];
+  return !!prop && prop !== "opacity" && !(prop in layer);
+}
+
 function bindControl(id, apply) {
   const el = document.getElementById(id);
   const numEl = document.getElementById(id + "Num");
@@ -1647,7 +2050,14 @@ function bindControl(id, apply) {
     // Applies to the whole selection, not just the active layer — that IS multi-select.
     // Each layer is passed through the same apply function individually, so per-layer
     // logic (the shape lock-ratio maths, for instance) still works correctly on each one.
-    for (const target of getSelectedLayers()) apply(target, source);
+    // In a mixed selection a layer without this field is skipped, so an edit never adds a
+    // field to a type that doesn't have it.
+    const targets = getSelectedLayers();
+    const mixed = isMixedSelection(targets);
+    for (const target of targets) {
+      if (mixed && lacksField(id, target)) continue;
+      apply(target, source);
+    }
     refreshControls();
     render();
   };
@@ -1816,9 +2226,9 @@ document.getElementById("addShapeBtn").addEventListener("click", addShapeLayer);
 document.getElementById("addTextBtn").addEventListener("click", addTextLayer);
 document.getElementById("addStraightBtn").addEventListener("click", addStraightLayer);
 document.getElementById("duplicateLayerBtn").addEventListener("click", duplicateLayer);
-document.getElementById("renameLayerBtn").addEventListener("click", () => {
-  if (state.activeLayerId != null) startRename(state.activeLayerId);
-});
+document.getElementById("renameLayerBtn").addEventListener("click", () => renameSelection(circleApi));
+document.getElementById("groupLayersBtn").addEventListener("click", () => groupSelection(circleApi));
+document.getElementById("ungroupLayersBtn").addEventListener("click", () => ungroupSelection(circleApi));
 document.getElementById("removeLayerBtn").addEventListener("click", removeLayer);
 document.getElementById("clearLayersBtn").addEventListener("click", clearLayers);
 document.getElementById("randomizeSpeedsBtn").addEventListener("click", randomizeAnimSpeeds);
@@ -1830,7 +2240,7 @@ document.getElementById("redoBtn").addEventListener("click", () => redo());
 
 document.getElementById("layerTypeSelect").addEventListener("change", (e) => {
   const active = getActiveLayer();
-  if (!active || !CONVERTIBLE_TYPES.includes(active.type)) return;
+  if (!active || !CONVERTIBLE_TYPES.includes(active.type) || isMixedSelection(getSelectedLayers())) return;
   const newType = e.target.value;
   if (newType === active.type) return;
   pushHistory();
@@ -3139,13 +3549,34 @@ function appendMirrorTwins(content, layerG, layer, mirror) {
   }
 }
 
+// True when the selection is treated as one unit: several layers, or one whole group.
+function groupTransformActive(layers) {
+  return layers.length > 1 || (layers.length === 1 && !!selectedWholeGroup(state));
+}
+
+// Centre of the selected layers' origins, in canvas coordinates: what a group turns about.
+function selectionPivot(layers) {
+  let sx = 0, sy = 0;
+  for (const l of layers) {
+    const p = placementOf(l);
+    sx += CENTER + p.originX;
+    sy += CENTER + p.originY;
+  }
+  return { x: sx / layers.length, y: sy / layers.length };
+}
+
 // Editor-only grab handles for the origin of every selected layer. Sized in screen px
 // (via the artboard's current scale) so they stay the same size at any zoom. Any of them
-// drags the whole selection — see the origin drag handlers below.
+// drags the whole selection - see the origin drag handlers below. When the selection is a
+// group (or several layers) the per-layer handles give way to ONE handle pair (see
+// appendLayerHandles / groupAnchor).
 function appendOriginHandles(svg) {
   const ctm = svg.getScreenCTM();
   const unit = 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2); // SVG units per screen px
-  for (const layer of getSelectedLayers()) {
+  const layers = getSelectedLayers();
+  // A group has only its one handle (see appendLayerHandles): no per-layer origin handles.
+  if (groupTransformActive(layers)) return;
+  for (const layer of layers) {
     const p = placementOf(layer);
     const h = document.createElementNS(SVG_NS, "g");
     h.setAttribute("class", "editor-only origin-handle");
@@ -3209,19 +3640,67 @@ function appendHandleGroup(svg, x, y, rotDeg, unit, markup) {
   svg.appendChild(h);
 }
 
-const ROTATE_HANDLE_MARKUP = (id) => `
+const ROTATE_HANDLE_MARKUP = (id, kind = "rotate") => `
   <line x1="0" y1="0" x2="0" y2="${-HANDLE_REACH_PX}" stroke="${HANDLE_AMBER}" stroke-width="1.5" stroke-opacity="0.8" pointer-events="none" />
-  <g data-handle="rotate" data-handle-layer="${id}" transform="translate(0 ${-HANDLE_REACH_PX})">
+  <g data-handle="${kind}" data-handle-layer="${id}" transform="translate(0 ${-HANDLE_REACH_PX})">
     <circle r="14" fill="transparent" pointer-events="all" />
     <circle r="8" fill="#1d2026" stroke="${HANDLE_AMBER}" stroke-width="2" />
     <path d="M -4 1 A 4 4 0 1 0 0 -4" fill="none" stroke="${HANDLE_AMBER}" stroke-width="1.8" />
     <path d="M -2 -7 L 2 -4 L -2 -1 Z" fill="${HANDLE_AMBER}" />
   </g>`;
 
+// Where one layer's own blue handle is drawn, in canvas coordinates, plus the angle of the ray
+// it sits on (null for hidden layers and ones without a handle).
+function layerAnchor(layer) {
+  if (layerIsHidden(state, layer)) return null;
+  if (layer.type === "straight") {
+    const e = straightEnds(layer);
+    return { x: e.p2.x, y: e.p2.y, ang: e.ang };
+  }
+  if (!(layer.radius > 0)) return null;
+  const p = placementOf(layer);
+  const ang = visibleArc(layer).pieces[0][0] + layerSpin(layer);
+  const [px, py] = arcPoint(layer.radius, ang);
+  return { x: px + p.originX, y: py + p.originY, ang };
+}
+
+// The group handle: the middle of its members' own handle anchors (falls back to the pivot of
+// the origins when none has one), and the angle from the pivot out to it (what the knob points at).
+function groupAnchor(layers) {
+  const pv = selectionPivot(layers);
+  const pts = layers.map(layerAnchor).filter(Boolean);
+  if (pts.length === 0) return { x: pv.x, y: pv.y, ang: 0, pivot: pv };
+  const x = pts.reduce((s, q) => s + q.x, 0) / pts.length;
+  const y = pts.reduce((s, q) => s + q.y, 0) / pts.length;
+  const far = Math.hypot(x - pv.x, y - pv.y) > 0.5;
+  const ang = far ? (Math.atan2(x - pv.x, -(y - pv.y)) * 180) / Math.PI : pts[0].ang;
+  return { x, y, ang, pivot: pv };
+}
+
+// The ONE handle a group (or multi-selection) shows: the radius ball at the middle of the
+// members' anchors, with the rotate knob beyond it. They do what the single-layer ones do, to
+// every member at once (see "groupradius" / "grouprotate" in moveHandleDrag).
+function appendGroupHandle(svg, unit, layers) {
+  const lead = getActiveLayer();
+  if (!lead) return;
+  const g = groupAnchor(layers);
+  appendHandleGroup(svg, g.x, g.y, g.ang, unit, `
+    <g data-handle="groupradius" data-handle-layer="${lead.id}">
+      <circle r="14" fill="transparent" pointer-events="all" />
+      <circle r="7" fill="#1d2026" stroke="${HANDLE_BLUE}" stroke-width="2" />
+      <path d="M 0 -11 L -3.5 -7 H 3.5 Z M 0 11 L -3.5 7 H 3.5 Z" fill="${HANDLE_BLUE}" />
+    </g>` + ROTATE_HANDLE_MARKUP(lead.id, "grouprotate"));
+}
+
 function appendLayerHandles(svg) {
   const unit = svgUnitsPerPx(svg);
-  for (const layer of getSelectedLayers()) {
-    if (layer.visible === false) continue;
+  const selected = getSelectedLayers();
+  if (groupTransformActive(selected)) {
+    appendGroupHandle(svg, unit, selected);
+    return;
+  }
+  for (const layer of selected) {
+    if (layerIsHidden(state, layer)) continue;
     if (layer.type === "straight") {
       const e = straightEnds(layer);
       const end = (kind) => `<g data-handle="${kind}" data-handle-layer="${layer.id}">
@@ -3244,6 +3723,263 @@ function appendLayerHandles(svg) {
   }
 }
 
+// Value badges: two small round editor-only readouts beside the active layer's origin handle,
+// a constant size at any zoom. The count badge is the number of clones; the size badge (marked
+// with a little width arrow) is the layer's per-clone size, which is whichever field that
+// type's size slider drives: asset/shape size, text letter size, line and straight-line length,
+// and for a ring its stroke width (a ring has no clones, so it shows only the size badge).
+// Click one to type a value, or scroll over it: +1 per notch, +10 with Shift. The ranges are
+// the sidebar sliders' own. With several layers selected an edit goes to every one that has
+// the field, and a badge shows a dash when they disagree.
+const BADGE_RADIUS_PX = 14;
+const BADGE_DISTANCE_PX = 40; // from the origin, on the side away from the radius/rotate handles
+const BADGE_SPREAD_DEG = 28; // the two badges sit this far either side of that direction
+const BADGE_PURPLE = "#c792ea";
+const BADGE_GREEN = "#5ad1a5";
+const BADGE_BURST_MS = 400; // wheel notches closer together than this are one undo step
+const COUNT_RANGE = { motif: [1, 500], line: [1, 500], shape: [1, 500], text: [1, 500], straight: [1, 72] };
+const SIZE_FIELD = {
+  ring: { key: "strokeWidth", min: 0, max: 100 },
+  motif: { key: "size", min: 25, max: 1250 },
+  shape: { key: "size", min: 10, max: 1250 },
+  text: { key: "size", min: TEXT_SIZE_MIN, max: TEXT_SIZE_MAX },
+  line: { key: "length", min: 10, max: 1250 },
+  straight: { key: "length", min: 10, max: 6000 },
+};
+
+// { key, min, max } for this badge on this layer, or null if the layer type lacks the field.
+function badgeField(layer, kind) {
+  if (kind === "count") {
+    const r = COUNT_RANGE[layer.type];
+    return r ? { key: "count", min: r[0], max: r[1] } : null;
+  }
+  return SIZE_FIELD[layer.type] || null;
+}
+
+function badgeLayers(kind) {
+  return getSelectedLayers().filter((l) => badgeField(l, kind));
+}
+
+// What the badge shows, or null when no selected layer has the field (the badge is hidden).
+function badgeDisplay(kind) {
+  const layers = badgeLayers(kind);
+  if (layers.length === 0) return null;
+  const values = layers.map((l) => l[badgeField(l, kind).key]);
+  const mixed = values.some((v) => v !== values[0]);
+  return { value: values[0], mixed, text: mixed ? MIXED_VALUE_TEXT : String(values[0]) };
+}
+
+const SIZE_GLYPH = `<path d="M -5 -8.5 H 5 M -5 -8.5 L -3 -10.5 M -5 -8.5 L -3 -6.5 M 5 -8.5 L 3 -10.5 M 5 -8.5 L 3 -6.5" fill="none" stroke="${BADGE_GREEN}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />`;
+
+function badgeMarkup(kind, text) {
+  const colour = kind === "count" ? BADGE_PURPLE : BADGE_GREEN;
+  const tip = kind === "count" ? "Clones" : "Size";
+  return `<title>${tip}: click to type, drag left/right or scroll to change (Shift: coarser)</title>
+    <circle r="${BADGE_RADIUS_PX}" fill="#1d2026" stroke="${colour}" stroke-width="2" />
+    ${kind === "size" ? SIZE_GLYPH : ""}
+    <text y="${kind === "size" ? 6 : 4.5}" text-anchor="middle" font-size="${kind === "size" ? 10.5 : 11.5}" font-weight="600" fill="#e8eefc" font-family="system-ui, sans-serif" pointer-events="none">${text}</text>`;
+}
+
+function placeBadge(el, unit) {
+  const x = Number(el.dataset.bx) + Number(el.dataset.bdx) * unit;
+  const y = Number(el.dataset.by) + Number(el.dataset.bdy) * unit;
+  el.setAttribute("transform", `translate(${x} ${y}) scale(${unit})`);
+}
+
+function appendValueBadges(svg) {
+  const lead = getActiveLayer();
+  if (!lead || layerIsHidden(state, lead)) return;
+  const kinds = ["count", "size"].filter((k) => badgeDisplay(k));
+  if (kinds.length === 0) return;
+  const unit = svgUnitsPerPx(svg);
+  const selected = getSelectedLayers();
+  const grouped = groupTransformActive(selected);
+  // For a group the badges sit by the group ball, on the side away from its rotate knob.
+  const ga = grouped ? groupAnchor(selected) : null;
+  const p = ga ? { originX: ga.x - CENTER, originY: ga.y - CENTER } : placementOf(lead);
+  // Away from the radius and rotate handles (which sit at the arc start, out along that
+  // ray); a straight line's handles are on its ends, so its badges go to one side instead.
+  const base = grouped ? ga.ang + 180 : lead.type === "straight" ? lead.angle + 90 : (lead.radius > 0 ? visibleArc(lead).pieces[0][0] : 0) + 180;
+  kinds.forEach((kind, i) => {
+    const u = unitVector(kinds.length === 1 ? base : base + (i === 0 ? -BADGE_SPREAD_DEG : BADGE_SPREAD_DEG));
+    const g = document.createElementNS(SVG_NS, "g");
+    g.setAttribute("class", "editor-only value-badge");
+    g.dataset.badge = kind;
+    g.dataset.bx = CENTER + p.originX;
+    g.dataset.by = CENTER + p.originY;
+    g.dataset.bdx = u.x * BADGE_DISTANCE_PX;
+    g.dataset.bdy = u.y * BADGE_DISTANCE_PX;
+    g.innerHTML = badgeMarkup(kind, badgeDisplay(kind).text);
+    placeBadge(g, unit);
+    svg.appendChild(g);
+  });
+  positionBadgeEditor();
+}
+
+// Writes new values onto every selected layer that has the badge's field. `compute(layer, field)`
+// returns the raw new value; it is clamped to the field's range and rounded. A burst of wheel
+// notches is one undo step (opened by the first, closed after BADGE_BURST_MS of quiet); every
+// typed edit is its own.
+let badgeBurstOpen = false;
+let badgeBurstTimer = null;
+let badgeBurstRatios = new Map(); // locked shapes keep the proportions they had when the burst began
+
+// `burst` is false for a typed value (its own undo step), true for wheel notches (one step per
+// burst) or "drag" for a scrub (the drag pushes its one undo step itself, on its first change).
+function applyBadgeValue(kind, compute, burst) {
+  const changes = [];
+  for (const l of badgeLayers(kind)) {
+    const field = badgeField(l, kind);
+    const value = Math.min(field.max, Math.max(field.min, Math.round(compute(l, field))));
+    if (value !== l[field.key]) changes.push({ l, field, value });
+  }
+  if (changes.length === 0) return;
+  if (burst === "drag") {
+    if (badgeDrag && !badgeDrag.pushed) {
+      badgeDrag.pushed = true;
+      pushHistory();
+    }
+  } else if (burst) {
+    if (!badgeBurstOpen) {
+      badgeBurstOpen = true;
+      badgeBurstRatios = new Map();
+      pushHistory();
+    }
+    clearTimeout(badgeBurstTimer);
+    badgeBurstTimer = setTimeout(() => (badgeBurstOpen = false), BADGE_BURST_MS);
+  } else {
+    pushHistory();
+  }
+  for (const { l, field, value } of changes) {
+    // A locked shape keeps its width:height ratio, like the sidebar's size slider.
+    if (l.type === "shape" && field.key === "size" && l.lockRatio !== false) {
+      let ratio = badgeBurstRatios.get(l.id);
+      if (ratio === undefined) {
+        ratio = l.size > 0 ? (l.sizeY != null ? l.sizeY : l.size) / l.size : 1;
+        if (burst) badgeBurstRatios.set(l.id, ratio);
+      }
+      l.sizeY = Math.round(value * ratio);
+    }
+    l[field.key] = value;
+  }
+  refreshControls();
+  render();
+}
+
+// Press and drag a badge left/right to scrub its value; a press that barely moves is a click and
+// opens the typing box instead. The pointer is captured on the <svg> (render() rebuilds the badge
+// on every move, so nothing can hold the badge itself) and each move is worked out from the
+// values at drag start, so nothing drifts and the whole drag is one undo step.
+const BADGE_SLOP_PX = 3;
+const COUNT_PX_PER_STEP = 6;
+let badgeDrag = null; // { kind, pointerId, x0, y0, base: Map(layer id -> value), moved, pushed }
+
+function beginBadgeDrag(e, kind) {
+  const svg = document.getElementById("canvas");
+  const base = new Map();
+  for (const l of badgeLayers(kind)) base.set(l.id, l[badgeField(l, kind).key]);
+  badgeDrag = { kind, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, base, moved: false, pushed: false };
+  badgeBurstRatios = new Map();
+  svg.setPointerCapture(e.pointerId);
+}
+
+function moveBadgeDrag(e) {
+  const d = badgeDrag;
+  const dx = e.clientX - d.x0;
+  if (!d.moved) {
+    if (Math.hypot(dx, e.clientY - d.y0) < BADGE_SLOP_PX) return;
+    d.moved = true;
+    document.getElementById("canvas").classList.add("badge-scrubbing");
+  }
+  const coarse = e.shiftKey;
+  applyBadgeValue(d.kind, (l, field) => {
+    const base = d.base.has(l.id) ? d.base.get(l.id) : l[field.key];
+    if (d.kind === "count") return base + Math.round(dx / COUNT_PX_PER_STEP) * (coarse ? 5 : 1);
+    // Size moves in proportion to the value it starts from (a 300 asset changes faster than a
+    // 10 px stroke); Shift is five times coarser and lands on multiples of 10.
+    const v = base + dx * Math.max(1, base * 0.01) * (coarse ? 5 : 1);
+    return coarse ? Math.round(v / 10) * 10 : v;
+  }, "drag");
+}
+
+function endBadgeDrag(e) {
+  const d = badgeDrag;
+  if (!d) return;
+  const svg = document.getElementById("canvas");
+  badgeDrag = null;
+  if (svg.hasPointerCapture(d.pointerId)) svg.releasePointerCapture(d.pointerId);
+  svg.classList.remove("badge-scrubbing");
+  if (!d.moved && e.type === "pointerup") openBadgeEditor(d.kind);
+}
+
+let badgeEditor = null; // { kind, input } while a value is being typed
+
+function positionBadgeEditor() {
+  if (!badgeEditor) return;
+  const badge = document.querySelector(`#canvas [data-badge="${badgeEditor.kind}"]`);
+  if (!badge) return;
+  const r = badge.getBoundingClientRect();
+  badgeEditor.input.style.left = `${r.left + r.width / 2 - 30}px`;
+  badgeEditor.input.style.top = `${r.top + r.height / 2 - 13}px`;
+}
+
+function closeBadgeEditor(commit) {
+  const ed = badgeEditor;
+  if (!ed) return;
+  badgeEditor = null;
+  const text = ed.input.value;
+  ed.input.remove();
+  if (!commit) return;
+  const v = evaluateNumericExpression(text);
+  if (v !== null && Number.isFinite(v)) applyBadgeValue(ed.kind, () => v, false);
+}
+
+function openBadgeEditor(kind) {
+  closeBadgeEditor(true);
+  const disp = badgeDisplay(kind);
+  if (!disp) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.inputMode = "numeric";
+  input.className = "badge-editor";
+  input.setAttribute("aria-label", kind === "count" ? "Clone count" : "Size");
+  input.value = disp.mixed ? "" : String(disp.value);
+  document.body.appendChild(input);
+  badgeEditor = { kind, input };
+  positionBadgeEditor();
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation(); // typing must not reach the app's shortcuts
+    if (e.key === "Enter") closeBadgeEditor(true);
+    else if (e.key === "Escape") closeBadgeEditor(false);
+  });
+  // Clicking elsewhere keeps what was typed (the guard ignores the blur that removal causes).
+  input.addEventListener("blur", () => {
+    if (badgeEditor && badgeEditor.input === input) closeBadgeEditor(true);
+  });
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+// Scroll over a badge: +1 per notch, +10 with Shift (a browser may report the shifted wheel
+// as horizontal). Handled here and stopped, so it neither scrolls the preview nor zooms;
+// Ctrl/Alt + scroll still zoom as everywhere.
+document.getElementById("canvas").addEventListener(
+  "wheel",
+  (e) => {
+    const badge = e.target.closest && e.target.closest("[data-badge]");
+    if (!badge || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dy = e.deltaY || e.deltaX;
+    if (!dy) return;
+    const step = (e.shiftKey ? 10 : 1) * (dy < 0 ? 1 : -1);
+    applyBadgeValue(badge.dataset.badge, (l, field) => l[field.key] + step, true);
+  },
+  { passive: false }
+);
+
 // Zooming changes how big a screen px is in canvas units without rebuilding the SVG, so
 // the handles are re-scaled in place.
 function rescaleHandles() {
@@ -3256,6 +3992,8 @@ function rescaleHandles() {
     const m = /translate\(([^)]*)\)/.exec(h.getAttribute("transform"));
     if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${unit})`);
   });
+  svg.querySelectorAll(".value-badge").forEach((b) => placeBadge(b, unit));
+  positionBadgeEditor();
 }
 
 // Artwork outside the artboard stays visible in the editor but is not exported. So that
@@ -3283,17 +4021,19 @@ function render() {
   // apply once to the whole composition, without touching the editor-only indicator/seam
   // guide appended after it below (masking those would just be confusing).
   const content = document.createElementNS(SVG_NS, "g");
+  const groupCursor = { id: null, el: null };
 
   for (const layer of state.layers) {
     const layerG = document.createElementNS(SVG_NS, "g");
     layerG.dataset.layerId = layer.id;
     layerG.classList.add("layer-hit");
     layerG.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
+    const parent = layerParentFor(state, content, layer, groupCursor);
 
-    if (layer.visible === false) {
+    if (layerIsHidden(state, layer)) {
       // Nothing to draw, but keep the (empty) <g> so layer order/indexing stays
       // consistent with the layers array — same reasoning as every other layer type.
-      content.appendChild(layerG);
+      parent.appendChild(layerG);
       continue;
     }
 
@@ -3399,8 +4139,8 @@ function render() {
       }
     }
 
-    content.appendChild(layerG);
-    appendMirrorTwins(content, layerG, layer, place.mirror);
+    parent.appendChild(layerG);
+    appendMirrorTwins(parent, layerG, layer, place.mirror);
   }
 
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle");
@@ -3454,7 +4194,9 @@ function render() {
     <line x1="${CENTER}" y1="${CENTER - 32}" x2="${CENTER}" y2="${CENTER + 32}" />`;
   svg.appendChild(cross);
 
-  // Under the origin handle: where a ray starts at the origin, that one stays grabbable.
+  // Beneath the handles, so a badge never covers one; and under the origin handle: where a
+  // ray starts at the origin, that one stays grabbable.
+  appendValueBadges(svg);
   appendLayerHandles(svg);
   appendOriginHandles(svg);
   syncOverhang();
@@ -3492,7 +4234,9 @@ function render() {
 function makeLayerClickCycler() {
   let lastKey = "";
   let lastIndex = -1;
-  return (clientX, clientY) => {
+  // `topOnly` (a Ctrl/Shift click, which adds to the selection) always takes the front layer
+  // instead of stepping down the stack.
+  return (clientX, clientY, topOnly = false) => {
     const ids = [];
     for (const el of document.elementsFromPoint(clientX, clientY)) {
       const g = el.closest("g[data-layer-id]");
@@ -3506,7 +4250,7 @@ function makeLayerClickCycler() {
       return null;
     }
     const key = ids.join(",");
-    lastIndex = key === lastKey ? (lastIndex + 1) % ids.length : 0;
+    lastIndex = key === lastKey && !topOnly ? (lastIndex + 1) % ids.length : 0;
     lastKey = key;
     return ids[lastIndex];
   };
@@ -3541,7 +4285,8 @@ function moveOriginDrag(e) {
   // Snap the ACTIVE layer onto the centre line, and shift the rest of the selection by
   // that same snapped delta so they stay in formation.
   const snapUnits = ORIGIN_SNAP_PX / svg.getScreenCTM().a;
-  const lead = drag.origins.get(state.activeLayerId) || [...drag.origins.values()][0];
+  // (dragging the group pivot snaps the pivot itself instead)
+  const lead = drag.pivot ? { x: drag.pivot.x - CENTER, y: drag.pivot.y - CENTER } : drag.origins.get(state.activeLayerId) || [...drag.origins.values()][0];
   if (Math.abs(lead.x + dx) < snapUnits) dx = -lead.x;
   if (Math.abs(lead.y + dy) < snapUnits) dy = -lead.y;
   dx = Math.round(dx);
@@ -3608,17 +4353,35 @@ function beginHandleDrag(e, kind, layerId) {
     base.set(l.id, {
       radius: l.radius,
       rot: l[rk],
+      rotation: l.rotation,
       angle: l.angle, length: l.length, offset: l.offset,
       originX: placementOf(l).originX,
       originY: placementOf(l).originY,
     });
   }
+  const origin = { x: CENTER + p.originX, y: CENTER + p.originY };
+  // Several layers rotate as one rigid group about the centre of their origins; a single
+  // layer (or layers sharing one origin) just turns about its own.
+  const groupMode = kind === "grouprotate" || kind === "groupradius" || base.size > 1;
+  let pivot = origin;
+  if (base.size > 1) {
+    let sx = 0, sy = 0;
+    for (const b of base.values()) {
+      sx += CENTER + b.originX;
+      sy += CENTER + b.originY;
+    }
+    pivot = { x: sx / base.size, y: sy / base.size };
+  }
+  // The group radius ball measures from the pivot, like its rotate knob turns about it.
+  const ringOrigin = kind === "groupradius" ? pivot : origin;
   handleDrag = {
     kind,
+    groupMode,
     pointerId: e.pointerId,
     leadId: lead.id,
     start: clientToSvgPoint(svg, e.clientX, e.clientY),
-    origin: { x: CENTER + p.originX, y: CENTER + p.originY },
+    origin: ringOrigin,
+    pivot,
     base,
     moved: false,
   };
@@ -3634,7 +4397,7 @@ function moveHandleDrag(e) {
   const targets = getSelectedLayers();
   let readout = "";
 
-  if (d.kind === "radius") {
+  if (d.kind === "radius" || d.kind === "groupradius") {
     const rings = targets.filter((l) => d.base.get(l.id) && l.radius != null);
     const dist = (q) => Math.hypot(q.x - d.origin.x, q.y - d.origin.y);
     let delta = dist(pt) - dist(d.start);
@@ -3651,20 +4414,38 @@ function moveHandleDrag(e) {
     }
     for (const l of rings) l.radius = d.base.get(l.id).radius + delta;
     readout = `r ${lead.radius}`;
-  } else if (d.kind === "rotate") {
-    const angleOf = (q) => (Math.atan2(q.x - d.origin.x, -(q.y - d.origin.y)) * 180) / Math.PI;
+  } else if (d.kind === "rotate" || d.kind === "grouprotate") {
+    const angleOf = (q) => (Math.atan2(q.x - d.pivot.x, -(q.y - d.pivot.y)) * 180) / Math.PI;
     let delta = angleOf(pt) - angleOf(d.start);
-    const v0 = d.base.get(lead.id).rot;
+    const v0 = d.kind === "grouprotate" ? 0 : d.base.get(lead.id).rot; // the group knob snaps the turn itself
     delta = e.shiftKey ? Math.round((v0 + delta) / HANDLE_SNAP_DEG) * HANDLE_SNAP_DEG - v0 : Math.round(delta);
     if (!d.moved) {
       if (wrapDegrees(delta) === 0) return;
       d.moved = true;
       pushHistory();
     }
+    // Each layer's angle turns by delta and, with several selected, its origin swings round the
+    // pivot by the same amount (clockwise, like the angles). Origins go to 0.01 so turning
+    // the group back and forth never drifts.
+    const rad = (delta * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const round2 = (v) => Math.round(v * 100) / 100 || 0; // (|| 0 keeps -0 out)
     for (const l of targets) {
-      if (d.base.has(l.id)) l[rotateKeyOf(l)] = wrapDegrees(d.base.get(l.id).rot + delta);
+      const b = d.base.get(l.id);
+      if (!b) continue;
+      l[rotateKeyOf(l)] = wrapDegrees(b.rot + delta);
+      // Items that don't follow the ring keep their own orientation when only the ring turns,
+      // but a group turns as one rigid piece, so they turn with it too.
+      if (d.groupMode && l.followRing === false && l.type !== "text" && typeof b.rotation === "number") {
+        l.rotation = round2(wrapDegrees(b.rotation + delta));
+      }
+      if (d.base.size > 1) {
+        const rx = CENTER + b.originX - d.pivot.x, ry = CENTER + b.originY - d.pivot.y;
+        l.originX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
+        l.originY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
+      }
     }
-    readout = `${lead[rotateKeyOf(lead)]}°`;
+    readout = d.kind === "grouprotate" ? `${delta > 0 ? "+" : ""}${delta}°` : `${lead[rotateKeyOf(lead)]}°`;
   } else {
     // end1 / end2: only the layer whose end was grabbed changes.
     const b = d.base.get(lead.id);
@@ -3736,20 +4517,30 @@ function endHandleDrag(e) {
 }
 
 document.getElementById("canvas").addEventListener("pointermove", (e) => {
-  if (originDrag && e.pointerId === originDrag.pointerId) moveOriginDrag(e);
+  if (badgeDrag && e.pointerId === badgeDrag.pointerId) moveBadgeDrag(e);
+  else if (originDrag && e.pointerId === originDrag.pointerId) moveOriginDrag(e);
   else if (handleDrag && e.pointerId === handleDrag.pointerId) moveHandleDrag(e);
 });
 document.getElementById("canvas").addEventListener("pointerup", (e) => {
+  endBadgeDrag(e);
   endOriginDrag(e);
   endHandleDrag(e);
 });
 document.getElementById("canvas").addEventListener("pointercancel", (e) => {
+  endBadgeDrag(e);
   endOriginDrag(e);
   endHandleDrag(e);
 });
 
 document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+  const badge = e.target.closest("[data-badge]");
+  if (badge) {
+    closeBadgeEditor(true);
+    beginBadgeDrag(e, badge.dataset.badge);
+    e.preventDefault();
+    return;
+  }
   if (e.target.closest("[data-origin-handle]")) {
     const svg = document.getElementById("canvas");
     const origins = new Map();
@@ -3757,7 +4548,8 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
       const p = placementOf(layer);
       origins.set(layer.id, { x: p.originX, y: p.originY });
     }
-    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, moved: false };
+    const pivot = e.target.closest("[data-origin-handle]").dataset.originHandle === "pivot" ? selectionPivot(getSelectedLayers()) : null;
+    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, moved: false };
     svg.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
@@ -3768,8 +4560,10 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
     e.preventDefault();
     return;
   }
-  const id = pickCircleClickLayer(e.clientX, e.clientY);
-  if (id != null) selectLayer(id);
+  // Ctrl/Cmd or Shift adds or removes the layer under the pointer, like the layer list.
+  const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+  const id = pickCircleClickLayer(e.clientX, e.clientY, multi);
+  if (id != null) selectLayer(id, { toggle: multi });
 });
 
 // --- Camera: zoom, pan, fit (Ring editor and Straight tile) ---
@@ -4364,7 +5158,7 @@ function renderStraight() {
     const g = document.createElementNS(SVG_NS, "g");
     g.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
 
-    if (layer.visible === false) {
+    if (layerIsHidden(state, layer)) {
       svg.appendChild(g);
       continue;
     }
@@ -4442,6 +5236,44 @@ function withFileCode(filename) {
   return dot === -1 ? `${filename}_${code}` : `${filename.slice(0, dot)}_${code}${filename.slice(dot)}`;
 }
 
+// --- Named groups and layers in exported SVG ---
+// Illustrator reads a <g>'s id as its name, Inkscape reads inkscape:label (and, with
+// inkscape:groupmode="layer", lists it as a layer), Affinity follows the id. Setting both on
+// the wrappers makes the exported file open with the same names the layer panel shows.
+const INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape";
+
+// A valid, unique XML id from a display name ("Group 1" -> "Group_1").
+function xmlIdFromName(name, used) {
+  let base = String(name || "layer").trim().replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!base) base = "layer";
+  if (!/^[A-Za-z_]/.test(base)) base = "_" + base;
+  let id = base;
+  for (let n = 2; used.has(id); n++) id = `${base}_${n}`;
+  used.add(id);
+  return id;
+}
+
+function setSvgNames(el, name, used, asLayer) {
+  el.setAttribute("id", xmlIdFromName(name, used));
+  el.setAttributeNS(INKSCAPE_NS, "inkscape:label", name);
+  if (asLayer) el.setAttributeNS(INKSCAPE_NS, "inkscape:groupmode", "layer");
+}
+
+function existingSvgIds(root) {
+  const used = new Set();
+  root.querySelectorAll("[id]").forEach((el) => used.add(el.getAttribute("id")));
+  return used;
+}
+
+// Names the user-group wrappers (data-group-id, see layerParentFor) in an export clone.
+function nameGroupWrappers(root) {
+  const wraps = root.querySelectorAll("g[data-group-id]");
+  if (wraps.length === 0) return;
+  const used = existingSvgIds(root);
+  wraps.forEach((g) => setSvgNames(g, g.dataset.groupName, used, false));
+  root.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:inkscape", INKSCAPE_NS);
+}
+
 function getExportSvgString(svgId) {
   const svg = document.getElementById(svgId);
   const clone = svg.cloneNode(true);
@@ -4451,6 +5283,7 @@ function getExportSvgString(svgId) {
   // render the exported file fully transparent, so strip it here.
   clone.removeAttribute("style");
   clone.setAttribute("xmlns", SVG_NS);
+  nameGroupWrappers(clone);
   return new XMLSerializer().serializeToString(clone);
 }
 
@@ -4702,16 +5535,46 @@ function sanitizeFilePart(str) {
   return str.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "layer";
 }
 
-async function exportLayersZip() {
+// Options of the "Separate Layers" export, read from the panel.
+function layersExportOptions() {
+  return {
+    format: document.getElementById("layersFormat").value === "svg" ? "svg" : "png",
+    includeHidden: document.getElementById("layersIncludeHidden").checked,
+    flatten: document.getElementById("layersFlatten").checked,
+  };
+}
+
+// A layer is left out of the export when its own eye or its group's eye is off, unless the
+// "include hidden layers" box is ticked.
+function layerExportable(layer, opts) {
+  return opts.includeHidden || !layerIsHidden(state, layer);
+}
+
+async function exportLayers() {
+  const opts = layersExportOptions();
+  if (opts.format === "svg") await exportLayersSvg(opts);
+  else await exportLayersZip(opts);
+}
+
+// PNG: one full-canvas file per layer (plain rings flattened into one per bucket), zipped in
+// stacking order. Without "flatten groups" each user group becomes a folder in the ZIP, with
+// its own rings file; loose layers stay at the top level.
+async function exportLayersZip(opts) {
   const statusEl = document.getElementById("layersExportStatus");
   const originalLayers = state.layers;
   const originalOverride = animTimeOverride;
 
   // A cut or gapped ring visibly turns, so it needs its own file like any other layer.
   const isPlainRing = (l) => l.type === "ring" && visibleArc(l).full;
-  const ringLayers = originalLayers.filter(isPlainRing);
-  const otherLayers = originalLayers.filter((l) => !isPlainRing(l));
-  const totalSteps = (ringLayers.length > 0 ? 1 : 0) + otherLayers.length;
+  const exportable = originalLayers.filter((l) => layerExportable(l, opts));
+  const buckets = new Map(); // group id (or null) -> { folder, rings, others }, in stacking order
+  for (const l of exportable) {
+    const g = opts.flatten ? null : groupOf(state, l);
+    const key = g ? g.id : null;
+    if (!buckets.has(key)) buckets.set(key, { folder: g ? sanitizeFilePart(g.name) : "", rings: [], others: [] });
+    buckets.get(key)[isPlainRing(l) ? "rings" : "others"].push(l);
+  }
+  const totalSteps = [...buckets.values()].reduce((n, b) => n + (b.rings.length > 0 ? 1 : 0) + b.others.length, 0);
 
   if (totalSteps === 0) {
     if (statusEl) statusEl.textContent = "No layers to export.";
@@ -4720,6 +5583,7 @@ async function exportLayersZip() {
 
   flushTextRasters();
   animTimeOverride = 0;
+  exportShowHidden = opts.includeHidden;
   try {
     const files = [];
     const digits = Math.max(2, String(totalSteps).length);
@@ -4730,22 +5594,24 @@ async function exportLayersZip() {
       const canvas = await rasterizeSvgToCanvas(getExportSvgString("canvas"), CANVAS_SIZE, CANVAS_SIZE);
       return canvasToPngBuffer(canvas);
     };
+    const fileName = (folder, label) => `${folder ? folder + "/" : ""}${String(step).padStart(digits, "0")}_${label}.png`;
 
-    if (ringLayers.length > 0) {
-      step++;
-      if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (Rings)…`;
-      state.layers = ringLayers;
-      const buf = await captureCurrentLayers();
-      files.push({ name: `${String(step).padStart(digits, "0")}_Rings.png`, data: new Uint8Array(buf) });
-    }
-
-    for (const layer of otherLayers) {
-      step++;
-      const label = layerDisplayName(layer);
-      if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (${label})…`;
-      state.layers = [layer];
-      const buf = await captureCurrentLayers();
-      files.push({ name: `${String(step).padStart(digits, "0")}_${sanitizeFilePart(label)}.png`, data: new Uint8Array(buf) });
+    for (const bucket of buckets.values()) {
+      if (bucket.rings.length > 0) {
+        step++;
+        if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (Rings)…`;
+        state.layers = bucket.rings;
+        const buf = await captureCurrentLayers();
+        files.push({ name: fileName(bucket.folder, "Rings"), data: new Uint8Array(buf) });
+      }
+      for (const layer of bucket.others) {
+        step++;
+        const label = layerDisplayName(layer);
+        if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (${label})…`;
+        state.layers = [layer];
+        const buf = await captureCurrentLayers();
+        files.push({ name: fileName(bucket.folder, sanitizeFilePart(label)), data: new Uint8Array(buf) });
+      }
     }
 
     const zipBytes = buildZip(files);
@@ -4758,9 +5624,127 @@ async function exportLayersZip() {
     console.error(err);
     if (statusEl) statusEl.textContent = "Layer export failed — see console for details.";
   } finally {
+    exportShowHidden = false;
     state.layers = originalLayers;
     animTimeOverride = originalOverride;
     render();
+  }
+}
+
+// The layered SVG as a string: the artboard as drawn (frozen at t=0, editor extras stripped),
+// re-wrapped so every layer is a named <g> (id and inkscape:label = the layer's name,
+// inkscape:groupmode="layer") and every user group a named <g> around its layers, in the list's
+// order. Illustrator takes the ids as layer names, Inkscape the labels, Affinity the ids. A
+// layer's mirror twins stay inside its own <g>. Hidden layers and groups are left out, or kept
+// with display:none (opts.includeHidden). Text is whatever the single-SVG export already makes
+// of it. A global mask is applied to each layer rather than to one outer wrapper, so the layers
+// stay direct children of the root (or of their group), where layer-aware apps look for them.
+function buildLayersSvgString(opts) {
+  flushTextRasters();
+  const prevOverride = animTimeOverride;
+  animTimeOverride = 0;
+  exportShowHidden = opts.includeHidden;
+  let clone;
+  try {
+    render();
+    clone = document.getElementById("canvas").cloneNode(true);
+  } finally {
+    exportShowHidden = false;
+    animTimeOverride = prevOverride;
+    render();
+  }
+  clone.querySelectorAll(".editor-only").forEach((el) => el.remove());
+  clone.removeAttribute("style");
+  clone.setAttribute("xmlns", SVG_NS);
+  clone.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:inkscape", INKSCAPE_NS);
+
+  const content = clone.firstElementChild; // the artwork wrapper render() puts first
+  const mask = content.getAttribute("mask");
+  const layerById = new Map(state.layers.map((l) => [l.id, l]));
+  const used = existingSvgIds(clone);
+  const make = (name) => {
+    const el = document.createElementNS(SVG_NS, "g");
+    setSvgNames(el, name, used, true);
+    return el;
+  };
+  const hideIf = (el, hidden) => {
+    if (hidden) el.setAttribute("style", "display:none");
+  };
+
+  // A layer is its own <g> plus any mirror twins right after it (same data-layer-id).
+  const unitsOf = (parent) => {
+    const units = [];
+    for (const el of [...parent.children]) {
+      if (!el.dataset || el.dataset.layerId == null) continue;
+      const id = Number(el.dataset.layerId);
+      const last = units[units.length - 1];
+      if (last && last.id === id) last.els.push(el);
+      else units.push({ id, els: [el] });
+    }
+    return units;
+  };
+  const buildLayer = (unit) => {
+    const layer = layerById.get(unit.id);
+    if (!layer) return null;
+    if (!opts.includeHidden && layerIsHidden(state, layer)) return null;
+    const wrap = make(layer.name);
+    for (const el of unit.els) {
+      el.removeAttribute("data-layer-id");
+      el.removeAttribute("class");
+      wrap.appendChild(el);
+    }
+    if (mask) wrap.setAttribute("mask", mask);
+    hideIf(wrap, layer.visible === false);
+    return wrap;
+  };
+
+  // The artwork's top level in order: loose layers and group wrappers (see layerParentFor).
+  const items = [];
+  for (const el of [...content.children]) {
+    if (!el.dataset) continue;
+    if (el.dataset.groupId != null) {
+      items.push({ group: state.groups.find((g) => g.id === Number(el.dataset.groupId)), units: unitsOf(el) });
+    } else if (el.dataset.layerId != null) {
+      const id = Number(el.dataset.layerId);
+      const last = items[items.length - 1];
+      if (last && last.unit && last.unit.id === id) last.unit.els.push(el);
+      else items.push({ unit: { id, els: [el] } });
+    }
+  }
+  const out = [];
+  for (const item of items) {
+    if (item.unit) {
+      const w = buildLayer(item.unit);
+      if (w) out.push(w);
+      continue;
+    }
+    const layerEls = item.units.map(buildLayer).filter(Boolean);
+    if (opts.flatten || !item.group) {
+      out.push(...layerEls);
+      continue;
+    }
+    if (!opts.includeHidden && item.group.visible === false) continue;
+    const gEl = make(item.group.name);
+    layerEls.forEach((l) => gEl.appendChild(l));
+    hideIf(gEl, item.group.visible === false);
+    out.push(gEl);
+  }
+  const maskDefs = mask ? [...content.children].filter((el) => el.tagName.toLowerCase() === "defs") : [];
+  clone.replaceChildren(...maskDefs, ...out);
+  return new XMLSerializer().serializeToString(clone);
+}
+
+async function exportLayersSvg(opts) {
+  const statusEl = document.getElementById("layersExportStatus");
+  try {
+    const svgString = buildLayersSvgString(opts);
+    const name = withFileCode("ornament-layers.svg");
+    downloadBlob(new Blob([svgString], { type: "image/svg+xml" }), name);
+    const count = (svgString.match(/inkscape:groupmode="layer"/g) || []).length;
+    if (statusEl) statusEl.textContent = `Saved ${name} — ${count} named layer/group element(s).`;
+  } catch (err) {
+    console.error(err);
+    if (statusEl) statusEl.textContent = "Layer export failed — see console for details.";
   }
 }
 
@@ -4871,7 +5855,7 @@ document.getElementById("exportStraightPngBtn").addEventListener("click", () => 
   const height = Math.max(1, Math.round(straightExportHeight * scale));
   exportPng("straightCanvas", "ornament-straight.png", width, height);
 });
-document.getElementById("exportLayersBtn").addEventListener("click", exportLayersZip);
+document.getElementById("exportLayersBtn").addEventListener("click", exportLayers);
 
 // ============================================================
 // STRAIGHT MODE — a seamless repeating tile, independent of the circular ring editor
@@ -4888,6 +5872,7 @@ const SM_CENTER_Y = SM_HEIGHT / 2;
 const smState = {
   tileWidth: 800,
   layers: [],
+  groups: [],
   activeLayerId: null,
   loopDuration: 6,
   fps: 24,
@@ -5012,6 +5997,7 @@ let smHistoryGestureOpen = false;
 function smPushHistory() {
   smHistoryStack.push({
     layers: snapshotLayers(smState.layers),
+    groups: JSON.parse(JSON.stringify(smState.groups)),
     activeLayerId: smState.activeLayerId,
     tileWidth: smState.tileWidth,
     loopDuration: smState.loopDuration,
@@ -5027,6 +6013,7 @@ function smUndo() {
   if (smHistoryStack.length === 0) return;
   smRedoStack.push({
     layers: snapshotLayers(smState.layers),
+    groups: JSON.parse(JSON.stringify(smState.groups)),
     activeLayerId: smState.activeLayerId,
     tileWidth: smState.tileWidth,
     loopDuration: smState.loopDuration,
@@ -5036,6 +6023,7 @@ function smUndo() {
   });
   const snap = smHistoryStack.pop();
   smState.layers = snap.layers;
+  smState.groups = snap.groups || [];
   smState.activeLayerId = snap.activeLayerId;
   smState.tileWidth = snap.tileWidth;
   smState.loopDuration = snap.loopDuration ?? smState.loopDuration;
@@ -5058,6 +6046,7 @@ function smRedo() {
   if (smRedoStack.length === 0) return;
   smHistoryStack.push({
     layers: snapshotLayers(smState.layers),
+    groups: JSON.parse(JSON.stringify(smState.groups)),
     activeLayerId: smState.activeLayerId,
     tileWidth: smState.tileWidth,
     loopDuration: smState.loopDuration,
@@ -5067,6 +6056,7 @@ function smRedo() {
   });
   const snap = smRedoStack.pop();
   smState.layers = snap.layers;
+  smState.groups = snap.groups || [];
   smState.activeLayerId = snap.activeLayerId;
   smState.tileWidth = snap.tileWidth;
   smState.loopDuration = snap.loopDuration ?? smState.loopDuration;
@@ -5138,43 +6128,18 @@ function smAddShapeLayer() {
 }
 
 function smDuplicateLayer() {
-  const active = smGetActiveLayer();
-  if (!active) return;
-  smPushHistory();
-  const clone = JSON.parse(JSON.stringify(active));
-  clone.id = smNextLayerId++;
-  clone.name = active.name + " copy";
-  clone.imageEl = active.imageEl; // JSON clone can't carry the loaded Image object
-  if (active.type === "text") {
-    delete clone.imageEl;
-    delete clone.bendCache;
-    delete clone.bendCacheFlipped;
-  }
-  const idx = smState.layers.findIndex((l) => l.id === active.id);
-  smState.layers.splice(idx + 1, 0, clone);
-  smState.activeLayerId = clone.id;
-  smRenderLayerList();
-  smRefreshControls();
-  smRender();
+  duplicateSelection(smApi);
 }
 
 function smRemoveLayer() {
-  const active = smGetActiveLayer();
-  if (!active) return;
-  smPushHistory();
-  const idx = smState.layers.findIndex((l) => l.id === active.id);
-  smState.layers.splice(idx, 1);
-  const next = smState.layers[idx] || smState.layers[idx - 1] || null;
-  smState.activeLayerId = next ? next.id : null;
-  smRenderLayerList();
-  smRefreshControls();
-  smRender();
+  removeSelection(smApi);
 }
 
 function smClearLayers() {
   if (smState.layers.length === 0) return;
   smPushHistory();
   smState.layers = [];
+  smState.groups = [];
   smState.activeLayerId = null;
   smRenderLayerList();
   smRefreshControls();
@@ -5203,15 +6168,7 @@ function smZeroAnimSpeeds() {
 }
 
 function smMoveLayer(direction) {
-  const active = smGetActiveLayer();
-  if (!active) return;
-  const idx = smState.layers.findIndex((l) => l.id === active.id);
-  const targetIdx = direction === "up" ? idx + 1 : idx - 1;
-  if (targetIdx < 0 || targetIdx >= smState.layers.length) return;
-  smPushHistory();
-  [smState.layers[idx], smState.layers[targetIdx]] = [smState.layers[targetIdx], smState.layers[idx]];
-  smRenderLayerList();
-  smRender();
+  moveSelection(smApi, direction);
 }
 
 function smGetSelectedLayers() {
@@ -5225,21 +6182,12 @@ function smSelectLayer(id, opts = {}) {
   smRender();
 }
 
-let smEditingLayerId = null;
-
 function smStartRename(id) {
-  smEditingLayerId = id;
-  smRenderLayerList();
+  startRenameIn(smApi, "layer", id);
 }
 
 function smCommitRename(id, newName) {
-  const layer = smState.layers.find((l) => l.id === id);
-  if (layer && newName && newName.trim() && newName.trim() !== layer.name) {
-    smPushHistory();
-    layer.name = newName.trim();
-  }
-  smEditingLayerId = null;
-  smRenderLayerList();
+  commitRenameIn(smApi, "layer", id, newName);
 }
 
 function smLayerTypeLabel(layer) {
@@ -5258,65 +6206,173 @@ function smLayerDisplayName(layer) {
 }
 
 function smRenderLayerList() {
-  const list = document.getElementById("smLayerList");
-  list.innerHTML = "";
-  for (let i = smState.layers.length - 1; i >= 0; i--) {
-    const layer = smState.layers[i];
-    const item = document.createElement("div");
-    item.className = "layer-item";
-    item.dataset.layerId = layer.id;
-
-    if (layer.id === smEditingLayerId) {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "layer-name-input";
-      input.value = layer.name;
-      input.addEventListener("click", (e) => e.stopPropagation());
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") input.blur();
-        else if (e.key === "Escape") {
-          smEditingLayerId = null;
-          smRenderLayerList();
-        }
-      });
-      input.addEventListener("blur", () => smCommitRename(layer.id, input.value));
-      item.appendChild(input);
-      requestAnimationFrame(() => {
-        input.focus();
-        input.select();
-      });
-    } else {
-      const visible = layer.visible !== false;
-      item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button><span>${escapeHtml(smLayerDisplayName(layer))}</span></div><span class="layer-meta">${smLayerTypeLabel(layer)}</span>`;
-      item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
-      item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
-        e.stopPropagation();
-        smToggleLayerVisible(layer);
-      });
-      item.addEventListener("click", (e) => smSelectLayer(layer.id, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }));
-      item.addEventListener("dblclick", () => smStartRename(layer.id));
-    }
-
-    list.appendChild(item);
-  }
-  smUpdateLayerListSelection();
+  renderLayerListInto(smApi);
 }
 
 function smToggleLayerVisible(layer) {
-  smPushHistory();
-  layer.visible = layer.visible === false ? true : false;
-  smRenderLayerList();
-  smRender();
+  toggleLayerVisibleIn(smApi, layer);
 }
 
 function smUpdateLayerListSelection() {
-  const selected = new Set(smGetSelectedLayers().map((l) => l.id));
-  document.querySelectorAll("#smLayerList .layer-item").forEach((el) => {
-    const id = Number(el.dataset.layerId);
-    el.classList.toggle("active", id === smState.activeLayerId);
-    el.classList.toggle("multi-selected", selected.has(id) && id !== smState.activeLayerId);
-  });
+  updateLayerListSelectionIn(smApi);
 }
+
+// The Straight twin of circleApi (see the Groups section).
+const smApi = {
+  target: smState,
+  listId: "smLayerList",
+  editing: null,
+  push: smPushHistory,
+  renderList: smRenderLayerList,
+  refresh: smRefreshControls,
+  redraw: smRender,
+  updateSelection: smUpdateLayerListSelection,
+  select: smSelectLayer,
+  selectGroup: (gid, opts) => selectGroupIn(smApi, gid, opts),
+  nextId: () => smNextLayerId++,
+  displayName: smLayerDisplayName,
+  typeLabel: smLayerTypeLabel,
+  historyLen: () => smHistoryStack.length,
+  scale: { id: "smGroupScale", fieldId: "smGroupScaleField", mode: "straight", gesture: null, adhoc: { key: "", value: 100 } },
+};
+
+// --- Group scale (both modes) ---
+// With a whole group, or any several layers, selected, a Scale field (%) resizes them all
+// about their pivot: every length-like value (radius, size, line length, dash
+// and flip gaps, text size) is multiplied and each layer's offset from the pivot is stretched
+// by the same factor, so the design keeps its shape. Counts, angles, opacity and letter
+// spacing (a % of the font size) are not lengths and stay. A whole group remembers its scale
+// (group.scale, 100 when never scaled) so the field shows it again on reselect; a loose
+// multi-selection starts at 100 each time it is made.
+//
+// A change is applied as the ratio new/old to the values captured when the gesture began
+// (a slider drag, or a typed value up to Enter/blur), never to the values the last tick left
+// behind, so rounding cannot accumulate however long the drag. The whole gesture is one undo
+// step. Straight mode has no origin: only a layer's position (its offset across the tile) is
+// stretched about the pivot, since copies are spread evenly over the tile width.
+const SCALE_PROPS = {
+  circle: {
+    ring: ["radius"],
+    motif: ["radius", "size"],
+    line: ["radius", "length"],
+    shape: ["radius", "size", "sizeY", "flipOffset"],
+    text: ["radius", "size"],
+    straight: ["length", "offset", "dashLength", "dashGap"],
+  },
+  straight: {
+    motif: ["size"],
+    line: ["length"],
+    shape: ["size", "sizeY", "flipOffset"],
+    text: ["size"],
+  },
+};
+const SCALE_ORIGIN_KEYS = { circle: ["originX", "originY"], straight: ["position"] };
+const GROUP_SCALE_MIN = 1;
+const GROUP_SCALE_MAX = 1000;
+
+function scaledValue(prop, v, layer) {
+  const r = Math.round(v * 100) / 100;
+  if (prop === "flipOffset" || prop === "offset") return r;
+  if (prop === "strokeWidth") return Math.max(0, r);
+  if (prop === "size" && layer.type === "text") return Math.min(TEXT_SIZE_MAX, Math.max(TEXT_SIZE_MIN, r));
+  if (prop === "radius") return Math.min(RADIUS_MAX, Math.max(1, r));
+  return Math.max(1, r);
+}
+
+function groupScaleInfo(api) {
+  const t = api.target;
+  const layers = getSelectedLayersFrom(t);
+  if (layers.length === 0) return null;
+  const group = selectedWholeGroup(t);
+  if (layers.length < 2 && !group) return null;
+  return { layers, group, key: layers.map((l) => l.id).sort((a, b) => a - b).join(",") };
+}
+
+function groupScaleValue(api, info) {
+  if (info.group) return info.group.scale || 100;
+  const a = api.scale.adhoc;
+  if (a.key !== info.key) {
+    a.key = info.key;
+    a.value = 100;
+  }
+  return a.value;
+}
+
+// Shows or hides the Scale field and fills it for the current selection.
+function refreshGroupScale(api) {
+  const field = document.getElementById(api.scale.fieldId);
+  const info = groupScaleInfo(api);
+  field.style.display = info ? "" : "none";
+  if (!info) return;
+  setFieldValue(api.scale.id, Math.round(groupScaleValue(api, info) * 100) / 100);
+}
+
+function originOf(mode, layer, key) {
+  if (mode === "circle") return placementOf(layer)[key];
+  return layer[key] || 0;
+}
+
+function applyGroupScale(api, source) {
+  const sc = api.scale;
+  const slider = document.getElementById(sc.id);
+  const num = document.getElementById(sc.id + "Num");
+  if (source === num) {
+    // a half-typed or emptied box is not a value yet
+    if (num.value.trim() === "" || !Number.isFinite(Number(num.value))) return;
+    slider.value = num.value;
+  } else {
+    num.value = slider.value;
+  }
+  const info = groupScaleInfo(api);
+  if (!info) return;
+  const raw = Number(source.value);
+  if (!(raw > 0)) return;
+  const newScale = Math.min(GROUP_SCALE_MAX, Math.max(GROUP_SCALE_MIN, raw));
+
+  let g = sc.gesture;
+  if (!g || g.key !== info.key || g.historyLen !== api.historyLen()) {
+    const old = groupScaleValue(api, info);
+    api.push();
+    const keys = SCALE_ORIGIN_KEYS[sc.mode];
+    const pivot = {};
+    for (const k of keys) pivot[k] = info.layers.reduce((sum, l) => sum + originOf(sc.mode, l, k), 0) / info.layers.length;
+    const base = new Map();
+    for (const l of info.layers) {
+      const snap = { origin: {}, props: {} };
+      for (const k of keys) snap.origin[k] = originOf(sc.mode, l, k);
+      for (const prop of SCALE_PROPS[sc.mode][l.type] || []) if (typeof l[prop] === "number") snap.props[prop] = l[prop];
+      base.set(l.id, snap);
+    }
+    g = sc.gesture = { key: info.key, old, pivot, base, historyLen: api.historyLen() };
+  }
+
+  const ratio = newScale / g.old;
+  for (const l of info.layers) {
+    const snap = g.base.get(l.id);
+    if (!snap) continue;
+    for (const k of Object.keys(snap.origin)) {
+      l[k] = Math.round((g.pivot[k] + (snap.origin[k] - g.pivot[k]) * ratio) * 100) / 100 || 0;
+    }
+    for (const [prop, v] of Object.entries(snap.props)) l[prop] = scaledValue(prop, v * ratio, l);
+  }
+  if (info.group) info.group.scale = newScale;
+  else {
+    sc.adhoc.key = info.key;
+    sc.adhoc.value = newScale;
+  }
+  api.refresh();
+  api.redraw();
+}
+
+function bindGroupScale(api) {
+  const slider = document.getElementById(api.scale.id);
+  const num = document.getElementById(api.scale.id + "Num");
+  slider.addEventListener("input", () => applyGroupScale(api, slider));
+  num.addEventListener("input", () => applyGroupScale(api, num));
+  for (const el of [slider, num]) el.addEventListener("change", () => (api.scale.gesture = null));
+}
+bindGroupScale(circleApi);
+bindGroupScale(smApi);
 
 function smUpdateLayerListMeta() {
   document.querySelectorAll("#smLayerList .layer-item").forEach((el) => {
@@ -5414,13 +6470,15 @@ function smRenderInto(svg, width, itemsFor) {
   // position indicator) straight onto `svg` AFTER this call returns, so they naturally
   // land outside the masked content without this function knowing about them.
   const content = document.createElementNS(SVG_NS, "g");
+  const groupCursor = { id: null, el: null };
   for (const layer of smState.layers) {
     const g = document.createElementNS(SVG_NS, "g");
     g.dataset.layerId = layer.id;
     g.classList.add("layer-hit");
     g.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
-    if (layer.visible === false) {
-      content.appendChild(g);
+    const parent = layerParentFor(smState, content, layer, groupCursor);
+    if (layerIsHidden(smState, layer)) {
+      parent.appendChild(g);
       continue;
     }
     // ROUGH_SCALE_TILE, not the Ring editor's default: the Straight artboard shows its
@@ -5436,7 +6494,7 @@ function smRenderInto(svg, width, itemsFor) {
     } else if (layer.type === "shape") {
       drawShape(g, layer, itemsFor(layer), smState.roughness, ROUGH_SCALE_TILE);
     }
-    content.appendChild(g);
+    parent.appendChild(g);
   }
   applyGlobalMask(content, smState.mask, width, SM_HEIGHT, "straight");
   svg.appendChild(content);
@@ -5492,8 +6550,9 @@ const pickStraightClickLayer = makeLayerClickCycler();
 
 document.getElementById("tileCanvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  const id = pickStraightClickLayer(e.clientX, e.clientY);
-  if (id != null) smSelectLayer(id);
+  const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+  const id = pickStraightClickLayer(e.clientX, e.clientY, multi);
+  if (id != null) smSelectLayer(id, { toggle: multi });
 });
 
 // --- Controls ---
@@ -5515,17 +6574,21 @@ function smRefreshControls() {
   const textPanel = document.getElementById("smTextPanel");
   const panels = [guidePanel, motifPanel, linePanel, shapePanel, textPanel];
 
+  refreshGroupScale(smApi);
   document.getElementById("smLayerOpacityField").classList.toggle("disabled", !active);
   smSetFieldValue("smLayerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
 
   // Same reasoning as circle mode's layerTypeSelect.
   const typeField = document.getElementById("smLayerTypeField");
   const typeSelect = document.getElementById("smLayerTypeSelect");
-  const canChangeType = active && CONVERTIBLE_TYPES.includes(active.type);
+  const selection = smGetSelectedLayers();
+  const mixedTypes = isMixedSelection(selection);
+  const canChangeType = active && !mixedTypes && CONVERTIBLE_TYPES.includes(active.type);
   typeField.classList.toggle("disabled", !canChangeType);
   typeSelect.value = canChangeType ? active.type : "motif";
 
-  const canAnimate = active && active.type !== "guide";
+  // (a selection that mixes in guides still animates the layers that can)
+  const canAnimate = active && (active.type !== "guide" || selection.some((l) => l.type !== "guide"));
   document.getElementById("smLayerAnimSpeedField").classList.toggle("disabled", !canAnimate);
   smSetFieldValue("smLayerAnimSpeed", canAnimate ? active.animSpeed || 0 : 0);
 
@@ -5535,6 +6598,13 @@ function smRefreshControls() {
   }
 
   panels.forEach((p) => p.classList.remove("disabled"));
+  if (mixedTypes) {
+    // Only opacity and animation speed are shared by every type; the type panels hide.
+    panels.forEach((p) => p.classList.add("hidden"));
+    markMixedFields(selection);
+    smUpdateLayerListMeta();
+    return;
+  }
   guidePanel.classList.toggle("hidden", active.type !== "guide");
   const isText = active.type === "text";
   motifPanel.classList.toggle("hidden", active.type !== "motif" && !isText);
@@ -5635,7 +6705,12 @@ function smBindControl(id, apply) {
     // Same reasoning as bindControl (circle mode) — read from `source`, not always
     // `el`, so a typed off-step value doesn't get silently rounded away by the range
     // slider's own step-snapping the moment it's mirrored there.
-    for (const target of smGetSelectedLayers()) apply(target, source); // same reasoning as bindControl
+    const targets = smGetSelectedLayers(); // same reasoning as bindControl
+    const mixed = isMixedSelection(targets);
+    for (const target of targets) {
+      if (mixed && lacksField(id, target)) continue;
+      apply(target, source);
+    }
     smRefreshControls();
     smRender();
   };
@@ -5781,9 +6856,9 @@ document.getElementById("smAddLineBtn").addEventListener("click", smAddLineLayer
 document.getElementById("smAddShapeBtn").addEventListener("click", smAddShapeLayer);
 document.getElementById("smAddTextBtn").addEventListener("click", smAddTextLayer);
 document.getElementById("smDuplicateLayerBtn").addEventListener("click", smDuplicateLayer);
-document.getElementById("smRenameLayerBtn").addEventListener("click", () => {
-  if (smState.activeLayerId != null) smStartRename(smState.activeLayerId);
-});
+document.getElementById("smRenameLayerBtn").addEventListener("click", () => renameSelection(smApi));
+document.getElementById("smGroupLayersBtn").addEventListener("click", () => groupSelection(smApi));
+document.getElementById("smUngroupLayersBtn").addEventListener("click", () => ungroupSelection(smApi));
 document.getElementById("smRemoveLayerBtn").addEventListener("click", smRemoveLayer);
 document.getElementById("smClearLayersBtn").addEventListener("click", smClearLayers);
 document.getElementById("smRandomizeSpeedsBtn").addEventListener("click", smRandomizeAnimSpeeds);
@@ -5795,7 +6870,7 @@ document.getElementById("smRedoBtn").addEventListener("click", () => smRedo());
 
 document.getElementById("smLayerTypeSelect").addEventListener("change", (e) => {
   const active = smGetActiveLayer();
-  if (!active || !CONVERTIBLE_TYPES.includes(active.type)) return;
+  if (!active || !CONVERTIBLE_TYPES.includes(active.type) || isMixedSelection(smGetSelectedLayers())) return;
   const newType = e.target.value;
   if (newType === active.type) return;
   smPushHistory();
@@ -5894,6 +6969,7 @@ function smBuildExportSvgString() {
   svg.setAttribute("viewBox", `0 0 ${smState.tileWidth} ${SM_HEIGHT}`);
   svg.setAttribute("xmlns", SVG_NS);
   smRenderInto(svg, smState.tileWidth, (layer) => smDistributeWrapped(layer));
+  nameGroupWrappers(svg);
   return new XMLSerializer().serializeToString(svg);
 }
 
@@ -6221,6 +7297,7 @@ function buildProjectData() {
       formatVersion: PROJECT_FORMAT_VERSION,
       mode: "circle",
       layers: snapshotLayers(state.layers),
+      ...groupsField(state.groups),
       ...projectFontsField(state.layers),
       activeLayerId: state.activeLayerId,
       mask: JSON.parse(JSON.stringify(state.mask)),
@@ -6231,6 +7308,7 @@ function buildProjectData() {
     formatVersion: PROJECT_FORMAT_VERSION,
     mode: "straight",
     layers: snapshotLayers(smState.layers),
+    ...groupsField(smState.groups),
     ...projectFontsField(smState.layers),
     activeLayerId: smState.activeLayerId,
     tileWidth: smState.tileWidth,
@@ -6239,6 +7317,11 @@ function buildProjectData() {
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
   };
+}
+
+// Groups are saved only when there are some, so a project without groups is the same file as before.
+function groupsField(groups) {
+  return groups.length > 0 ? { groups: JSON.parse(JSON.stringify(groups)) } : {};
 }
 
 // Only fonts this mode's text layers use are embedded (and nothing at all when there are
@@ -6280,6 +7363,8 @@ function saveProject() {
 function applyDefaultProject(data) {
   pushHistory();
   state.layers = withPlacementDefaults(snapshotLayers(data.circle.layers));
+  state.groups = sanitizeGroups(data.circle.groups);
+  normalizeGroups(state);
   state.activeLayerId = data.circle.activeLayerId ?? null;
   state.mask = data.circle.mask ? JSON.parse(JSON.stringify(data.circle.mask)) : createDefaultMask();
   state.roughness = data.circle.roughness ?? 50;
@@ -6293,6 +7378,8 @@ function applyDefaultProject(data) {
 
   smPushHistory();
   smState.layers = snapshotLayers(data.straight.layers);
+  smState.groups = sanitizeGroups(data.straight.groups);
+  normalizeGroups(smState);
   smState.activeLayerId = data.straight.activeLayerId ?? null;
   smState.tileWidth = data.straight.tileWidth || 800;
   smState.loopDuration = data.straight.loopDuration || 6;
@@ -6327,6 +7414,8 @@ function applyProjectData(data) {
   if (data.mode === "circle") {
     pushHistory();
     state.layers = withPlacementDefaults(snapshotLayers(data.layers));
+    state.groups = sanitizeGroups(data.groups);
+    normalizeGroups(state);
     state.activeLayerId = data.activeLayerId ?? null;
     state.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     state.roughness = data.roughness ?? 50;
@@ -6340,6 +7429,8 @@ function applyProjectData(data) {
   } else {
     smPushHistory();
     smState.layers = snapshotLayers(data.layers);
+    smState.groups = sanitizeGroups(data.groups);
+    normalizeGroups(smState);
     smState.activeLayerId = data.activeLayerId ?? null;
     smState.tileWidth = data.tileWidth || 800;
     smState.loopDuration = data.loopDuration || 6;
@@ -6699,8 +7790,212 @@ document.addEventListener("keydown", (e) => {
   else smRemoveLayer();
 });
 
+// Ctrl+G groups the selected layers, Ctrl+Shift+G ungroups them — whichever mode is showing.
+// Intercepted so the browser's own find-next doesn't run; skipped while typing in a field.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "g") return;
+  if (isTextEditingTarget(document.activeElement)) return;
+  e.preventDefault();
+  const api = currentMode === "circle" ? circleApi : smApi;
+  if (e.shiftKey) ungroupSelection(api);
+  else groupSelection(api);
+});
+
 // --- Init ---
 
 applyDefaultProject(DEFAULT_PROJECT);
 updateAllAnimSizeEstimates();
 resetPreviewView();
+
+// --- Scrub fields: drag a .sf-num box left/right to change its value ---------------------------
+// Generic: works on any `.sf-num` text box whose id is <rangeId>Num. min/max/step are read from the
+// (hidden) range input; the change goes through the box's normal input/change events, so the
+// existing bindControl/smBindControl code does state, undo (one step per drag: the first input
+// opens the gesture, the final change closes it) and rendering. Shift = 5x coarser. A press that
+// moves under 3 px is a click and focuses the box for typing.
+(function initScrubFields() {
+  const SLOP = 3;
+  let drag = null;
+  const attr = (el, name, dflt) => {
+    const v = el.getAttribute(name);
+    return v !== null && Number.isFinite(Number(v)) ? Number(v) : dflt;
+  };
+  document.querySelectorAll(".sf-num").forEach((box) => {
+    box.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || document.activeElement === box) return; // already typing: native caret
+      e.preventDefault();
+      const range = document.getElementById(box.id.replace(/Num$/, ""));
+      const min = attr(box, "min", attr(range, "min", -Infinity));
+      const max = attr(box, "max", attr(range, "max", Infinity));
+      const step = attr(box, "step", 1);
+      const cur = Number(range.value);
+      drag = { box, range, min, max, step, x0: e.clientX, y0: e.clientY, base: Number.isFinite(cur) ? cur : 0, moved: false, id: e.pointerId };
+      try { box.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    });
+    box.addEventListener("pointermove", (e) => {
+      const d = drag;
+      if (!d || d.box !== box || e.pointerId !== d.id) return;
+      const dx = e.clientX - d.x0;
+      if (!d.moved) {
+        if (Math.hypot(dx, e.clientY - d.y0) < SLOP) return;
+        d.moved = true;
+        document.body.classList.add("sf-scrubbing");
+      }
+      const span = Number.isFinite(d.max - d.min) ? d.max - d.min : 360;
+      const perPx = Math.max(d.step / 6, span / 800) * (e.shiftKey ? 5 : 1);
+      let v = d.base + dx * perPx;
+      v = d.min + Math.round((v - d.min) / d.step) * d.step; // honour the step grid
+      v = Math.min(d.max, Math.max(d.min, v));
+      const decimals = (String(d.step).split(".")[1] || "").length;
+      const text = String(Number(v.toFixed(decimals)));
+      if (box.value === text) return;
+      box.value = text;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const finish = (e) => {
+      const d = drag;
+      if (!d || d.box !== box || e.pointerId !== d.id) return;
+      drag = null;
+      document.body.classList.remove("sf-scrubbing");
+      if (box.hasPointerCapture && box.hasPointerCapture(e.pointerId)) box.releasePointerCapture(e.pointerId);
+      if (d.moved) box.dispatchEvent(new Event("change", { bubbles: true })); // closes the undo gesture
+      else if (e.type === "pointerup") box.focus();
+    };
+    box.addEventListener("pointerup", finish);
+    box.addEventListener("pointercancel", finish);
+  });
+})();
+
+// --- Instant tooltips: any element with data-tip shows its text after ~150 ms (hover or focus) ---
+(function initTips() {
+  const bubble = document.createElement("div");
+  bubble.id = "tipBubble";
+  bubble.setAttribute("role", "tooltip");
+  document.body.appendChild(bubble);
+  let timer = null;
+  let current = null;
+  const hide = () => {
+    clearTimeout(timer);
+    current = null;
+    bubble.classList.remove("show");
+  };
+  const show = (el) => {
+    current = el;
+    bubble.textContent = el.dataset.tip;
+    bubble.style.left = "0px";
+    bubble.style.top = "0px";
+    const r = el.getBoundingClientRect();
+    const w = bubble.offsetWidth;
+    const h = bubble.offsetHeight;
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(4, Math.min(window.innerWidth - w - 4, left));
+    let top = r.bottom + 6;
+    if (top + h > window.innerHeight - 4) top = r.top - h - 6;
+    bubble.style.left = `${left}px`;
+    bubble.style.top = `${top}px`;
+    bubble.classList.add("show");
+  };
+  const arm = (e) => {
+    const el = e.target.closest && e.target.closest("[data-tip]");
+    if (!el || el === current) return;
+    hide();
+    timer = setTimeout(() => show(el), 150);
+  };
+  document.addEventListener("mouseover", arm);
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches && e.target.matches(":focus-visible")) arm(e);
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (current && !(e.relatedTarget && current.contains(e.relatedTarget))) hide();
+    else if (!current) clearTimeout(timer);
+  });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("pointerdown", hide);
+  document.addEventListener("scroll", hide, true);
+})();
+
+// Select -> button group. The real <select> stays in the DOM (hidden) as the source of truth;
+// this builds an even grid of option buttons next to it. Clicking one sets select.value and fires
+// 'input' then 'change' (as a native pick does). Sync: the select's value/selectedIndex setters are
+// wrapped per element (app code assigns .value on refresh, undo, layer switch, mixed selection),
+// and a MutationObserver rebuilds when options are added, removed, hidden or disabled.
+// Button text is the option text up to " (" ; the full text goes to the #tipBubble tooltip.
+(function initSelectButtons() {
+  const SKIP = new Set(["textFont", "smTextFont"]);
+  const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  const indexDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "selectedIndex");
+
+  function enhance(select) {
+    const group = document.createElement("div");
+    group.className = "sf-opts";
+    group.setAttribute("role", "group");
+    const lab = select.id && document.querySelector(`label[for="${select.id}"]`);
+    if (lab) group.setAttribute("aria-label", lab.textContent.trim());
+    select.after(group);
+    select.classList.add("sf-opts-source");
+
+    const sync = () => {
+      const cur = valueDesc.get.call(select);
+      // A disabled field (no layer, mixed selection, straight line) shows no active button.
+      const has = select.selectedIndex >= 0 && !select.closest(".sf.disabled");
+      for (const b of group.children) {
+        const on = has && b.dataset.value === cur;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    };
+
+    const rebuild = () => {
+      const opts = [...select.options].filter((o) => !o.hidden && o.value !== "");
+      group.textContent = "";
+      const n = opts.length;
+      const longest = Math.max(0, ...opts.map((o) => o.textContent.split(" (")[0].trim().length));
+      const cols = n <= 2 ? 2 : n === 3 ? 3 : n === 4 ? 2 : longest <= 11 ? 3 : 2;
+      group.style.gridTemplateColumns = "repeat(6, minmax(0, 1fr))";
+      const span = 6 / cols;
+      const rem = n % cols;
+      opts.forEach((o, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.value = o.value;
+        const full = o.textContent.trim();
+        const short = full.split(" (")[0].trim();
+        b.textContent = short;
+        if (short !== full) b.dataset.tip = full;
+        b.setAttribute("aria-label", full);
+        b.disabled = o.disabled;
+        const inLast = rem && i >= n - rem;
+        b.style.gridColumn = `span ${inLast ? 6 / rem : span}`;
+        group.appendChild(b);
+      });
+      sync();
+    };
+
+    group.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b || b.disabled) return;
+      valueDesc.set.call(select, b.dataset.value);
+      sync();
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      get() { return valueDesc.get.call(this); },
+      set(v) { valueDesc.set.call(this, v); sync(); },
+    });
+    Object.defineProperty(select, "selectedIndex", {
+      configurable: true,
+      get() { return indexDesc.get.call(this); },
+      set(v) { indexDesc.set.call(this, v); sync(); },
+    });
+    select.addEventListener("change", sync);
+    new MutationObserver(rebuild).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "disabled", "label"] });
+    rebuild();
+  }
+
+  document.querySelectorAll("select").forEach((s) => {
+    if (!SKIP.has(s.id) && !s.multiple) enhance(s);
+  });
+})();

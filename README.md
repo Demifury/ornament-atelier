@@ -26,7 +26,7 @@ Then open <http://localhost:8123>.
 | `images/` | `banner.png` (sidebar ornament) and the divider graphics |
 | `fonts/Caudex-Regular.ttf` | Title face |
 
-`index.html` cache-busts with query strings (`app.js?v=66`, `style.css?v=42`); bump those
+`index.html` cache-busts with query strings (`app.js?v=67`, `style.css?v=43`); bump those
 when changing either file.
 
 ## Two modes
@@ -79,8 +79,10 @@ size at any zoom. One undo step per drag, and the sidebar fields follow live.
 - **Radius** (on the ring, at the start of the visible arc): drag in or out. Every selected layer changes
   by the same amount. <kbd>Shift</kbd> snaps the radius to a multiple of 10.
 - **Rotate** (just outside the ring, on a connector): drag around the origin. Rings turn their arc
-  start, other layers their start angle, straight lines their angle; every selected layer turns by
-  the same amount. <kbd>Shift</kbd> snaps to 15°.
+  start, other layers their start angle, straight lines their angle. With several layers selected
+  they turn as one rigid group about the centre of their origins: each origin swings round that
+  point and each angle changes by the same amount (layers sharing one origin simply turn in place).
+  <kbd>Shift</kbd> snaps to 15°.
 - **Straight line ends** (squares): drag one end while the other stays put. <kbd>Alt</kbd> mirrors the
   move about the origin (a centred line); <kbd>Shift</kbd> snaps the angle to 15°.
 
@@ -91,3 +93,30 @@ the preview. **Fit design** (<kbd>F</kbd>) frames all the visible artwork, inclu
 the artboard and mirror twins; **Fit artboard** (<kbd>0</kbd>) frames the artboard; **100%**
 (<kbd>1</kbd>) resets the zoom. In the Ring editor, artwork outside the artboard is shaded and the
 artboard edge drawn: exports still cover only the artboard.
+
+**Value badges** (Circle mode): next to the selected layer's origin handle sit two small round
+badges, editor-only and a constant size at any zoom. The purple one is the number of clones; the
+green one (marked with a width arrow) is the size of each clone: the Size slider for assets and
+shapes, the letter size for text, the length for lines and straight lines. A ring has no clones, so it
+shows only the green badge, which is its stroke width. Click a badge to type a value (<kbd>Enter</kbd>
+or clicking away keeps it, <kbd>Esc</kbd> cancels), or scroll over it: 1 per notch, 10 with
+<kbd>Shift</kbd>. The limits are the sidebar sliders' own. With several layers selected the value goes
+to every one that has the field, and a badge shows a dash when they disagree. A scroll burst is one
+undo step.
+
+**Mixed selections** (both modes): <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+click in the layer list selects any
+layers together, of any types. The sidebar then shows only what all of them share (opacity, animation
+speed and, in Circle mode, the Placement fields) and an edit never adds a field to a layer type that
+lacks it. Duplicate, Remove, Move Up/Down and the eye act on the whole selection.
+
+**Groups** (both modes): **Group** (<kbd>Ctrl</kbd>+<kbd>G</kbd>) puts the selected layers in one
+folder; **Ungroup** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>) takes the selected layers out of
+theirs (select the group's row to dissolve all of it). A group is a row in the layer list with a
+collapse arrow, an eye that hides every member (their own eyes are untouched, so showing the group
+again restores them), and an editable name (double-click, or Rename). Clicking the row selects all its
+layers; clicking a member selects just that one. Members stay together in the stacking order, at the
+position of the group's topmost layer when it is made; Move Up/Down on the row moves the whole
+block, and a single member only moves within its group. Remove on the row removes the group and its
+layers; Duplicate copies it as a new group. Groups are one level deep, are saved in project files
+(older files open with none) and are covered by undo. A hidden group is left out of previews and
+exports, and of the separate-layer export.

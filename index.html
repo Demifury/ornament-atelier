@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=42" />
+<link rel="stylesheet" href="style.css?v=56" />
 </head>
 <body>
 <div class="app">
@@ -24,285 +24,207 @@
 
     <div id="circleModeSidebar">
       <div class="ornament-divider ornament-divider-mode"></div>
-      <section class="panel" id="ringPanel">
+      <section class="panel fam-geom" id="ringPanel">
         <h2>Ring</h2>
-        <label class="field">
-          <span>Radius (position from center)</span>
-          <div class="range-row">
-            <input type="range" id="ringRadius" min="50" max="1900" step="0.1" />
-            <input type="text" inputmode="decimal" id="ringRadiusNum" min="50" max="1900" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Stroke width</span>
-          <div class="range-row">
-            <input type="range" id="ringStrokeWidth" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="ringStrokeWidthNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Stroke color</span>
-          <input type="color" id="ringStrokeColor" />
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Radius (position from center)">
+<div class="sf-head"><label for="ringRadiusNum">Radius</label></div>
+<div class="sf-box"><input type="range" id="ringRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="ringRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="ringStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="ringStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="ringStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="ringStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
       </section>
 
-      <section class="panel hidden" id="textPanel">
+      <section class="panel hidden fam-type" id="textPanel">
         <h2>Text</h2>
-        <label class="field">
-          <span>Text</span>
-          <textarea id="textContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea>
-        </label>
-        <label class="field">
-          <span>Font</span>
-          <select id="textFont"></select>
-        </label>
-        <div class="btn-row">
-          <button type="button" id="textLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
-          <button type="button" id="textInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
-        </div>
-        <p class="hint font-status"></p>
-        <label class="field row-field">
-          <span>Colour</span>
-          <input type="color" id="textColor" />
-        </label>
-        <label class="field">
-          <span>Letter spacing (% of font size)</span>
-          <div class="range-row">
-            <input type="range" id="textLetterSpacing" min="-20" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="textLetterSpacingNum" min="-20" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Alignment</span>
-          <select id="textAlign">
-            <option value="left">Left (starts at the start angle)</option>
-            <option value="center">Centre (centred on it)</option>
-            <option value="right">Right (ends at it)</option>
-          </select>
-        </label>
-        <label class="field row-field">
-          <span>Fit to arc (spread letters to fill it)</span>
-          <input type="checkbox" id="textFitArc" />
-        </label>
-        <p class="hint" id="textFitHint"></p>
+        <div class="sf-group"><div class="sf-group-label">Content</div>
+<div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="textContent">Text</label></div>
+<div class="sf-box"><textarea id="textContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea></div>
+</div>
+<div class="sf sf-wide">
+<div class="sf-head"><label for="textFont">Font</label></div>
+<div class="sf-box"><select id="textFont"></select></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button type="button" id="textLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
+<button type="button" id="textInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
+</div>
+        <p class="hint sf-hint font-status"></p>
+        <div class="sf-group"><div class="sf-group-label">Style</div>
+<div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="textColor">Colour</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="textColor" class="sf-swatch sf-swatch-wide" aria-label="Text colour" /></div>
+</div>
+<div class="sf" title="Letter spacing (% of font size)">
+<div class="sf-head"><label for="textLetterSpacingNum">Letter spacing</label></div>
+<div class="sf-box"><input type="range" id="textLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="textLetterSpacingNum" min="-20" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide">
+<div class="sf-head"><label for="textAlign">Alignment</label></div>
+<div class="sf-box"><select id="textAlign">
+<option value="left">Left (starts at the start angle)</option>
+<option value="center">Centre (centred on it)</option>
+<option value="right">Right (ends at it)</option>
+</select></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle"><input type="checkbox" id="textFitArc" /><span>Fit to arc (spread letters to fill it)</span></label>
+</div>
+        <p class="hint sf-hint" id="textFitHint"></p>
       </section>
 
-      <section class="panel" id="motifPanel">
+      <section class="panel fam-asset" id="motifPanel">
         <h2 id="motifPanelTitle">Asset</h2>
-        <label class="field" id="motifUploadField">
-          <span>Upload bitmap</span>
-          <input type="file" id="motifUpload" accept="image/*" />
-        </label>
-        <p class="hint" id="motifNoImageHint">No image uploaded</p>
+        <div class="sf-grid sf-grid-top">
+<div class="sf sf-wide" id="motifUploadField">
+<div class="sf-head"><label for="motifUpload">Upload bitmap</label></div>
+<div class="sf-box"><input type="file" id="motifUpload" accept="image/*" /></div>
+</div>
+</div>
+        <p class="hint sf-hint" id="motifNoImageHint">No image uploaded</p>
         <div class="motif-preview" id="motifPreviewWrap" style="display:none">
           <img id="motifPreviewImg" class="motif-preview-img" alt="Asset preview" />
           <span id="motifFileName" class="motif-preview-name"></span>
         </div>
-        <label class="field">
-          <span>Radius (position from center)</span>
-          <div class="range-row">
-            <input type="range" id="motifRadius" min="50" max="1900" step="0.1" />
-            <input type="text" inputmode="decimal" id="motifRadiusNum" min="50" max="1900" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span id="motifSizeLabel">Size</span>
-          <div class="range-row">
-            <input type="range" id="motifSize" min="25" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="motifSizeNum" min="25" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="motifRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="motifRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="motifRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Follow ring (rotate outward)</span>
-          <input type="checkbox" id="motifFollowRing" />
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="motifCount" min="1" max="500" step="1" />
-              <input type="text" inputmode="decimal" id="motifCountNum" min="1" max="500" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start angle</span>
-            <div class="range-row">
-              <input type="range" id="motifStartAngle" min="0" max="359" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="motifStartAngle" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="motifStartAngleNum" min="0" max="359" step="5" class="num-input" />
-            </div>
-          </label>
-        </div>
-
-        <label class="field" id="motifBendField">
-          <span>Bend (fit to circle)</span>
-          <div class="range-row">
-            <input type="range" id="motifBend" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="motifBendNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Flip vertically</span>
-          <input type="checkbox" id="motifFlip" />
-        </label>
-        <label class="field row-field">
-          <span>Flip horizontally</span>
-          <input type="checkbox" id="motifFlipHorizontal" />
-        </label>
-        <label class="field row-field">
-          <span>Alternate flip</span>
-          <input type="checkbox" id="motifAlternateFlip" />
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf sf-wide" title="Size (font size for a text layer)">
+<div class="sf-head"><label for="motifSizeNum" id="motifSizeLabel">Size</label></div>
+<div class="sf-box"><input type="range" id="motifSize" min="25" max="1250" step="1" /><input type="text" inputmode="decimal" id="motifSizeNum" min="25" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Radius (position from center)">
+<div class="sf-head"><label for="motifRadiusNum">Radius</label></div>
+<div class="sf-box"><input type="range" id="motifRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="motifRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="motifRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="motifRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="motifRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="motifRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="motifCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="motifCount" min="1" max="500" step="1" /><input type="text" inputmode="decimal" id="motifCountNum" min="1" max="500" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="motifStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="motifStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="motifStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="motifStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" id="motifBendField" title="Bend (fit to circle)">
+<div class="sf-head"><label for="motifBendNum">Bend</label></div>
+<div class="sf-box"><input type="range" id="motifBend" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="motifBendNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Follow ring (rotate outward)"><input type="checkbox" id="motifFollowRing" /><span>Follow ring</span></label>
+<label class="sf-toggle"><input type="checkbox" id="motifFlip" /><span>Flip vertically</span></label>
+<label class="sf-toggle"><input type="checkbox" id="motifFlipHorizontal" /><span>Flip horizontally</span></label>
+<label class="sf-toggle"><input type="checkbox" id="motifAlternateFlip" /><span>Alternate flip</span></label>
+</div>
       </section>
 
-      <section class="panel" id="linePanel">
+      <section class="panel fam-geom" id="linePanel">
         <h2>Line</h2>
-        <label class="field">
-          <span>Radius (position from center)</span>
-          <div class="range-row">
-            <input type="range" id="lineRadius" min="50" max="1900" step="0.1" />
-            <input type="text" inputmode="decimal" id="lineRadiusNum" min="50" max="1900" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Length</span>
-          <div class="range-row">
-            <input type="range" id="lineLength" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="lineLengthNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="lineRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="lineRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="lineRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Follow ring (rotate outward)</span>
-          <input type="checkbox" id="lineFollowRing" />
-        </label>
-        <label class="field">
-          <span>Stroke width</span>
-          <div class="range-row">
-            <input type="range" id="lineStrokeWidth" min="1" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="lineStrokeWidthNum" min="1" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Stroke color</span>
-          <input type="color" id="lineStrokeColor" />
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="lineCount" min="1" max="500" step="1" />
-              <input type="text" inputmode="decimal" id="lineCountNum" min="1" max="500" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start angle</span>
-            <div class="range-row">
-              <input type="range" id="lineStartAngle" min="0" max="359" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="lineStartAngle" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="lineStartAngleNum" min="0" max="359" step="5" class="num-input" />
-            </div>
-          </label>
-        </div>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Radius (position from center)">
+<div class="sf-head"><label for="lineRadiusNum">Radius</label></div>
+<div class="sf-box"><input type="range" id="lineRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="lineRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="lineLengthNum">Length</label></div>
+<div class="sf-box"><input type="range" id="lineLength" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="lineLengthNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="lineRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="lineRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="lineRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="lineRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="lineStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="lineStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="lineStrokeWidth" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="lineStrokeWidthNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="lineCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="lineCount" min="1" max="500" step="1" /><input type="text" inputmode="decimal" id="lineCountNum" min="1" max="500" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="lineStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="lineStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="lineStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="lineStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Follow ring (rotate outward)"><input type="checkbox" id="lineFollowRing" /><span>Follow ring</span></label>
+</div>
       </section>
 
-      <section class="panel" id="straightPanel">
+      <section class="panel fam-geom" id="straightPanel">
         <h2>Straight line</h2>
-        <label class="field">
-          <span>Angle (0 = up, clockwise)</span>
-          <div class="range-row">
-            <input type="range" id="straightAngle" min="0" max="359" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="straightAngle" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="straightAngleNum" min="0" max="359" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Length</span>
-          <div class="range-row">
-            <input type="range" id="straightLength" min="10" max="6000" step="1" />
-            <input type="text" inputmode="decimal" id="straightLengthNum" min="10" max="6000" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Offset (middle of the line, from the origin)</span>
-          <div class="range-row">
-            <input type="range" id="straightOffset" min="-3000" max="3000" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="straightOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="straightOffsetNum" min="-3000" max="3000" step="1" class="num-input" />
-          </div>
-        </label>
-        <p class="hint">Offset = half the length makes a ray that starts at the origin.</p>
-        <label class="field">
-          <span>Stroke width</span>
-          <div class="range-row">
-            <input type="range" id="straightStrokeWidth" min="1" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="straightStrokeWidthNum" min="1" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Stroke color</span>
-          <input type="color" id="straightStrokeColor" />
-        </label>
-        <label class="field">
-          <span>Style</span>
-          <select id="straightStyle">
-            <option value="" disabled hidden>–</option>
-            <option value="solid">Solid</option>
-            <option value="dashed">Dashed</option>
-            <option value="dotted">Dotted</option>
-          </select>
-        </label>
-        <label class="field" id="straightDashLengthField">
-          <span>Dash length</span>
-          <div class="range-row">
-            <input type="range" id="straightDashLength" min="1" max="400" step="1" />
-            <input type="text" inputmode="decimal" id="straightDashLengthNum" min="1" max="400" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" id="straightDashGapField">
-          <span>Gap (between dashes / dots)</span>
-          <div class="range-row">
-            <input type="range" id="straightDashGap" min="1" max="400" step="1" />
-            <input type="text" inputmode="decimal" id="straightDashGapNum" min="1" max="400" step="1" class="num-input" />
-          </div>
-        </label>
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-        <label class="field">
-          <span>Count (rotated about the origin)</span>
-          <div class="range-row">
-            <input type="range" id="straightCount" min="1" max="72" step="1" />
-            <input type="text" inputmode="decimal" id="straightCountNum" min="1" max="72" step="1" class="num-input" />
-          </div>
-        </label>
-          <p class="hint" id="straightCountHint"></p>
-        </div>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Angle (0 = up, clockwise)">
+<div class="sf-head"><label for="straightAngleNum">Angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="straightAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="straightAngle" min="0" max="359" step="1" /><input type="text" inputmode="decimal" id="straightAngleNum" min="0" max="359" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="straightLengthNum">Length</label></div>
+<div class="sf-box"><input type="range" id="straightLength" min="10" max="6000" step="1" /><input type="text" inputmode="decimal" id="straightLengthNum" min="10" max="6000" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Offset (middle of the line, from the origin)">
+<div class="sf-head"><label for="straightOffsetNum">Offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="straightOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="straightOffset" min="-3000" max="3000" step="1" /><input type="text" inputmode="decimal" id="straightOffsetNum" min="-3000" max="3000" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <p class="hint sf-hint">Offset = half the length makes a ray that starts at the origin.</p>
+        <div class="sf-group"><div class="sf-group-label">Stroke</div>
+<div class="sf-grid">
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="straightStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="straightStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="straightStrokeWidth" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="straightStrokeWidthNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide">
+<div class="sf-head"><label for="straightStyle">Style</label></div>
+<div class="sf-box"><select id="straightStyle">
+<option value="" disabled hidden>–</option>
+<option value="solid">Solid</option>
+<option value="dashed">Dashed</option>
+<option value="dotted">Dotted</option>
+</select></div>
+</div>
+<div class="sf" id="straightDashLengthField">
+<div class="sf-head"><label for="straightDashLengthNum">Dash length</label></div>
+<div class="sf-box"><input type="range" id="straightDashLength" min="1" max="400" step="1" /><input type="text" inputmode="decimal" id="straightDashLengthNum" min="1" max="400" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" id="straightDashGapField" title="Gap (between dashes / dots)">
+<div class="sf-head"><label for="straightDashGapNum">Gap</label></div>
+<div class="sf-box"><input type="range" id="straightDashGap" min="1" max="400" step="1" /><input type="text" inputmode="decimal" id="straightDashGapNum" min="1" max="400" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (rotated about the origin)">
+<div class="sf-head"><label for="straightCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="straightCount" min="1" max="72" step="1" /><input type="text" inputmode="decimal" id="straightCountNum" min="1" max="72" step="1" class="num-input sf-num" /></div>
+</div>
+<p class="hint sf-hint sf-wide" id="straightCountHint"></p>
+</div></div>
       </section>
 
-      <section class="panel" id="shapePanel">
+      <section class="panel fam-shape shape-panel" id="shapePanel">
         <h2>Shape</h2>
-        <label class="field">
-          <span>Shape</span>
-          <select id="shapeKind">
+        <div class="sf-select"><select id="shapeKind">
             <option value="circle">Circle</option>
             <option value="square">Square</option>
             <option value="triangle">Triangle</option>
@@ -310,394 +232,294 @@
             <option value="pentagon">Pentagon</option>
             <option value="hexagon">Hexagon</option>
             <option value="octagon">Octagon</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Radius (position from center)</span>
-          <div class="range-row">
-            <input type="range" id="shapeRadius" min="50" max="1900" step="0.1" />
-            <input type="text" inputmode="decimal" id="shapeRadiusNum" min="50" max="1900" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field field-with-lock">
-          <span>Width</span>
-          <div class="range-row">
-            <input type="range" id="shapeSize" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="shapeSizeNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-          <button type="button" class="lock-ratio-btn" id="shapeLockRatio" title="Lock width/height ratio" aria-label="Lock width/height ratio" aria-pressed="true"></button>
-        </label>
-        <label class="field">
-          <span>Height</span>
-          <div class="range-row">
-            <input type="range" id="shapeSizeY" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="shapeSizeYNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="shapeRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="shapeRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="shapeRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Follow ring (rotate outward)</span>
-          <input type="checkbox" id="shapeFollowRing" />
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="shapeCount" min="1" max="500" step="1" />
-              <input type="text" inputmode="decimal" id="shapeCountNum" min="1" max="500" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start angle</span>
-            <div class="range-row">
-              <input type="range" id="shapeStartAngle" min="0" max="359" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="shapeStartAngle" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="shapeStartAngleNum" min="0" max="359" step="5" class="num-input" />
-            </div>
-          </label>
+          </select></div>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Radius (position from center)">
+<div class="sf-head"><label for="shapeRadiusNum">Radius</label></div>
+<div class="sf-box"><input type="range" id="shapeRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="shapeRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Rotation">
+<div class="sf-head"><label for="shapeRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="shapeRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="shapeRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Width">
+<div class="sf-head"><label for="shapeSizeNum">Width</label></div>
+<div class="sf-box"><input type="range" id="shapeSize" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="shapeSizeNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Height">
+<div class="sf-head"><label for="shapeSizeYNum">Height</label><button type="button" class="lock-ratio-btn sf-lock" id="shapeLockRatio" data-tip="Lock width/height ratio" aria-label="Lock width/height ratio" aria-pressed="true"></button></div>
+<div class="sf-box"><input type="range" id="shapeSizeY" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="shapeSizeYNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="shapeCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="shapeCount" min="1" max="500" step="1" /><input type="text" inputmode="decimal" id="shapeCountNum" min="1" max="500" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Start angle">
+<div class="sf-head"><label for="shapeStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="shapeStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="shapeStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Bend (fit to circle)">
+<div class="sf-head"><label for="shapeBendNum">Bend</label></div>
+<div class="sf-box"><input type="range" id="shapeBend" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="shapeBendNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Flip offset (align flipped copies)">
+<div class="sf-head"><label for="shapeFlipOffsetNum">Flip offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeFlipOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="shapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="shapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Fill and stroke</div>
+<div class="sf-grid">
+<div class="sf" title="Fill colour and opacity">
+<div class="sf-head"><label for="shapeFillOpacityNum">Fill opacity</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="shapeFillColor" class="sf-swatch" aria-label="Fill colour" /><input type="range" id="shapeFillOpacity" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="shapeFillOpacityNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="shapeStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="shapeStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="shapeStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="shapeStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Follow ring (rotate outward)"><input type="checkbox" id="shapeFollowRing" /><span>Follow ring</span></label>
+<label class="sf-toggle" title="Flip vertically"><input type="checkbox" id="shapeFlip" /><span>Flip vertically</span></label>
+<label class="sf-toggle" title="Flip horizontally"><input type="checkbox" id="shapeFlipHorizontal" /><span>Flip horizontally</span></label>
+<label class="sf-toggle" title="Alternate flip"><input type="checkbox" id="shapeAlternateFlip" /><span>Alternate flip</span></label>
         </div>
-
-        <label class="field">
-          <span>Bend (fit to circle)</span>
-          <div class="range-row">
-            <input type="range" id="shapeBend" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="shapeBendNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Fill &amp; Stroke</div>
-          <label class="field row-field">
-            <span>Fill color</span>
-            <input type="color" id="shapeFillColor" />
-          </label>
-          <label class="field">
-            <span>Fill opacity</span>
-            <div class="range-row">
-              <input type="range" id="shapeFillOpacity" min="0" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="shapeFillOpacityNum" min="0" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Stroke width</span>
-            <div class="range-row">
-              <input type="range" id="shapeStrokeWidth" min="0" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="shapeStrokeWidthNum" min="0" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field row-field">
-            <span>Stroke color</span>
-            <input type="color" id="shapeStrokeColor" />
-          </label>
-        </div>
-        <label class="field row-field">
-          <span>Flip vertically</span>
-          <input type="checkbox" id="shapeFlip" />
-        </label>
-        <label class="field row-field">
-          <span>Flip horizontally</span>
-          <input type="checkbox" id="shapeFlipHorizontal" />
-        </label>
-        <label class="field row-field">
-          <span>Alternate flip</span>
-          <input type="checkbox" id="shapeAlternateFlip" />
-        </label>
-        <label class="field">
-          <span>Flip offset (align flipped copies)</span>
-          <div class="range-row">
-            <input type="range" id="shapeFlipOffset" min="-400" max="400" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="shapeFlipOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="shapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input" />
-          </div>
-        </label>
       </section>
 
-      <section class="panel" id="placementPanel">
+      <section class="panel fam-place" id="placementPanel">
         <h2>Placement</h2>
-        <label class="field">
-          <span>Origin X (offset from center)</span>
-          <div class="range-row">
-            <input type="range" id="placeOriginX" min="-2048" max="2048" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="placeOriginX" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="placeOriginXNum" min="-2048" max="2048" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Origin Y (offset from center)</span>
-          <div class="range-row">
-            <input type="range" id="placeOriginY" min="-2048" max="2048" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="placeOriginY" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="placeOriginYNum" min="-2048" max="2048" step="1" class="num-input" />
-          </div>
-        </label>
-        <div class="btn-row">
-          <button type="button" id="placeCentreBtn">Centre</button>
-        </div>
-        <label class="field">
-          <span>Mirror</span>
-          <select id="placeMirror">
-            <option value="" disabled hidden>–</option>
-            <option value="none">None</option>
-            <option value="x">Left-right</option>
-            <option value="y">Top-bottom</option>
-            <option value="xy">Both (4 quadrants)</option>
-          </select>
-        </label>
-        <label class="field" data-arc-only>
-          <span>Arc start (degrees)</span>
-          <div class="range-row">
-            <input type="range" id="placeArcStart" min="0" max="359" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="placeArcStart" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="359" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" data-arc-only>
-          <span>Arc sweep (degrees)</span>
-          <div class="range-row">
-            <input type="range" id="placeArcSweep" min="1" max="360" step="1" />
-            <input type="text" inputmode="decimal" id="placeArcSweepNum" min="1" max="360" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" data-arc-only>
-          <span>Gaps</span>
-          <div class="range-row">
-            <input type="range" id="placeGapCount" min="0" max="24" step="1" />
-            <input type="text" inputmode="decimal" id="placeGapCountNum" min="0" max="24" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" data-arc-only>
-          <span>Gap size (degrees)</span>
-          <div class="range-row">
-            <input type="range" id="placeGapSize" min="0" max="90" step="1" />
-            <input type="text" inputmode="decimal" id="placeGapSizeNum" min="0" max="90" step="1" class="num-input" />
-          </div>
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Origin</div>
+<div class="sf-grid">
+<div class="sf" title="Origin X (offset from center)">
+<div class="sf-head"><label for="placeOriginXNum">Origin X</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeOriginX" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="placeOriginX" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginXNum" min="-2048" max="2048" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Origin Y (offset from center)">
+<div class="sf-head"><label for="placeOriginYNum">Origin Y</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeOriginY" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="placeOriginY" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginYNum" min="-2048" max="2048" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button type="button" id="placeCentreBtn">Centre</button>
+</div>
+        <div class="sf-group"><div class="sf-group-label">Symmetry</div>
+<div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="placeMirror">Mirror</label></div>
+<div class="sf-box"><select id="placeMirror">
+<option value="" disabled hidden>–</option>
+<option value="none">None</option>
+<option value="x">Left-right</option>
+<option value="y">Top-bottom</option>
+<option value="xy">Both (4 quadrants)</option>
+</select></div>
+</div>
+</div></div>
+        <div class="sf-group" data-arc-only><div class="sf-group-label">Arc</div>
+<div class="sf-grid">
+<div class="sf" data-arc-only title="Arc start (degrees)">
+<div class="sf-head"><label for="placeArcStartNum">Arc start</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeArcStart" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="placeArcStart" min="0" max="359" step="1" /><input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="359" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" data-arc-only title="Arc sweep (degrees)">
+<div class="sf-head"><label for="placeArcSweepNum">Arc sweep</label></div>
+<div class="sf-box"><input type="range" id="placeArcSweep" min="1" max="360" step="1" /><input type="text" inputmode="decimal" id="placeArcSweepNum" min="1" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" data-arc-only>
+<div class="sf-head"><label for="placeGapCountNum">Gaps</label></div>
+<div class="sf-box"><input type="range" id="placeGapCount" min="0" max="24" step="1" /><input type="text" inputmode="decimal" id="placeGapCountNum" min="0" max="24" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" data-arc-only title="Gap size (degrees)">
+<div class="sf-head"><label for="placeGapSizeNum">Gap size</label></div>
+<div class="sf-box"><input type="range" id="placeGapSize" min="0" max="90" step="1" /><input type="text" inputmode="decimal" id="placeGapSizeNum" min="0" max="90" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
       </section>
 
       <div class="ornament-divider ornament-divider-export"></div>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Export — Images</h2>
-        <p class="hint">Static pictures, full resolution. Ring: export 4096×4096. Straight: export full ring at max 12812px.</p>
-        <p class="hint">Ring editor</p>
-        <div class="btn-row">
-          <button id="exportPngBtn">PNG</button>
-          <button id="exportSvgBtn">SVG</button>
-        </div>
-        <p class="hint">Straight preview</p>
-        <p class="hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored, and straight line layers are not shown.</p>
-        <div class="btn-row">
-          <button id="exportStraightPngBtn">PNG</button>
-          <button id="exportStraightSvgBtn">SVG</button>
-        </div>
+        <p class="hint sf-hint">Static pictures, full resolution. Ring: export 4096×4096. Straight: export full ring at max 12812px.</p>
+        <div class="sf-sub">Ring editor</div>
+        <div class="sf-btns">
+<button id="exportPngBtn">PNG</button>
+<button id="exportSvgBtn">SVG</button>
+</div>
+        <div class="sf-sub">Straight preview</div>
+        <p class="hint sf-hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored, and straight line layers are not shown.</p>
+        <div class="sf-btns">
+<button id="exportStraightPngBtn">PNG</button>
+<button id="exportStraightSvgBtn">SVG</button>
+</div>
       </section>
 
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Export Ring — Separate Layers</h2>
-        <p class="hint">Every layer as its own PNG (rings flattened into one). Zipped together in stacking order. Used in video editor to create the animation.</p>
-        <div class="btn-row">
-          <button id="exportLayersBtn">Export Layers (ZIP)</button>
-        </div>
-        <p class="hint" id="layersExportStatus"></p>
+        <p class="hint sf-hint">Every layer as its own file, in stacking order — to animate or recolour in another program. PNG: a ZIP of full-canvas images (plain rings flattened into one; each group becomes a folder). SVG: one layered file with a named layer per layer and a named group around each user group.</p>
+        <div class="sf-group"><div class="sf-group-label">Options</div>
+<div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="layersFormat">Format</label></div>
+<div class="sf-box"><select id="layersFormat">
+<option value="png">PNG (ZIP)</option>
+<option value="svg">SVG (one layered file)</option>
+</select></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle"><input type="checkbox" id="layersIncludeHidden" /><span>Include hidden layers</span></label>
+<label class="sf-toggle" title="Flatten groups (no folders or nested groups)"><input type="checkbox" id="layersFlatten" /><span>Flatten groups</span></label>
+</div>
+        <div class="sf-btns">
+<button id="exportLayersBtn">Export Layers</button>
+</div>
+        <p class="hint sf-hint" id="layersExportStatus"></p>
       </section>
     </div>
 
     <div id="straightModeSidebar" style="display:none">
       <div class="ornament-divider ornament-divider-mode"></div>
-      <section class="panel" id="smGuidePanel">
+      <section class="panel fam-geom" id="smGuidePanel">
         <h2>Guide</h2>
-        <label class="field">
-          <span>Position (from center)</span>
-          <div class="range-row">
-            <input type="range" id="smGuidePosition" min="-500" max="500" step="0.1" />
-            <input type="text" inputmode="decimal" id="smGuidePositionNum" min="-500" max="500" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Stroke width</span>
-          <div class="range-row">
-            <input type="range" id="smGuideStrokeWidth" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="smGuideStrokeWidthNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Stroke color</span>
-          <input type="color" id="smGuideStrokeColor" />
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Position (from center)">
+<div class="sf-head"><label for="smGuidePositionNum">Position</label></div>
+<div class="sf-box"><input type="range" id="smGuidePosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smGuidePositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="smGuideStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="smGuideStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="smGuideStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smGuideStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
       </section>
 
-      <section class="panel hidden" id="smTextPanel">
+      <section class="panel hidden fam-type" id="smTextPanel">
         <h2>Text</h2>
-        <label class="field">
-          <span>Text</span>
-          <textarea id="smTextContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea>
-        </label>
-        <label class="field">
-          <span>Font</span>
-          <select id="smTextFont"></select>
-        </label>
-        <div class="btn-row">
-          <button type="button" id="smTextLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
-          <button type="button" id="smTextInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
-        </div>
-        <p class="hint font-status"></p>
-        <label class="field row-field">
-          <span>Colour</span>
-          <input type="color" id="smTextColor" />
-        </label>
-        <label class="field">
-          <span>Letter spacing (% of font size)</span>
-          <div class="range-row">
-            <input type="range" id="smTextLetterSpacing" min="-20" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="smTextLetterSpacingNum" min="-20" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Line alignment</span>
-          <select id="smTextAlign">
-            <option value="left">Left</option>
-            <option value="center">Centre</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Content</div>
+<div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="smTextContent">Text</label></div>
+<div class="sf-box"><textarea id="smTextContent" rows="3" spellcheck="false" placeholder="Type a word or phrase"></textarea></div>
+</div>
+<div class="sf sf-wide">
+<div class="sf-head"><label for="smTextFont">Font</label></div>
+<div class="sf-box"><select id="smTextFont"></select></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button type="button" id="smTextLoadFontBtn" title="Add a .ttf, .otf, .woff or .woff2 font from your computer">Load font file…</button>
+<button type="button" id="smTextInstalledFontsBtn" title="Pick from the fonts installed on this computer">Installed fonts…</button>
+</div>
+        <p class="hint sf-hint font-status"></p>
+        <div class="sf-group"><div class="sf-group-label">Style</div>
+<div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="smTextColor">Colour</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="smTextColor" class="sf-swatch sf-swatch-wide" aria-label="Text colour" /></div>
+</div>
+<div class="sf" title="Letter spacing (% of font size)">
+<div class="sf-head"><label for="smTextLetterSpacingNum">Letter spacing</label></div>
+<div class="sf-box"><input type="range" id="smTextLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="smTextLetterSpacingNum" min="-20" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide">
+<div class="sf-head"><label for="smTextAlign">Line alignment</label></div>
+<div class="sf-box"><select id="smTextAlign">
+<option value="left">Left</option>
+<option value="center">Centre</option>
+<option value="right">Right</option>
+</select></div>
+</div>
+</div></div>
       </section>
 
-      <section class="panel" id="smMotifPanel">
+      <section class="panel fam-asset" id="smMotifPanel">
         <h2 id="smMotifPanelTitle">Asset</h2>
-        <label class="field" id="smMotifUploadField">
-          <span>Upload bitmap</span>
-          <input type="file" id="smMotifUpload" accept="image/*" />
-        </label>
-        <p class="hint" id="smMotifNoImageHint">No image uploaded</p>
+        <div class="sf-grid sf-grid-top">
+<div class="sf sf-wide" id="smMotifUploadField">
+<div class="sf-head"><label for="smMotifUpload">Upload bitmap</label></div>
+<div class="sf-box"><input type="file" id="smMotifUpload" accept="image/*" /></div>
+</div>
+</div>
+        <p class="hint sf-hint" id="smMotifNoImageHint">No image uploaded</p>
         <div class="motif-preview" id="smMotifPreviewWrap" style="display:none">
           <img id="smMotifPreviewImg" class="motif-preview-img" alt="Asset preview" />
           <span id="smMotifFileName" class="motif-preview-name"></span>
         </div>
-        <label class="field">
-          <span>Position (from center)</span>
-          <div class="range-row">
-            <input type="range" id="smMotifPosition" min="-500" max="500" step="0.1" />
-            <input type="text" inputmode="decimal" id="smMotifPositionNum" min="-500" max="500" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span id="smMotifSizeLabel">Size</span>
-          <div class="range-row">
-            <input type="range" id="smMotifSize" min="25" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="smMotifSizeNum" min="25" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="smMotifRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="smMotifRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="smMotifRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="smMotifCount" min="1" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="smMotifCountNum" min="1" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start offset</span>
-            <div class="range-row">
-              <input type="range" id="smMotifStartOffset" min="-200" max="200" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="smMotifStartOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="smMotifStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input" />
-            </div>
-          </label>
-        </div>
-
-        <label class="field row-field">
-          <span>Flip vertically</span>
-          <input type="checkbox" id="smMotifFlip" />
-        </label>
-        <label class="field row-field">
-          <span>Flip horizontally</span>
-          <input type="checkbox" id="smMotifFlipHorizontal" />
-        </label>
-        <label class="field row-field">
-          <span>Alternate flip</span>
-          <input type="checkbox" id="smMotifAlternateFlip" />
-        </label>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf sf-wide" title="Size (font size for a text layer)">
+<div class="sf-head"><label for="smMotifSizeNum" id="smMotifSizeLabel">Size</label></div>
+<div class="sf-box"><input type="range" id="smMotifSize" min="25" max="1250" step="1" /><input type="text" inputmode="decimal" id="smMotifSizeNum" min="25" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Position (from center)">
+<div class="sf-head"><label for="smMotifPositionNum">Position</label></div>
+<div class="sf-box"><input type="range" id="smMotifPosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smMotifPositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="smMotifRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smMotifRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smMotifRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smMotifRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="smMotifCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="smMotifCount" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="smMotifCountNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="smMotifStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smMotifStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smMotifStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smMotifStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle"><input type="checkbox" id="smMotifFlip" /><span>Flip vertically</span></label>
+<label class="sf-toggle"><input type="checkbox" id="smMotifFlipHorizontal" /><span>Flip horizontally</span></label>
+<label class="sf-toggle"><input type="checkbox" id="smMotifAlternateFlip" /><span>Alternate flip</span></label>
+</div>
       </section>
 
-      <section class="panel" id="smLinePanel">
+      <section class="panel fam-geom" id="smLinePanel">
         <h2>Line</h2>
-        <label class="field">
-          <span>Position (from center)</span>
-          <div class="range-row">
-            <input type="range" id="smLinePosition" min="-500" max="500" step="0.1" />
-            <input type="text" inputmode="decimal" id="smLinePositionNum" min="-500" max="500" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Length</span>
-          <div class="range-row">
-            <input type="range" id="smLineLength" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="smLineLengthNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="smLineRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="smLineRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="smLineRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Stroke width</span>
-          <div class="range-row">
-            <input type="range" id="smLineStrokeWidth" min="1" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="smLineStrokeWidthNum" min="1" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Stroke color</span>
-          <input type="color" id="smLineStrokeColor" />
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="smLineCount" min="1" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="smLineCountNum" min="1" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start offset</span>
-            <div class="range-row">
-              <input type="range" id="smLineStartOffset" min="-200" max="200" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="smLineStartOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="smLineStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input" />
-            </div>
-          </label>
-        </div>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Position (from center)">
+<div class="sf-head"><label for="smLinePositionNum">Position</label></div>
+<div class="sf-box"><input type="range" id="smLinePosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smLinePositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="smLineLengthNum">Length</label></div>
+<div class="sf-box"><input type="range" id="smLineLength" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="smLineLengthNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="smLineRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smLineRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smLineRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smLineRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="smLineStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="smLineStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="smLineStrokeWidth" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="smLineStrokeWidthNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="smLineCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="smLineCount" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="smLineCountNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf">
+<div class="sf-head"><label for="smLineStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smLineStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smLineStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smLineStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
       </section>
 
-      <section class="panel" id="smShapePanel">
+      <section class="panel fam-shape shape-panel" id="smShapePanel">
         <h2>Shape</h2>
-        <label class="field">
-          <span>Shape</span>
-          <select id="smShapeKind">
+        <div class="sf-select"><select id="smShapeKind">
             <option value="circle">Circle</option>
             <option value="square">Square</option>
             <option value="triangle">Triangle</option>
@@ -705,141 +527,92 @@
             <option value="pentagon">Pentagon</option>
             <option value="hexagon">Hexagon</option>
             <option value="octagon">Octagon</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Position (from center)</span>
-          <div class="range-row">
-            <input type="range" id="smShapePosition" min="-500" max="500" step="0.1" />
-            <input type="text" inputmode="decimal" id="smShapePositionNum" min="-500" max="500" step="0.1" class="num-input" />
-          </div>
-        </label>
-        <label class="field field-with-lock">
-          <span>Width</span>
-          <div class="range-row">
-            <input type="range" id="smShapeSize" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="smShapeSizeNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-          <button type="button" class="lock-ratio-btn" id="smShapeLockRatio" title="Lock width/height ratio" aria-label="Lock width/height ratio" aria-pressed="true"></button>
-        </label>
-        <label class="field">
-          <span>Height</span>
-          <div class="range-row">
-            <input type="range" id="smShapeSizeY" min="10" max="1250" step="1" />
-            <input type="text" inputmode="decimal" id="smShapeSizeYNum" min="10" max="1250" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Rotation</span>
-          <div class="range-row">
-            <input type="range" id="smShapeRotation" min="0" max="359" step="5" />
-            <button type="button" class="reset-btn" data-reset-target="smShapeRotation" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="smShapeRotationNum" min="0" max="359" step="5" class="num-input" />
-          </div>
-        </label>
-
-        <div class="field-group">
-          <div class="field-group-label">Distribution</div>
-          <label class="field">
-            <span>Count (spacing)</span>
-            <div class="range-row">
-              <input type="range" id="smShapeCount" min="1" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="smShapeCountNum" min="1" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Start offset</span>
-            <div class="range-row">
-              <input type="range" id="smShapeStartOffset" min="-200" max="200" step="5" />
-              <button type="button" class="reset-btn" data-reset-target="smShapeStartOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-              <input type="text" inputmode="decimal" id="smShapeStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input" />
-            </div>
-          </label>
+          </select></div>
+        <div class="sf-group"><div class="sf-group-label">Form</div>
+<div class="sf-grid">
+<div class="sf" title="Position (from center)">
+<div class="sf-head"><label for="smShapePositionNum">Position</label></div>
+<div class="sf-box"><input type="range" id="smShapePosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smShapePositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Rotation">
+<div class="sf-head"><label for="smShapeRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smShapeRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smShapeRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Width">
+<div class="sf-head"><label for="smShapeSizeNum">Width</label></div>
+<div class="sf-box"><input type="range" id="smShapeSize" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="smShapeSizeNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Height">
+<div class="sf-head"><label for="smShapeSizeYNum">Height</label><button type="button" class="lock-ratio-btn sf-lock" id="smShapeLockRatio" data-tip="Lock width/height ratio" aria-label="Lock width/height ratio" aria-pressed="true"></button></div>
+<div class="sf-box"><input type="range" id="smShapeSizeY" min="10" max="1250" step="1" /><input type="text" inputmode="decimal" id="smShapeSizeYNum" min="10" max="1250" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Distribution</div>
+<div class="sf-grid">
+<div class="sf" title="Count (spacing)">
+<div class="sf-head"><label for="smShapeCountNum">Count</label></div>
+<div class="sf-box"><input type="range" id="smShapeCount" min="1" max="100" step="1" /><input type="text" inputmode="decimal" id="smShapeCountNum" min="1" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Start offset">
+<div class="sf-head"><label for="smShapeStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smShapeStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smShapeStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Flip offset (align flipped copies)">
+<div class="sf-head"><label for="smShapeFlipOffsetNum">Flip offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeFlipOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
+<div class="sf-box"><input type="range" id="smShapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="smShapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-group"><div class="sf-group-label">Fill and stroke</div>
+<div class="sf-grid">
+<div class="sf" title="Fill colour and opacity">
+<div class="sf-head"><label for="smShapeFillOpacityNum">Fill opacity</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="smShapeFillColor" class="sf-swatch" aria-label="Fill colour" /><input type="range" id="smShapeFillOpacity" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smShapeFillOpacityNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Stroke colour and width">
+<div class="sf-head"><label for="smShapeStrokeWidthNum">Stroke width</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="smShapeStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="smShapeStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smShapeStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Flip vertically"><input type="checkbox" id="smShapeFlip" /><span>Flip vertically</span></label>
+<label class="sf-toggle" title="Flip horizontally"><input type="checkbox" id="smShapeFlipHorizontal" /><span>Flip horizontally</span></label>
+<label class="sf-toggle" title="Alternate flip"><input type="checkbox" id="smShapeAlternateFlip" /><span>Alternate flip</span></label>
         </div>
-
-        <div class="field-group">
-          <div class="field-group-label">Fill &amp; Stroke</div>
-          <label class="field row-field">
-            <span>Fill color</span>
-            <input type="color" id="smShapeFillColor" />
-          </label>
-          <label class="field">
-            <span>Fill opacity</span>
-            <div class="range-row">
-              <input type="range" id="smShapeFillOpacity" min="0" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="smShapeFillOpacityNum" min="0" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field">
-            <span>Stroke width</span>
-            <div class="range-row">
-              <input type="range" id="smShapeStrokeWidth" min="0" max="100" step="1" />
-              <input type="text" inputmode="decimal" id="smShapeStrokeWidthNum" min="0" max="100" step="1" class="num-input" />
-            </div>
-          </label>
-          <label class="field row-field">
-            <span>Stroke color</span>
-            <input type="color" id="smShapeStrokeColor" />
-          </label>
-        </div>
-        <label class="field row-field">
-          <span>Flip vertically</span>
-          <input type="checkbox" id="smShapeFlip" />
-        </label>
-        <label class="field row-field">
-          <span>Flip horizontally</span>
-          <input type="checkbox" id="smShapeFlipHorizontal" />
-        </label>
-        <label class="field row-field">
-          <span>Alternate flip</span>
-          <input type="checkbox" id="smShapeAlternateFlip" />
-        </label>
-        <label class="field">
-          <span>Flip offset (align flipped copies)</span>
-          <div class="range-row">
-            <input type="range" id="smShapeFlipOffset" min="-400" max="400" step="1" />
-            <button type="button" class="reset-btn" data-reset-target="smShapeFlipOffset" title="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
-            <input type="text" inputmode="decimal" id="smShapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input" />
-          </div>
-        </label>
       </section>
 
       <div class="ornament-divider ornament-divider-export"></div>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Export — Images</h2>
-        <p class="hint">Exports the tile at full resolution; edge-straddling shapes wrap correctly.</p>
-        <div class="btn-row">
-          <button id="smExportPngBtn">PNG</button>
-          <button id="smExportSvgBtn">SVG</button>
-        </div>
+        <p class="hint sf-hint">Exports the tile at full resolution; edge-straddling shapes wrap correctly.</p>
+        <div class="sf-btns">
+<button id="smExportPngBtn">PNG</button>
+<button id="smExportSvgBtn">SVG</button>
+</div>
       </section>
 
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Export — Animation</h2>
-        <p class="hint">Numbered PNG frames, zipped — for Resolve, Premiere, or After Effects.</p>
-        <label class="field">
-          <span>Animation loop (seconds)</span>
-          <div class="range-row">
-            <input type="range" id="smLoopDuration" min="1" max="120" step="1" />
-            <input type="text" inputmode="decimal" id="smLoopDurationNum" min="1" max="120" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field">
-          <span>Frame rate (fps)</span>
-          <div class="range-row">
-            <input type="range" id="smFps" min="1" max="60" step="1" />
-            <input type="text" inputmode="decimal" id="smFpsNum" min="1" max="60" step="1" class="num-input" />
-          </div>
-        </label>
-        <div class="btn-row">
-          <button id="smExportPngSeqBtn">PNG Sequence</button>
-        </div>
-        <p class="hint size-estimate" id="smAnimSizeEstimate"></p>
-        <p class="hint" id="smAnimExportStatus"></p>
+        <p class="hint sf-hint">Numbered PNG frames, zipped — for Resolve, Premiere, or After Effects.</p>
+        <div class="sf-group"><div class="sf-group-label">Timing</div>
+<div class="sf-grid">
+<div class="sf" title="Animation loop (seconds)">
+<div class="sf-head"><label for="smLoopDurationNum">Animation loop</label></div>
+<div class="sf-box"><input type="range" id="smLoopDuration" min="1" max="120" step="1" /><input type="text" inputmode="decimal" id="smLoopDurationNum" min="1" max="120" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Frame rate (fps)">
+<div class="sf-head"><label for="smFpsNum">Frame rate</label></div>
+<div class="sf-box"><input type="range" id="smFps" min="1" max="60" step="1" /><input type="text" inputmode="decimal" id="smFpsNum" min="1" max="60" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button id="smExportPngSeqBtn">PNG Sequence</button>
+</div>
+        <p class="hint sf-hint size-estimate" id="smAnimSizeEstimate"></p>
+        <p class="hint sf-hint" id="smAnimExportStatus"></p>
       </section>
     </div>
 
-    <section class="panel">
+    <section class="panel fam-meta">
       <h2>Project</h2>
       <p class="hint">Save your ornament as a .json file.</p>
       <div class="btn-row">
@@ -850,7 +623,7 @@
       <p class="hint" id="projectStatus"></p>
     </section>
 
-    <section class="panel">
+    <section class="panel fam-meta">
       <h2>Shortcuts</h2>
       <table class="shortcuts-table">
         <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>Undo</td></tr>
@@ -861,7 +634,12 @@
         <tr><td><kbd>Ctrl</kbd> / <kbd>Alt</kbd> + <kbd>Scroll</kbd></td><td>Zoom at the pointer (also pinch)</td></tr>
         <tr><td><kbd>Space</kbd> + drag</td><td>Pan the preview (or middle-mouse drag)</td></tr>
         <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit artboard / 100%</td></tr>
-        <tr><td><kbd>Delete</kbd></td><td>Remove selected layer</td></tr>
+        <tr><td><kbd>Delete</kbd></td><td>Remove selected layers</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>G</kbd></td><td>Group the selected layers</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td><td>Ungroup the selected layers</td></tr>
+        <tr><td><kbd>Scroll</kbd> over a badge</td><td>Change its value by 1 (<kbd>Shift</kbd>: by 10)</td></tr>
+        <tr><td><kbd>Drag</kbd> a badge left / right</td><td>Scrub its value (<kbd>Shift</kbd>: coarser); a plain click types one</td></tr>
+        <tr><td><kbd>Ctrl</kbd> / <kbd>Shift</kbd> + click a shape</td><td>Add or remove its layer in the selection</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>Confirm layer rename</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Cancel layer rename</td></tr>
       </table>
@@ -871,23 +649,37 @@
 
   <aside class="layers-sidebar">
     <div id="circleLayersPanel">
-      <section class="panel">
+      <section class="panel fam-place">
         <h2>Layers</h2>
-        <p class="hint">Top of list = front. Ctrl+click or Shift+click to select several layers of the same type and edit them together.</p>
-        <div class="btn-row">
-          <button id="addRingBtn" title="Add a ring layer">+ Ring</button>
-          <button id="addMotifBtn" title="Add an asset layer">+ Asset</button>
+        <p class="hint">Top = front. Ctrl/Shift+click selects several; Ctrl+G groups them.</p>
+        <div class="add-family fam-geom">
+          <span class="add-family-label">Geometry</span>
+          <div class="add-family-row">
+            <button id="addRingBtn" class="add-btn" title="Add a ring layer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>Ring</button>
+            <button id="addLineBtn" class="add-btn" title="Add a line layer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/></svg>Line</button>
+            <button id="addStraightBtn" class="add-btn" title="Add a free straight line (axis, chord, ray)"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M3 17l4 4M17 3l4 4"/></svg>Straight</button>
+          </div>
         </div>
-        <div class="btn-row">
-          <button id="addLineBtn" title="Add a line layer">+ Line</button>
-          <button id="addShapeBtn" title="Add a shape layer">+ Shape</button>
-          <button id="addTextBtn" title="Add a text layer">+ Text</button>
-          <button id="addStraightBtn" title="Add a free straight line (axis, chord, ray)">+ Straight</button>
+        <div class="add-family-trio">
+          <div class="add-family fam-asset">
+            <span class="add-family-label">Asset</span>
+            <button id="addMotifBtn" class="add-btn" title="Add an asset layer"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>Asset</button>
+          </div>
+          <div class="add-family fam-shape">
+            <span class="add-family-label">Shape</span>
+            <button id="addShapeBtn" class="add-btn" title="Add a shape layer"><svg viewBox="0 0 24 24"><path d="M12 4l8 15H4z"/></svg>Shape</button>
+          </div>
+          <div class="add-family fam-type">
+            <span class="add-family-label">Text</span>
+            <button id="addTextBtn" class="add-btn" title="Add a text layer"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>Text</button>
+          </div>
         </div>
-        <div class="btn-row">
-          <button id="duplicateLayerBtn" title="Duplicate selected layer">Duplicate</button>
-          <button id="renameLayerBtn" title="Rename selected layer (or double-click it)">Rename</button>
-          <button id="removeLayerBtn" title="Remove selected layer">Remove</button>
+        <div class="layer-actions">
+          <button id="duplicateLayerBtn" class="icon-btn" data-tip="Duplicate layer" aria-label="Duplicate layer"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+          <button id="renameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
+          <button id="groupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button id="ungroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
+          <button id="removeLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
         <div class="order-history-row">
           <div class="move-stack">
@@ -900,106 +692,116 @@
         <div class="ornament-divider ornament-divider-layers"></div>
         <div id="layerList" class="layer-list"></div>
         <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip"></div>
-        <label class="field" id="layerTypeField">
-          <span>Layer type</span>
-          <select id="layerTypeSelect">
-            <option value="ring">Ring</option>
-            <option value="motif">Asset</option>
-            <option value="line">Line</option>
-            <option value="shape">Shape</option>
-            <option value="text">Text</option>
-            <option value="straight" disabled hidden>Straight line</option>
-          </select>
-        </label>
-        <label class="field" id="layerOpacityField">
-          <span>Layer opacity</span>
-          <div class="range-row">
-            <input type="range" id="layerOpacity" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="layerOpacityNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" id="layerAnimSpeedField">
-          <span>Animation speed (degrees/second)</span>
-          <div class="range-row">
-            <input type="range" id="layerAnimSpeed" min="-5" max="5" step="0.05" />
-            <input type="text" inputmode="decimal" id="layerAnimSpeedNum" min="-5" max="5" step="0.05" class="num-input" />
-          </div>
-        </label>
-        <div class="btn-row">
-          <button type="button" id="randomizeSpeedsBtn">Randomize Speeds</button>
-          <button type="button" id="zeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset Speeds</button>
-          <button id="clearLayersBtn" title="Remove every layer">Clear Layers</button>
-        </div>
+        <div class="sf-group"><div class="sf-group-label">Selected layer</div>
+<div class="sf-grid">
+<div class="sf sf-wide" id="layerTypeField">
+<div class="sf-head"><label for="layerTypeSelect">Change selected layer to</label></div>
+<div class="sf-box"><select id="layerTypeSelect">
+<option value="ring">Ring</option>
+<option value="motif">Asset</option>
+<option value="line">Line</option>
+<option value="shape">Shape</option>
+<option value="text">Text</option>
+<option value="straight" disabled hidden>Straight line</option>
+</select></div>
+</div>
+<div class="sf" id="layerOpacityField">
+<div class="sf-head"><label for="layerOpacityNum">Layer opacity</label></div>
+<div class="sf-box"><input type="range" id="layerOpacity" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="layerOpacityNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" id="layerAnimSpeedField" title="Animation speed (degrees/second)">
+<div class="sf-head"><label for="layerAnimSpeedNum">Animation speed</label></div>
+<div class="sf-box"><input type="range" id="layerAnimSpeed" min="-5" max="5" step="0.05" /><input type="text" inputmode="decimal" id="layerAnimSpeedNum" min="-5" max="5" step="0.05" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" id="groupScaleField" style="display:none" title="Scale (% of the group, about its pivot)">
+<div class="sf-head"><label for="groupScaleNum">Scale (% of the group)</label></div>
+<div class="sf-box"><input type="range" id="groupScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="groupScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button type="button" id="randomizeSpeedsBtn">Randomize Speeds</button>
+<button type="button" id="zeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset Speeds</button>
+<button id="clearLayersBtn" title="Remove every layer">Clear Layers</button>
+</div>
       </section>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Roughness</h2>
-        <p class="hint">Sketchy brush texture on every ring, line &amp; shape outline.</p>
-        <p class="hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
-        <label class="field">
-          <span>Amount</span>
-          <div class="range-row">
-            <input type="range" id="roughness" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="roughnessNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
+        <p class="hint sf-hint">Sketchy brush texture on every ring, line &amp; shape outline.</p>
+        <p class="hint sf-hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
+        <div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="roughnessNum">Amount</label></div>
+<div class="sf-box"><input type="range" id="roughness" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="roughnessNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
       </section>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Mask</h2>
-        <p class="hint">One erase-style texture mask over the whole Ring editor artboard.</p>
-        <label class="field row-field">
-          <span>Enabled</span>
-          <input type="checkbox" id="maskEnabled" />
-        </label>
-        <label class="field">
-          <span>Upload texture</span>
-          <input type="file" id="maskUpload" accept="image/*" />
-        </label>
-        <p class="hint" id="maskNoImageHint">No texture uploaded</p>
+        <p class="hint sf-hint">One erase-style texture mask over the whole Ring editor artboard.</p>
+        <div class="sf-toggles">
+<label class="sf-toggle"><input type="checkbox" id="maskEnabled" /><span>Enabled</span></label>
+<label class="sf-toggle"><input type="checkbox" id="maskInvert" /><span>Invert</span></label>
+</div>
+        <div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="maskUpload">Upload texture</label></div>
+<div class="sf-box"><input type="file" id="maskUpload" accept="image/*" /></div>
+</div>
+</div>
+        <p class="hint sf-hint" id="maskNoImageHint">No texture uploaded</p>
         <div class="motif-preview" id="maskPreviewWrap" style="display:none">
           <img id="maskPreviewImg" class="motif-preview-img" alt="Mask texture preview" />
           <span id="maskFileName" class="motif-preview-name"></span>
         </div>
-        <label class="field">
-          <span>Tile size</span>
-          <div class="range-row">
-            <input type="range" id="maskSize" min="20" max="4096" step="1" />
-            <input type="text" inputmode="decimal" id="maskSizeNum" min="20" max="4096" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Invert</span>
-          <input type="checkbox" id="maskInvert" />
-        </label>
+        <div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="maskSizeNum">Tile size</label></div>
+<div class="sf-box"><input type="range" id="maskSize" min="20" max="4096" step="1" /><input type="text" inputmode="decimal" id="maskSizeNum" min="20" max="4096" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
       </section>
     </div>
     <div id="straightLayersPanel" style="display:none">
-      <section class="panel">
+      <section class="panel fam-place">
         <h2>Tile</h2>
-        <p class="hint">One repeat unit of the pattern — export is exactly this width.</p>
-        <label class="field">
-          <span>Width</span>
-          <div class="range-row">
-            <input type="range" id="smTileWidth" min="100" max="4096" step="25" />
-            <input type="text" inputmode="decimal" id="smTileWidthNum" min="100" max="4096" step="25" class="num-input" />
-          </div>
-        </label>
+        <p class="hint sf-hint">One repeat unit of the pattern — export is exactly this width.</p>
+        <div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="smTileWidthNum">Width</label></div>
+<div class="sf-box"><input type="range" id="smTileWidth" min="100" max="4096" step="25" /><input type="text" inputmode="decimal" id="smTileWidthNum" min="100" max="4096" step="25" class="num-input sf-num" /></div>
+</div>
+</div>
       </section>
-      <section class="panel">
+      <section class="panel fam-place">
         <h2>Layers</h2>
-        <p class="hint">Top of list = front. Ctrl+click or Shift+click to select several layers of the same type and edit them together.</p>
-        <div class="btn-row">
-          <button id="smAddGuideBtn" title="Add a guide line layer">+ Guide</button>
-          <button id="smAddMotifBtn" title="Add an asset layer">+ Asset</button>
+        <p class="hint">Top = front. Ctrl/Shift+click selects several; Ctrl+G groups them.</p>
+        <div class="add-family fam-geom">
+          <span class="add-family-label">Geometry</span>
+          <div class="add-family-row">
+            <button id="smAddLineBtn" class="add-btn" title="Add a line layer"><svg viewBox="0 0 24 24"><path d="M3 12h18" stroke-dasharray="3 3"/></svg>Line</button>
+            <button id="smAddGuideBtn" class="add-btn" title="Add a guide line layer"><svg viewBox="0 0 24 24"><path d="M3 12h18M6 9v6M18 9v6"/></svg>Guide</button>
+          </div>
         </div>
-        <div class="btn-row">
-          <button id="smAddLineBtn" title="Add a line layer">+ Line</button>
-          <button id="smAddShapeBtn" title="Add a shape layer">+ Shape</button>
-          <button id="smAddTextBtn" title="Add a text layer">+ Text</button>
+        <div class="add-family-trio">
+          <div class="add-family fam-asset">
+            <span class="add-family-label">Asset</span>
+            <button id="smAddMotifBtn" class="add-btn" title="Add an asset layer"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>Asset</button>
+          </div>
+          <div class="add-family fam-shape">
+            <span class="add-family-label">Shape</span>
+            <button id="smAddShapeBtn" class="add-btn" title="Add a shape layer"><svg viewBox="0 0 24 24"><path d="M12 4l8 15H4z"/></svg>Shape</button>
+          </div>
+          <div class="add-family fam-type">
+            <span class="add-family-label">Text</span>
+            <button id="smAddTextBtn" class="add-btn" title="Add a text layer"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>Text</button>
+          </div>
         </div>
-        <div class="btn-row">
-          <button id="smDuplicateLayerBtn" title="Duplicate selected layer">Duplicate</button>
-          <button id="smRenameLayerBtn" title="Rename selected layer (or double-click it)">Rename</button>
-          <button id="smRemoveLayerBtn" title="Remove selected layer">Remove</button>
+        <div class="layer-actions">
+          <button id="smDuplicateLayerBtn" class="icon-btn" data-tip="Duplicate layer" aria-label="Duplicate layer"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+          <button id="smRenameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
+          <button id="smGroupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button id="smUngroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
+          <button id="smRemoveLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
         <div class="order-history-row">
           <div class="move-stack">
@@ -1012,75 +814,72 @@
         <div class="ornament-divider ornament-divider-layers"></div>
         <div id="smLayerList" class="layer-list"></div>
         <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip"></div>
-        <label class="field" id="smLayerTypeField">
-          <span>Layer type</span>
-          <select id="smLayerTypeSelect">
-            <option value="guide">Guide</option>
-            <option value="motif">Asset</option>
-            <option value="line">Line</option>
-            <option value="shape">Shape</option>
-            <option value="text">Text</option>
-          </select>
-        </label>
-        <label class="field" id="smLayerOpacityField">
-          <span>Layer opacity</span>
-          <div class="range-row">
-            <input type="range" id="smLayerOpacity" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="smLayerOpacityNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field" id="smLayerAnimSpeedField">
-          <span>Animation speed (tile-widths per loop)</span>
-          <div class="range-row">
-            <input type="range" id="smLayerAnimSpeed" min="-6" max="6" step="1" />
-            <input type="text" inputmode="decimal" id="smLayerAnimSpeedNum" min="-6" max="6" step="1" class="num-input" />
-          </div>
-        </label>
-        <div class="btn-row">
-          <button type="button" id="smRandomizeSpeedsBtn">Randomize Speeds</button>
-          <button type="button" id="smZeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset Speeds</button>
-          <button id="smClearLayersBtn" title="Remove every layer">Clear Layers</button>
-        </div>
+        <div class="sf-group"><div class="sf-group-label">Selected layer</div>
+<div class="sf-grid">
+<div class="sf sf-wide" id="smLayerTypeField">
+<div class="sf-head"><label for="smLayerTypeSelect">Change selected layer to</label></div>
+<div class="sf-box"><select id="smLayerTypeSelect">
+<option value="guide">Guide</option>
+<option value="motif">Asset</option>
+<option value="line">Line</option>
+<option value="shape">Shape</option>
+<option value="text">Text</option>
+</select></div>
+</div>
+<div class="sf" id="smLayerOpacityField">
+<div class="sf-head"><label for="smLayerOpacityNum">Layer opacity</label></div>
+<div class="sf-box"><input type="range" id="smLayerOpacity" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smLayerOpacityNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" id="smLayerAnimSpeedField" title="Animation speed (tile-widths per loop)">
+<div class="sf-head"><label for="smLayerAnimSpeedNum">Animation speed</label></div>
+<div class="sf-box"><input type="range" id="smLayerAnimSpeed" min="-6" max="6" step="1" /><input type="text" inputmode="decimal" id="smLayerAnimSpeedNum" min="-6" max="6" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" id="smGroupScaleField" style="display:none" title="Scale (% of the group, about its pivot)">
+<div class="sf-head"><label for="smGroupScaleNum">Scale (% of the group)</label></div>
+<div class="sf-box"><input type="range" id="smGroupScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="smGroupScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+        <div class="sf-btns">
+<button type="button" id="smRandomizeSpeedsBtn">Randomize Speeds</button>
+<button type="button" id="smZeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset Speeds</button>
+<button id="smClearLayersBtn" title="Remove every layer">Clear Layers</button>
+</div>
       </section>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Roughness</h2>
-        <p class="hint">Sketchy brush texture on every guide, line &amp; shape outline.</p>
-        <p class="hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
-        <label class="field">
-          <span>Amount</span>
-          <div class="range-row">
-            <input type="range" id="smRoughness" min="0" max="100" step="1" />
-            <input type="text" inputmode="decimal" id="smRoughnessNum" min="0" max="100" step="1" class="num-input" />
-          </div>
-        </label>
+        <p class="hint sf-hint">Sketchy brush texture on every guide, line &amp; shape outline.</p>
+        <p class="hint sf-hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
+        <div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="smRoughnessNum">Amount</label></div>
+<div class="sf-box"><input type="range" id="smRoughness" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smRoughnessNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
       </section>
-      <section class="panel">
+      <section class="panel fam-export">
         <h2>Mask</h2>
-        <p class="hint">One erase-style texture mask over the whole tile artboard.</p>
-        <label class="field row-field">
-          <span>Enabled</span>
-          <input type="checkbox" id="smMaskEnabled" />
-        </label>
-        <label class="field">
-          <span>Upload texture</span>
-          <input type="file" id="smMaskUpload" accept="image/*" />
-        </label>
-        <p class="hint" id="smMaskNoImageHint">No texture uploaded</p>
+        <p class="hint sf-hint">One erase-style texture mask over the whole tile artboard.</p>
+        <div class="sf-toggles">
+<label class="sf-toggle"><input type="checkbox" id="smMaskEnabled" /><span>Enabled</span></label>
+<label class="sf-toggle"><input type="checkbox" id="smMaskInvert" /><span>Invert</span></label>
+</div>
+        <div class="sf-grid">
+<div class="sf sf-wide">
+<div class="sf-head"><label for="smMaskUpload">Upload texture</label></div>
+<div class="sf-box"><input type="file" id="smMaskUpload" accept="image/*" /></div>
+</div>
+</div>
+        <p class="hint sf-hint" id="smMaskNoImageHint">No texture uploaded</p>
         <div class="motif-preview" id="smMaskPreviewWrap" style="display:none">
           <img id="smMaskPreviewImg" class="motif-preview-img" alt="Mask texture preview" />
           <span id="smMaskFileName" class="motif-preview-name"></span>
         </div>
-        <label class="field">
-          <span>Tile size</span>
-          <div class="range-row">
-            <input type="range" id="smMaskSize" min="20" max="4096" step="1" />
-            <input type="text" inputmode="decimal" id="smMaskSizeNum" min="20" max="4096" step="1" class="num-input" />
-          </div>
-        </label>
-        <label class="field row-field">
-          <span>Invert</span>
-          <input type="checkbox" id="smMaskInvert" />
-        </label>
+        <div class="sf-grid">
+<div class="sf">
+<div class="sf-head"><label for="smMaskSizeNum">Tile size</label></div>
+<div class="sf-box"><input type="range" id="smMaskSize" min="20" max="4096" step="1" /><input type="text" inputmode="decimal" id="smMaskSizeNum" min="20" max="4096" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
       </section>
     </div>
   </aside>
@@ -1145,6 +944,6 @@
   </div>
 </div>
 
-<script src="app.js?v=66"></script>
+<script src="app.js?v=75"></script>
 </body>
 </html>
