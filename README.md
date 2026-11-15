@@ -4,15 +4,16 @@ Ornament Atelier is a browser app for designing radial and straight ornaments. B
 
 **Live:** <https://demifury.github.io/ornament-atelier/>
 
-## Running it locally
+## Install as an app
 
-There is nothing to build or install. Serve the folder with any static server and open it in a browser:
+Open the live link in Chrome or Edge and install it:
 
-```bash
-python -m http.server 8123
-```
+- **Chrome:** the **Install** icon at the right end of the address bar, or **More (⋮) › Cast, save, and share › Install page as app…**
+- **Edge:** **Settings and more (…) › More tools › Apps › Install this site as an app**
 
-Then go to <http://localhost:8123>.
+It then opens in its own window from the Start menu and works offline after the first visit.
+
+To run it from a copy of this repository, serve the folder with any static web server (for example `python -m http.server`) and open it at localhost.
 
 ## Two modes
 
