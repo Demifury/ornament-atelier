@@ -17,6 +17,7 @@ const state = {
   activeLayerId: null,
   mask: createDefaultMask(),
   roughness: 50,
+  brush: brushDefault(), // global art brush (replaces Roughness when its id is not "none")
 };
 let nextLayerId = 1;
 
@@ -736,10 +737,19 @@ function rasterizeGlyph(font, ch, F, colour) {
   return { url: canvas.toDataURL("image/png"), w, h, ox, oy, F };
 }
 
+const glyphLastKey = new Map(); // font|char|colour -> the key of the glyph last drawn for it
+
 function getGlyph(font, ch, S, colour) {
   const F = glyphRasterSize(S);
   const key = [font.id, ch, F, colour].join("\u0001");
+  const base = [font.id, ch, colour].join("\u0001");
   let rec = glyphCache.get(key);
+  if (rec === undefined && drafting) {
+    // While a gesture runs (dragging Letter size, say) no new bitmap is made when one of another size
+    // exists: it is shown scaled (appendTextGlyphs uses S / rec.F); the settle render makes the right one.
+    const near = glyphCache.get(glyphLastKey.get(base));
+    if (near) return near;
+  }
   if (rec === undefined) {
     rec = rasterizeGlyph(font, ch, F, colour);
     if (rec) {
@@ -747,6 +757,7 @@ function getGlyph(font, ch, S, colour) {
       glyphCachePixels += rec.w * rec.h;
     }
     glyphCache.set(key, rec);
+    glyphLastKey.set(base, key);
     for (const k of glyphCache.keys()) {
       if (glyphCachePixels <= GLYPH_CACHE_MAX_PIXELS || glyphCache.size <= 1) break;
       const old = glyphCache.get(k);
@@ -754,6 +765,7 @@ function getGlyph(font, ch, S, colour) {
       glyphCache.delete(k);
     }
   }
+  else if (rec) glyphLastKey.set(base, key);
   return rec;
 }
 
@@ -971,6 +983,7 @@ function convertLayerType(layer, newType) {
   const factories = { ring: createRingLayer, motif: createMotifLayer, line: createLineLayer, shape: createShapeLayer, text: createTextLayer };
   const fresh = factories[newType](layer.name, layer.radius);
   fresh.id = layer.id;
+  if (layer.groupId != null) fresh.groupId = layer.groupId;
   for (const key of ["count", "startAngle", "rotation", "followRing", "animSpeed", "visible", "flip", "flipHorizontal", "alternateFlip", "flipOffset", ...PLACEMENT_KEYS]) {
     if (key in fresh && key in layer) fresh[key] = layer[key];
   }
@@ -1032,6 +1045,7 @@ function pushHistory() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    brush: { ...state.brush },
   });
   if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
   redoStack.length = 0; // a fresh change invalidates whatever redo branch existed
@@ -1061,6 +1075,7 @@ function undo() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    brush: { ...state.brush },
   });
   const snap = historyStack.pop();
   state.layers = snap.layers;
@@ -1068,7 +1083,9 @@ function undo() {
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
+  state.brush = snap.brush ? { ...snap.brush } : state.brush;
   setFieldValue("roughness", state.roughness);
+  refreshBrushControls();
   reloadMissingImages(state.layers, render);
   renderLayerList();
   refreshControls();
@@ -1088,6 +1105,7 @@ function redo() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    brush: { ...state.brush },
   });
   const snap = redoStack.pop();
   state.layers = snap.layers;
@@ -1095,7 +1113,9 @@ function redo() {
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
+  state.brush = snap.brush ? { ...snap.brush } : state.brush;
   setFieldValue("roughness", state.roughness);
+  refreshBrushControls();
   reloadMissingImages(state.layers, render);
   renderLayerList();
   refreshControls();
@@ -1236,16 +1256,120 @@ function selectLayer(id, opts = {}) {
 let nextGroupId = 1;
 const collapsedGroups = new Set(); // a view setting, like the zoom: not saved, not in undo
 
+function groupById(target, id) {
+  for (const g of target.groups) if (g.id === id) return g;
+  return null;
+}
+
+// The layer's DIRECT group (layer.groupId); groups nest through group.parentId (null = top level).
 function groupOf(target, layer) {
   if (layer.groupId == null) return null;
-  return target.groups.find((g) => g.id === layer.groupId) || null;
+  return groupById(target, layer.groupId);
+}
+
+function parentGroupOf(target, g) {
+  return g.parentId == null ? null : groupById(target, g.parentId);
+}
+
+// Groups from the outermost down to the layer's own group.
+function groupChainOf(target, layer) {
+  const chain = [];
+  let g = groupOf(target, layer);
+  while (g && chain.length < 64) {
+    chain.push(g);
+    g = parentGroupOf(target, g);
+  }
+  return chain.reverse();
+}
+
+function groupDepth(target, g) {
+  let n = 0;
+  for (let p = parentGroupOf(target, g); p && n < 64; p = parentGroupOf(target, p)) n++;
+  return n;
+}
+
+// Ids of a group and every group below it.
+function groupSubtreeIds(target, gid) {
+  const ids = new Set([gid]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const g of target.groups) {
+      if (g.parentId != null && ids.has(g.parentId) && !ids.has(g.id)) {
+        ids.add(g.id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
+}
+
+// Every layer under a group, nested groups included, in stacking order.
+function subtreeLayers(target, gid) {
+  const ids = groupSubtreeIds(target, gid);
+  return target.layers.filter((l) => l.groupId != null && ids.has(l.groupId));
+}
+
+// The layers array as a tree: loose layers and top-level groups in stacking order (back to front),
+// each group with its children (layers and sub-groups) in the same order. A group sits where its
+// front-most layer is.
+function buildLayerTree(target) {
+  const kids = new Map();
+  const add = (pid, item) => {
+    if (!kids.has(pid)) kids.set(pid, []);
+    kids.get(pid).push(item);
+  };
+  target.layers.forEach((l, i) => add(l.groupId ?? null, { layer: l, key: i }));
+  for (const g of target.groups) add(g.parentId ?? null, { group: g });
+  const keyOf = (item) => {
+    if (item.layer) return item.key;
+    if (item.key == null) item.key = Math.max(-1, ...(kids.get(item.group.id) || []).map(keyOf));
+    return item.key;
+  };
+  const build = (pid) => {
+    const items = (kids.get(pid) || []).slice().sort((a, b) => keyOf(a) - keyOf(b));
+    return items.map((it) => (it.layer ? { layer: it.layer } : { group: it.group, children: build(it.group.id) }));
+  };
+  return build(null);
+}
+
+function flattenLayerTree(nodes) {
+  const out = [];
+  const walk = (list) => {
+    for (const n of list) {
+      if (n.layer) out.push(n.layer);
+      else walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+// The selection as units: the outermost WHOLE groups it contains (every layer under them selected)
+// and the selected layers that are not inside one of those.
+function selectionItems(target, selected) {
+  const sel = new Set(selected.map((l) => l.id));
+  const whole = new Set();
+  for (const g of target.groups) {
+    const ls = subtreeLayers(target, g.id);
+    if (ls.length && ls.every((l) => sel.has(l.id))) whole.add(g.id);
+  }
+  const roots = target.groups.filter((g) => {
+    if (!whole.has(g.id)) return false;
+    for (let p = parentGroupOf(target, g), n = 0; p && n < 64; p = parentGroupOf(target, p), n++) if (whole.has(p.id)) return false;
+    return true;
+  });
+  const covered = new Set();
+  for (const g of roots) for (const l of subtreeLayers(target, g.id)) covered.add(l.id);
+  return { groups: roots, layers: selected.filter((l) => !covered.has(l.id)) };
 }
 
 // A group's own eye hides all its members without touching their own eye states, so
 // showing it again brings back exactly what was visible before.
 function groupHidden(target, layer) {
-  const g = groupOf(target, layer);
-  return !!g && g.visible === false;
+  if (layer.groupId == null) return false;
+  for (const g of groupChainOf(target, layer)) if (g.visible === false) return true;
+  return false;
 }
 
 // Set only while the layered SVG export draws hidden layers too (it marks them hidden itself).
@@ -1261,21 +1385,31 @@ function layerIsHidden(target, layer) {
 // keeps adjacent). The wrapper carries the group's id and name so the SVG exports can name it.
 // With no groups nothing is wrapped and the markup is exactly what it always was.
 function layerParentFor(target, content, layer, cursor) {
-  const group = groupOf(target, layer);
-  if (!group) {
-    cursor.id = null;
-    cursor.el = null;
-    return content;
-  }
-  if (cursor.id !== group.id) {
+  // The wrapper path: the layer's groups, outermost first ("g<id>"); a Repeat copy has "r<group>.<k>"
+  // entries after its group (see repeatApply). Consecutive layers share the wrappers they have in common.
+  const path = layer._path || groupChainOf(target, layer).map((g) => "g" + g.id);
+  const stack = cursor.stack || (cursor.stack = []);
+  let i = 0;
+  while (i < stack.length && i < path.length && stack[i].key === path[i]) i++;
+  stack.length = i;
+  let parent = i > 0 ? stack[i - 1].el : content;
+  for (; i < path.length; i++) {
+    const key = path[i];
     const wrap = document.createElementNS(SVG_NS, "g");
-    wrap.dataset.groupId = group.id;
-    wrap.dataset.groupName = group.name;
-    content.appendChild(wrap);
-    cursor.id = group.id;
-    cursor.el = wrap;
+    if (key[0] === "g") {
+      const group = groupById(target, Number(key.slice(1)));
+      wrap.dataset.groupId = key.slice(1);
+      wrap.dataset.groupName = group ? group.name : "Group";
+    } else {
+      const [gid, k] = key.slice(1).split(".");
+      wrap.dataset.repeatWrap = gid;
+      wrap.dataset.repeatK = k;
+    }
+    parent.appendChild(wrap);
+    stack.push({ key, el: wrap });
+    parent = wrap;
   }
-  return cursor.el;
+  return parent;
 }
 
 function isMixedSelection(layers) {
@@ -1289,30 +1423,39 @@ function normalizeGroups(target) {
   if (target.groups.length === 0 && !target.layers.some((l) => l.groupId != null)) return;
   const ids = new Set(target.groups.map((g) => g.id));
   for (const l of target.layers) if (l.groupId != null && !ids.has(l.groupId)) delete l.groupId;
-  const used = new Set(target.layers.filter((l) => l.groupId != null).map((l) => l.groupId));
-  target.groups = target.groups.filter((g) => used.has(g.id));
-  const out = []; // front to back
-  const placed = new Set();
-  for (let i = target.layers.length - 1; i >= 0; i--) {
-    const l = target.layers[i];
-    if (l.groupId == null) {
-      out.push(l);
-    } else if (!placed.has(l.groupId)) {
-      placed.add(l.groupId);
-      for (let j = target.layers.length - 1; j >= 0; j--) if (target.layers[j].groupId === l.groupId) out.push(target.layers[j]);
-    }
+  for (const g of target.groups) if (g.parentId == null || g.parentId === g.id || !ids.has(g.parentId)) g.parentId = null;
+  for (const g of target.groups) {
+    let n = 0;
+    for (let p = parentGroupOf(target, g); p && n <= target.groups.length; p = parentGroupOf(target, p)) n++;
+    if (n > target.groups.length) g.parentId = null; // a loop in the parents: cut it
   }
-  target.layers = out.reverse();
+  // a group is used when some layer is under it, however deep
+  const used = new Set();
+  for (const l of target.layers) {
+    for (let g = groupOf(target, l), n = 0; g && !used.has(g.id) && n < 64; g = parentGroupOf(target, g), n++) used.add(g.id);
+  }
+  target.groups = target.groups.filter((g) => used.has(g.id));
+  for (const g of target.groups) if (g.blend && !blendMembersOk(target, g)) delete g.blend; // losing start or end releases the blend
+  target.layers = flattenLayerTree(buildLayerTree(target)); // every group's subtree one block in the stacking order
 }
 
 // Groups from a project file, checked rather than trusted.
-function sanitizeGroups(raw) {
+function sanitizeGroups(raw, allowBlend = false) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const g of raw) {
     if (!g || !Number.isFinite(g.id) || out.some((o) => o.id === g.id)) continue;
-    const group = { id: g.id, name: typeof g.name === "string" && g.name ? g.name : `Group ${g.id}`, visible: g.visible !== false };
+    const group = { id: g.id, name: typeof g.name === "string" && g.name ? g.name : `Group ${g.id}`, visible: g.visible !== false, parentId: Number.isFinite(g.parentId) ? g.parentId : null };
     if (Number.isFinite(g.scale) && g.scale > 0 && g.scale !== 100) group.scale = g.scale; // only groups that were scaled carry it
+    if (allowBlend && g.blend && Number.isFinite(g.blend.startId) && Number.isFinite(g.blend.endId)) {
+      group.blend = {
+        startId: g.blend.startId,
+        endId: g.blend.endId,
+        steps: Math.min(BLEND_MAX_STEPS, Math.max(1, Math.round(Number(g.blend.steps) || 1))),
+        easing: BLEND_EASINGS[g.blend.easing] ? g.blend.easing : "linear",
+      };
+    }
+    if (allowBlend && g.repeat && typeof g.repeat === "object") group.repeat = sanitizeRepeat(g.repeat);
     out.push(group);
   }
   for (const g of out) nextGroupId = Math.max(nextGroupId, g.id + 1);
@@ -1321,7 +1464,7 @@ function sanitizeGroups(raw) {
 
 // Clicking a group row selects all its members; the front-most one becomes the active layer.
 function resolveGroupSelection(target, gid, opts) {
-  const ids = target.layers.filter((l) => l.groupId === gid).map((l) => l.id);
+  const ids = subtreeLayers(target, gid).map((l) => l.id);
   if (ids.length === 0) return;
   const top = ids[ids.length - 1];
   if (opts.toggle || opts.range) {
@@ -1348,10 +1491,12 @@ function selectGroupIn(api, gid, opts = {}) {
 function selectedWholeGroup(target) {
   const selected = getSelectedLayersFrom(target);
   if (selected.length === 0 || selected[0].groupId == null) return null;
-  const g = groupOf(target, selected[0]);
-  if (!g) return null;
-  const members = target.layers.filter((l) => l.groupId === g.id);
-  return members.length === selected.length && members.every((m) => selected.some((l) => l.id === m.id)) ? g : null;
+  const sel = new Set(selected.map((l) => l.id));
+  for (const g of groupChainOf(target, selected[0]).reverse()) {
+    const members = subtreeLayers(target, g.id);
+    if (members.length === selected.length && members.every((m) => sel.has(m.id))) return g;
+  }
+  return null;
 }
 
 // One copy of a layer under a new id. The loaded Image object isn't part of the JSON
@@ -1376,37 +1521,51 @@ function duplicateSelection(api) {
   const selected = getSelectedLayersFrom(t);
   if (selected.length === 0) return;
   api.push();
-  const sel = new Set(selected.map((l) => l.id));
-  const whole = new Map(); // groupId -> its members, for groups the selection covers entirely
-  for (const g of t.groups) {
-    const members = t.layers.filter((l) => l.groupId === g.id);
-    if (members.length && members.every((l) => sel.has(l.id))) whole.set(g.id, members);
+  const items = selectionItems(t, selected);
+  const looseIds = new Set(items.layers.map((l) => l.id));
+  const plans = new Map(); // last layer of a whole group's block -> the copies to put after it
+  const newIds = [];
+  for (const root of items.groups) {
+    const ids = groupSubtreeIds(t, root.id);
+    const olds = t.groups.filter((g) => ids.has(g.id));
+    const gmap = new Map();
+    for (const g of olds) {
+      const copy = { id: nextGroupId++, name: g.id === root.id ? g.name + " copy" : g.name, visible: g.visible !== false, parentId: null };
+      if (g.scale) copy.scale = g.scale;
+      if (g.repeat) copy.repeat = { ...g.repeat };
+      gmap.set(g.id, copy);
+    }
+    for (const g of olds) gmap.get(g.id).parentId = g.id === root.id ? root.parentId ?? null : gmap.get(g.parentId).id;
+    const block = subtreeLayers(t, root.id);
+    const idMap = new Map();
+    const copies = block.map((m) => {
+      const c = cloneLayerData(m, api.nextId());
+      c.groupId = gmap.get(m.groupId).id;
+      idMap.set(m.id, c.id);
+      newIds.push(c.id);
+      return c;
+    });
+    // a blend keeps its settings and points at the copies of its start and end
+    for (const g of olds) {
+      if (g.blend && idMap.has(g.blend.startId) && idMap.has(g.blend.endId)) {
+        gmap.get(g.id).blend = { ...g.blend, startId: idMap.get(g.blend.startId), endId: idMap.get(g.blend.endId) };
+      }
+    }
+    for (const g of olds) t.groups.push(gmap.get(g.id));
+    plans.set(block[block.length - 1], copies);
   }
   const out = [];
-  const newIds = [];
   for (const l of t.layers) {
     out.push(l);
-    if (!sel.has(l.id)) continue;
-    const members = whole.get(l.groupId);
-    if (members) {
-      if (l !== members[members.length - 1]) continue;
-      const g = groupOf(t, l);
-      const copy = { id: nextGroupId++, name: g.name + " copy", visible: g.visible !== false };
-      if (g.scale) copy.scale = g.scale;
-      t.groups.push(copy);
-      for (const m of members) {
-        const c = cloneLayerData(m, api.nextId());
-        c.groupId = copy.id;
-        out.push(c);
-        newIds.push(c.id);
-      }
-    } else {
+    if (plans.has(l)) out.push(...plans.get(l));
+    else if (looseIds.has(l.id)) {
       const c = cloneLayerData(l, api.nextId()); // a lone member stays in its group, next to the original
       out.push(c);
       newIds.push(c.id);
     }
   }
   t.layers = out;
+  normalizeGroups(t);
   t.selectedLayerIds = newIds;
   t.activeLayerId = newIds[newIds.length - 1];
   api.renderList();
@@ -1445,27 +1604,17 @@ function moveSelection(api, direction) {
       for (let i = 1; i < arr.length; i++) if (isSel(arr[i]) && !isSel(arr[i - 1])) [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
     }
   };
-  const units = [];
-  const byGroup = new Map();
-  for (const l of t.layers) {
-    if (l.groupId == null) {
-      units.push({ layers: [l] });
-    } else {
-      let u = byGroup.get(l.groupId);
-      if (!u) {
-        u = { gid: l.groupId, layers: [] };
-        byGroup.set(l.groupId, u);
-        units.push(u);
-      }
-      u.layers.push(l);
-    }
-  }
-  const unitSelected = (u) => u.layers.every((l) => sel.has(l.id));
-  step(units, unitSelected);
-  for (const u of units) {
-    if (u.gid != null && !unitSelected(u) && u.layers.some((l) => sel.has(l.id))) step(u.layers, (l) => sel.has(l.id));
-  }
-  const order = units.flatMap((u) => u.layers);
+  // Rows move among their siblings: loose layers and whole groups as units, hopping over a group
+  // in one step; a group that is only partly selected is entered and its rows move inside it.
+  const leaves = (n) => (n.layer ? [n.layer] : n.children.flatMap(leaves));
+  const unitSelected = (n) => leaves(n).every((l) => sel.has(l.id));
+  const roots = buildLayerTree(t);
+  const walk = (nodes) => {
+    step(nodes, unitSelected);
+    for (const n of nodes) if (n.group && !unitSelected(n) && leaves(n).some((l) => sel.has(l.id))) walk(n.children);
+  };
+  walk(roots);
+  const order = flattenLayerTree(roots);
   if (order.every((l, i) => l === t.layers[i])) return;
   api.push();
   t.layers = order;
@@ -1476,23 +1625,21 @@ function moveSelection(api, direction) {
 // Group: the selection becomes one new group, gathered at the position of its topmost
 // member (anything stacked between them keeps its order). A layer can only be in one
 // group, so it leaves any group it was in.
-function groupSelection(api) {
+function groupSelection(api, afterGroup) {
   const t = api.target;
   const selected = getSelectedLayersFrom(t);
   if (selected.length === 0 || selectedWholeGroup(t)) return;
+  const items = selectionItems(t, selected);
+  // items that share one parent keep it as the new group's parent; otherwise it is top level
+  const parents = new Set([...items.groups.map((g) => g.parentId ?? null), ...items.layers.map((l) => l.groupId ?? null)]);
   api.push();
-  const sel = new Set(selected.map((l) => l.id));
   const gid = nextGroupId++;
-  t.groups.push({ id: gid, name: `Group ${gid}`, visible: true });
-  const topIdx = Math.max(...selected.map((l) => t.layers.indexOf(l)));
-  const insertAt = t.layers.slice(0, topIdx + 1).filter((l) => !sel.has(l.id)).length;
-  const block = t.layers.filter((l) => sel.has(l.id));
-  for (const l of block) l.groupId = gid;
-  const rest = t.layers.filter((l) => !sel.has(l.id));
-  rest.splice(insertAt, 0, ...block);
-  t.layers = rest;
+  t.groups.push({ id: gid, name: `Group ${gid}`, visible: true, parentId: parents.size === 1 ? [...parents][0] : null });
+  for (const g of items.groups) g.parentId = gid;
+  for (const l of items.layers) l.groupId = gid;
   normalizeGroups(t);
   collapsedGroups.delete(gid);
+  if (afterGroup) afterGroup(t.groups.find((g) => g.id === gid));
   api.renderList();
   api.refresh();
   api.redraw();
@@ -1502,10 +1649,26 @@ function groupSelection(api) {
 // group's row selects all its members, so that dissolves the whole group.
 function ungroupSelection(api) {
   const t = api.target;
-  const grouped = getSelectedLayersFrom(t).filter((l) => l.groupId != null);
-  if (grouped.length === 0) return;
+  const selected = getSelectedLayersFrom(t);
+  if (selected.length === 0) return;
+  const whole = selectedWholeGroup(t);
+  const items = whole ? { groups: [whole], layers: [] } : selectionItems(t, selected);
+  const loose = items.layers.filter((l) => l.groupId != null);
+  if (items.groups.length === 0 && loose.length === 0) return;
   api.push();
-  for (const l of grouped) delete l.groupId;
+  // ONE level: a whole group is removed and its children move to its parent; a loose layer
+  // steps out of its group into that group's parent.
+  const up = (l, from) => {
+    if (from.parentId == null) delete l.groupId;
+    else l.groupId = from.parentId;
+  };
+  for (const l of loose) up(l, groupOf(t, l));
+  for (const g of items.groups) {
+    for (const l of t.layers) if (l.groupId === g.id) up(l, g);
+    for (const c of t.groups) if (c.parentId === g.id) c.parentId = g.parentId ?? null;
+    t.groups = t.groups.filter((x) => x !== g);
+    collapsedGroups.delete(g.id);
+  }
   normalizeGroups(t);
   api.renderList();
   api.refresh();
@@ -1588,9 +1751,10 @@ function layerFamily(layer) {
   return "geom";
 }
 
-function buildLayerRow(api, layer, grouped) {
+function buildLayerRow(api, layer, depth = 0) {
   const item = document.createElement("div");
-  item.className = "layer-item" + (grouped ? " layer-grouped" : "");
+  item.className = "layer-item" + (depth > 0 ? " layer-grouped" : "");
+  if (depth > 0) item.style.marginLeft = depth * 14 + "px";
   item.dataset.layerId = layer.id;
   const ed = api.editing;
   if (ed && ed.kind === "layer" && ed.id === layer.id) {
@@ -1612,19 +1776,20 @@ function buildLayerRow(api, layer, grouped) {
   return item;
 }
 
-function buildGroupRow(api, group) {
+function buildGroupRow(api, group, depth = 0) {
   const item = document.createElement("div");
   item.className = "layer-item layer-group-item";
+  if (depth > 0) item.style.marginLeft = depth * 14 + "px";
   item.dataset.groupId = group.id;
   const ed = api.editing;
   if (ed && ed.kind === "group" && ed.id === group.id) {
     buildRenameInput(api, item, "group", group.id, group.name);
     return item;
   }
-  const count = api.target.layers.filter((l) => l.groupId === group.id).length;
+  const count = subtreeLayers(api.target, group.id).length;
   const collapsed = collapsedGroups.has(group.id);
   const visible = group.visible !== false;
-  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button><i class="layer-dot fam-group" aria-hidden="true"></i><span>${escapeHtml(group.name)}</span></div><span class="layer-meta">group · ${count}</span>`;
+  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>${group.blend ? BLEND_MARK_HTML : group.repeat ? REPEAT_MARK_HTML : '<i class="layer-dot fam-group" aria-hidden="true"></i>'}<span>${escapeHtml(group.name)}</span></div><span class="layer-meta">${group.blend || group.repeat ? groupMetaText(group) : `group · ${count}`}</span>`;
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1645,24 +1810,20 @@ function renderLayerListInto(api) {
   const t = api.target;
   const list = document.getElementById(api.listId);
   list.innerHTML = "";
-  const shown = new Set();
-  // Top of the visible list = front of the stack (last in the array). A group's row sits
-  // above its members, which are indented under it unless it is collapsed.
-  for (let i = t.layers.length - 1; i >= 0; i--) {
-    const layer = t.layers[i];
-    const group = groupOf(t, layer);
-    if (!group) {
-      list.appendChild(buildLayerRow(api, layer, false));
-      continue;
+  // Top of the visible list = front of the stack (last in the array). A group's row sits above
+  // its children, which are indented under it one level per group unless it is collapsed.
+  const emit = (nodes, depth) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      if (n.layer) {
+        list.appendChild(buildLayerRow(api, n.layer, depth));
+        continue;
+      }
+      list.appendChild(buildGroupRow(api, n.group, depth));
+      if (!collapsedGroups.has(n.group.id)) emit(n.children, depth + 1);
     }
-    if (shown.has(group.id)) continue;
-    shown.add(group.id);
-    list.appendChild(buildGroupRow(api, group));
-    if (collapsedGroups.has(group.id)) continue;
-    for (let j = t.layers.length - 1; j >= 0; j--) {
-      if (t.layers[j].groupId === group.id) list.appendChild(buildLayerRow(api, t.layers[j], true));
-    }
-  }
+  };
+  emit(buildLayerTree(t), 0);
   api.updateSelection();
 }
 
@@ -1671,7 +1832,7 @@ function updateLayerListSelectionIn(api) {
   const selected = new Set(getSelectedLayersFrom(t).map((l) => l.id));
   document.querySelectorAll(`#${api.listId} .layer-item`).forEach((el) => {
     if (el.dataset.groupId != null) {
-      const members = t.layers.filter((l) => l.groupId === Number(el.dataset.groupId));
+      const members = subtreeLayers(t, Number(el.dataset.groupId));
       const n = members.filter((l) => selected.has(l.id)).length;
       el.classList.toggle("active", n > 0 && n === members.length);
       el.classList.toggle("multi-selected", n > 0 && n < members.length);
@@ -1700,6 +1861,844 @@ const circleApi = {
   historyLen: () => historyStack.length,
   scale: { id: "groupScale", fieldId: "groupScaleField", mode: "circle", gesture: null, adhoc: { key: "", value: 100 } },
 };
+
+// --- Blend (Ring editor) ---
+// Like Illustrator's blend: a group flagged group.blend = { startId, endId, steps, easing } whose
+// two members are the start and end layer. The in-betweens are NOT stored: blendRenderLayers()
+// builds them (as throw-away layer objects with negative ids) whenever the artwork is drawn or
+// exported, by mixing every numeric property the two layers share at t = i/(steps+1) with the
+// easing applied. Angles take the shortest way round, colours mix in RGB, count rounds; anything
+// else (image, shape kind, text, flags) comes from the start layer. Because they are always
+// derived, editing the start or end (sidebar, handles, badges, group transform) moves them live.
+const BLEND_MAX_STEPS = 200;
+const BLEND_EASINGS = {
+  linear: (t) => t,
+  easeIn: (t) => t * t,
+  easeOut: (t) => 1 - (1 - t) * (1 - t),
+  easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
+};
+const BLEND_ANGLE_KEYS = new Set(["startAngle", "rotation", "arcStart", "angle"]);
+const BLEND_ROUND_KEYS = new Set(["count", "gapCount"]);
+const BLEND_SKIP_KEYS = new Set(["id", "groupId", "naturalWidth", "naturalHeight", "textBoxW", "textBoxH"]);
+const BLEND_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const BLEND_MARK_HTML = `<span class="layer-blend-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="4.2"/><circle cx="13.2" cy="12" r="2.8"/><circle cx="18.8" cy="12" r="1.6"/></svg></span>`;
+let blendExpansionOff = false; // set by the separate-layers export, which draws the in-betweens itself
+const blendCache = new Map(); // "groupId:step" -> { sig, src, layer }: keeps a step's bend/rough caches between renders
+
+function blendMetaText(group) {
+  const n = group.blend.steps;
+  return `blend · ${n} step${n === 1 ? "" : "s"}`;
+}
+
+function blendMembersOk(target, g) {
+  const b = g.blend;
+  if (!b || b.startId === b.endId) return false;
+  // a blend is a group of exactly its 2 layers (no nested groups)
+  const direct = target.layers.filter((l) => l.groupId === g.id);
+  if (direct.length !== 2 || target.groups.some((x) => x.parentId === g.id)) return false;
+  return direct.some((l) => l.id === b.startId) && direct.some((l) => l.id === b.endId);
+}
+
+function blendHexRgb(h) {
+  const x = h.slice(1);
+  const f = x.length === 3 ? x.replace(/./g, "$&$&") : x;
+  return [0, 2, 4].map((i) => parseInt(f.slice(i, i + 2), 16));
+}
+
+function blendMixHex(a, b, t) {
+  const ca = blendHexRgb(a);
+  const cb = blendHexRgb(b);
+  return "#" + ca.map((v, i) => Math.round(v + (cb[i] - v) * t).toString(16).padStart(2, "0")).join("");
+}
+
+// One in-between: the start layer with every shared number/colour mixed toward the end layer.
+function blendMixLayer(start, end, t) {
+  const out = { ...start };
+  delete out.bendCache;
+  delete out.bendCacheFlipped;
+  delete out.roughCache; // own cache: steps must not share (and overwrite) the start layer's
+  for (const key of new Set([...Object.keys(start), ...Object.keys(end)])) {
+    if (BLEND_SKIP_KEYS.has(key) || key.startsWith("_")) continue;
+    let a = start[key];
+    let b = end[key];
+    if (key === "opacity") {
+      a = a ?? 100;
+      b = b ?? 100;
+    }
+    if (typeof a === "number" && typeof b === "number" && Number.isFinite(a) && Number.isFinite(b)) {
+      let v;
+      if (BLEND_ANGLE_KEYS.has(key)) v = a + (((((b - a) % 360) + 540) % 360) - 180) * t;
+      else v = a + (b - a) * t;
+      out[key] = BLEND_ROUND_KEYS.has(key) ? Math.round(v) : Math.round(v * 1e4) / 1e4;
+    } else if (typeof a === "string" && typeof b === "string" && BLEND_HEX.test(a) && BLEND_HEX.test(b)) {
+      out[key] = blendMixHex(a, b, t);
+    }
+  }
+  return out;
+}
+
+// The in-between layers of one blend group, step 1 (next to the start) to step N (next to the end).
+function blendSteps(g, start, end) {
+  const { steps, easing } = g.blend;
+  const ease = BLEND_EASINGS[easing] || BLEND_EASINGS.linear;
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const mixed = blendMixLayer(start, end, ease(i / (steps + 1)));
+    mixed.id = -(g.id * 1000 + i);
+    mixed.groupId = g.id;
+    mixed.name = `Blend step ${i}`;
+    mixed.visible = true;
+    mixed._blendStep = i;
+    mixed._blendGroup = g.id;
+    mixed._blendStart = start.id;
+    const { imageEl, imageDataUrl, bendCache, bendCacheFlipped, artBrush, ...rest } = mixed; // artBrush: an old per-layer field, ignored
+    const sig = JSON.stringify(rest);
+    const key = `${g.id}:${i}`;
+    const hit = blendCache.get(key);
+    if (hit && hit.sig === sig && hit.src === imageDataUrl && hit.layer.imageEl === imageEl) {
+      out.push(hit.layer);
+      continue;
+    }
+    if (blendCache.size > 3000) blendCache.clear();
+    blendCache.set(key, { sig, src: imageDataUrl, layer: mixed });
+    out.push(mixed);
+  }
+  return out;
+}
+
+// What to draw for a target: its layers, plus each active blend's in-betweens stacked between the
+// start and end layer. With no blend this is the layers array itself.
+function blendRenderLayers(target) {
+  if (blendExpansionOff || !target.groups.some((g) => g.blend || g.repeat)) return { list: target.layers, synth: [], copies: [] };
+  const plans = new Map(); // id of the lower of start/end -> in-betweens in stacking order
+  const synth = [];
+  for (const g of target.groups) {
+    if (!g.blend || !blendMembersOk(target, g)) continue;
+    const start = target.layers.find((l) => l.id === g.blend.startId);
+    const end = target.layers.find((l) => l.id === g.blend.endId);
+    if (start.type !== end.type) continue;
+    const steps = blendSteps(g, start, end);
+    const startLower = target.layers.indexOf(start) < target.layers.indexOf(end);
+    plans.set((startLower ? start : end).id, startLower ? steps : steps.slice().reverse());
+    synth.push(...steps);
+  }
+  const list = [];
+  for (const l of target.layers) {
+    list.push(l);
+    const p = plans.get(l.id);
+    if (p) list.push(...p);
+  }
+  const out = { list, synth, copies: [] };
+  repeatApply(target, out); // repeats come last: they copy the blend's in-betweens too
+  return out;
+}
+
+// Marks a rendered <g> that belongs to an in-between, so picking and the layered export can tell.
+function tagBlendEl(el, layer) {
+  if (layer._repeatCopy != null) {
+    el.dataset.repeatCopy = layer._repeatCopy;
+    el.dataset.repeatGroup = layer._repeatGroup;
+    el.dataset.repeatSrc = layer._repeatSrc;
+  }
+  if (layer._blendStep == null) return;
+  el.dataset.blendStep = layer._blendStep;
+  el.dataset.blendGroup = layer._blendGroup;
+  el.dataset.blendStart = layer._blendStart;
+}
+
+function selectedBlendGroup() {
+  for (const l of [getActiveLayer(), ...getSelectedLayersFrom(state)]) {
+    if (!l || l.groupId == null) continue;
+    const g = groupOf(state, l);
+    if (g && g.blend) return g;
+  }
+  return null;
+}
+
+function selectedWholeBlend() {
+  const g = selectedWholeGroup(state);
+  return g && g.blend ? g : null;
+}
+
+// "" when the selection can be blended, else why not (shown as the button's tooltip).
+function blendDisabledReason(sel) {
+  if (currentMode !== "circle") return "Blend works in Ring mode";
+  if (sel.length !== 2) return "Blend: select exactly 2 layers of the same type";
+  if (sel[0].type !== sel[1].type) return "Blend needs 2 layers of the same type (these are " + layerTypeLabel(sel[0]) + " and " + layerTypeLabel(sel[1]) + ")";
+  const g = selectedWholeGroup(state);
+  if (g && g.blend) return "These 2 layers are already a blend";
+  return "";
+}
+
+function createBlendFromSelection() {
+  const sel = getSelectedLayersFrom(state);
+  if (blendDisabledReason(sel)) return;
+  const blend = { startId: sel[0].id, endId: sel[1].id, steps: 5, easing: "linear" };
+  const whole = selectedWholeGroup(state);
+  if (whole && state.layers.filter((l) => l.groupId === whole.id).length === 2) {
+    pushHistory();
+    whole.blend = blend;
+    renderLayerList();
+    refreshControls();
+    render();
+    return;
+  }
+  // a layer already in another group moves into the new blend group (groupSelection does that)
+  groupSelection(circleApi, (g) => {
+    g.blend = blend;
+  });
+}
+
+function blendUpdateMeta(g) {
+  const el = document.querySelector(`#layerList [data-group-id="${g.id}"] .layer-meta`);
+  if (el) el.textContent = groupMetaText(g);
+}
+
+function setBlendSteps(g, v) {
+  g.blend.steps = Math.min(BLEND_MAX_STEPS, Math.max(1, Math.round(v)));
+  blendUpdateMeta(g);
+}
+
+function swapBlend() {
+  const g = selectedBlendGroup();
+  if (!g) return;
+  pushHistory();
+  [g.blend.startId, g.blend.endId] = [g.blend.endId, g.blend.startId];
+  refreshControls();
+  render();
+}
+
+function releaseBlend() {
+  const g = selectedBlendGroup();
+  if (!g) return;
+  pushHistory();
+  delete g.blend;
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
+// Turns the in-betweens into real layers (inside the group) and drops the blend flag.
+function expandBlend() {
+  const g = selectedBlendGroup();
+  if (!g || !blendMembersOk(state, g)) return;
+  const start = state.layers.find((l) => l.id === g.blend.startId);
+  const end = state.layers.find((l) => l.id === g.blend.endId);
+  if (start.type !== end.type) return;
+  pushHistory();
+  const startLower = state.layers.indexOf(start) < state.layers.indexOf(end);
+  let steps = blendSteps(g, start, end);
+  if (!startLower) steps = steps.slice().reverse();
+  const real = steps.map((s) => {
+    const c = snapshotLayers([s])[0];
+    delete c._blendStep;
+    delete c._blendGroup;
+    delete c._blendStart;
+    c.id = nextLayerId++;
+    c.imageEl = start.imageEl;
+    return c;
+  });
+  const lower = startLower ? start : end;
+  state.layers.splice(state.layers.indexOf(lower) + 1, 0, ...real);
+  delete g.blend;
+  normalizeGroups(state);
+  const ids = state.layers.filter((l) => l.groupId === g.id).map((l) => l.id);
+  state.selectedLayerIds = ids;
+  state.activeLayerId = ids[ids.length - 1];
+  reloadMissingImages(state.layers, render);
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
+// Shows the Blend panel when a blend group (or a member) is selected, and keeps the Blend button's
+// enabled state and tooltip in step with the selection.
+function refreshBlendUI() {
+  const btn = document.getElementById("blendBtn");
+  if (!btn) return;
+  const reason = blendDisabledReason(getSelectedLayersFrom(state));
+  const tip = reason || "Blend (Ctrl+Alt+B)";
+  btn.disabled = !!reason;
+  btn.dataset.tip = tip;
+  btn.setAttribute("aria-label", tip);
+  document.getElementById("blendBtnWrap").dataset.tip = tip;
+  const g = selectedBlendGroup();
+  document.getElementById("blendPanel").style.display = g ? "" : "none";
+  if (!g) return;
+  setFieldValue("blendSteps", g.blend.steps);
+  document.getElementById("blendEasing").value = g.blend.easing;
+}
+
+let blendStepsGestureOpen = false;
+function onBlendStepsInput(src) {
+  const g = selectedBlendGroup();
+  if (!g) return;
+  const raw = src.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return;
+  const v = Math.min(BLEND_MAX_STEPS, Math.max(1, Math.round(Number(raw))));
+  document.getElementById("blendSteps").value = v;
+  if (v === g.blend.steps) return;
+  if (!blendStepsGestureOpen) {
+    blendStepsGestureOpen = true;
+    pushHistory();
+  }
+  setBlendSteps(g, v);
+  requestRender();
+}
+
+for (const id of ["blendSteps", "blendStepsNum"]) {
+  const el = document.getElementById(id);
+  el.addEventListener("input", () => onBlendStepsInput(el));
+  el.addEventListener("change", () => {
+    blendStepsGestureOpen = false;
+    refreshBlendUI();
+  });
+}
+document.getElementById("blendEasing").addEventListener("change", (e) => {
+  const g = selectedBlendGroup();
+  if (!g || !BLEND_EASINGS[e.target.value] || g.blend.easing === e.target.value) return;
+  pushHistory();
+  g.blend.easing = e.target.value;
+  render();
+});
+document.getElementById("blendBtn").addEventListener("click", createBlendFromSelection);
+document.getElementById("blendSwapBtn").addEventListener("click", swapBlend);
+document.getElementById("blendExpandBtn").addEventListener("click", expandBlend);
+document.getElementById("blendReleaseBtn").addEventListener("click", releaseBlend);
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey || (e.key.toLowerCase() !== "b" && e.code !== "KeyB")) return;
+  if (isTextEditingTarget(document.activeElement) || currentMode !== "circle") return;
+  e.preventDefault();
+  createBlendFromSelection();
+});
+
+// --- Repeat around a point (Ring editor) ---
+// A group flagged group.repeat = { pivotX, pivotY, copies, totalAngle, startAngle, rotateCopies }.
+// Pivot coordinates are layer-origin space (0,0 = artboard centre). Like Blend, the copies are
+// NOT stored: repeatApply() (called at the end of blendRenderLayers, so a blend's in-betweens are
+// repeated too) builds throw-away copies of every drawn member whenever the artwork is drawn or
+// exported. `copies` counts the original, which stays at its real place; copy k (1..copies-1) is
+// the group turned about the pivot by startAngle + k * step, step = totalAngle / copies for a
+// full circle (|totalAngle| = 360, no overlap) else totalAngle / (copies - 1) (an arc, both ends
+// included). Turning a layer moves its origin along the circle and, with rotateCopies, turns its
+// own orientation by the same angle (same rules as the group rotate knob).
+const REPEAT_MAX_COPIES = 360;
+const REPEAT_COPIES_PROXY = "__repeatCopies";
+const REPEAT_MARK_HTML = `<span class="layer-blend-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="4.6" r="2.2"/><circle cx="18.4" cy="15.7" r="2.2"/><circle cx="5.6" cy="15.7" r="2.2"/></svg></span>`;
+const REPEAT_MAX_ITEMS = 5000; // generated copies in one drawing; beyond it the rest are left out (the panel says so)
+let repeatCapped = false;
+const repeatCache = new Map(); // "groupId:k:srcId" -> { sig, src, layer }: keeps a copy's bend/text caches between renders
+const repeatIds = new Map(); // same key -> the copy's (negative, never reused) layer id
+let repeatIdNext = 1000000;
+
+function repeatDefaults() {
+  return { pivotX: 0, pivotY: 0, copies: 6, totalAngle: 360, startAngle: 0, rotateCopies: true, pivotScale: 100 };
+}
+
+function sanitizeRepeat(raw) {
+  const d = repeatDefaults();
+  const num = (v, lo, hi, dflt) => (v !== null && v !== "" && Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : dflt);
+  return {
+    pivotX: num(raw.pivotX, -8192, 8192, d.pivotX),
+    pivotY: num(raw.pivotY, -8192, 8192, d.pivotY),
+    copies: Math.round(num(raw.copies, 1, REPEAT_MAX_COPIES, d.copies)),
+    totalAngle: num(raw.totalAngle, -360, 360, d.totalAngle),
+    startAngle: num(raw.startAngle, -360, 360, d.startAngle),
+    rotateCopies: raw.rotateCopies !== false,
+    pivotScale: num(raw.pivotScale, 1, 1000, d.pivotScale),
+  };
+}
+
+function groupMetaText(group) {
+  const parts = [];
+  if (group.blend) parts.push(blendMetaText(group));
+  if (group.repeat) parts.push(`repeat · ${group.repeat.copies}`);
+  return parts.join(" · ");
+}
+
+function repeatStepAngle(rep) {
+  if (rep.copies <= 1) return 0;
+  return Math.abs(rep.totalAngle) === 360 ? rep.totalAngle / rep.copies : rep.totalAngle / (rep.copies - 1);
+}
+
+function repeatCopyAngle(rep, k) {
+  return rep.startAngle + k * repeatStepAngle(rep);
+}
+
+// One layer turned by `deg` (clockwise, like every angle here) about the pivot.
+function repeatTurnLayer(src, rep, deg) {
+  const c = { ...src };
+  delete c.bendCache;
+  delete c.bendCacheFlipped;
+  delete c.roughCache; // own cache: copies must not share (and overwrite) the source's
+  const r3 = (v) => Math.round(v * 1000) / 1000 || 0;
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const p = placementOf(src);
+  const rx = p.originX - rep.pivotX, ry = p.originY - rep.pivotY;
+  c.originX = r3(rep.pivotX + rx * cos - ry * sin);
+  c.originY = r3(rep.pivotY + rx * sin + ry * cos);
+  if (rep.rotateCopies) {
+    const rk = rotateKeyOf(src);
+    c[rk] = r3(wrapDegrees((src[rk] ?? 0) + deg));
+    // an item that doesn't follow its ring keeps its own orientation unless it is turned too
+    if (src.followRing === false && src.type !== "text" && typeof src.rotation === "number") c.rotation = r3(wrapDegrees(src.rotation + deg));
+  }
+  return c;
+}
+
+// Adds the copies of every repeat group to `res` ({ list, synth, copies }): right after the
+// group's last drawn member, copy 1 first, so they stay inside the group's wrapper.
+function repeatApply(target, res) {
+  repeatCapped = false;
+  // Innermost repeat first, so a parent repeats the child's copies too (a flower of flowers); the
+  // blends were generated before this ran, so their in-betweens are repeated as well.
+  const reps = target.groups
+    .filter((g) => g.repeat && g.repeat.copies > 1)
+    .map((g) => ({ g, d: groupDepth(target, g) }))
+    .sort((a, b) => b.d - a.d);
+  let budget = REPEAT_MAX_ITEMS;
+  for (const { g } of reps) {
+    const rep = g.repeat;
+    const subIds = groupSubtreeIds(target, g.id);
+    const members = [];
+    let last = -1;
+    res.list.forEach((l, i) => {
+      if (l.groupId != null && subIds.has(l.groupId)) {
+        members.push(l);
+        last = i;
+      }
+    });
+    if (!members.length) continue;
+    const maxK = Math.min(rep.copies - 1, Math.floor(budget / members.length));
+    if (maxK < rep.copies - 1) repeatCapped = true;
+    if (maxK < 1) continue;
+    const made = [];
+    for (let k = 1; k <= maxK; k++) {
+      const deg = repeatCopyAngle(rep, k);
+      for (const src of members) {
+        const c = repeatTurnLayer(src, rep, deg);
+        const key = `${g.id}:${k}:${src.id}`;
+        if (!repeatIds.has(key)) repeatIds.set(key, -(repeatIdNext++));
+        c.id = repeatIds.get(key);
+        c._repeatGroup = g.id;
+        c._repeatCopy = k;
+        c._repeatSrc = src._repeatSrc ?? (src._blendStep != null ? src._blendStart : src.id);
+        // wrapper path: the source's groups, with this copy's wrapper right after the repeating group
+        const base = src._path || groupChainOf(target, src).map((x) => "g" + x.id);
+        const at = base.indexOf("g" + g.id);
+        c._path = at < 0 ? base : [...base.slice(0, at + 1), `r${g.id}.${k}`, ...base.slice(at + 1)];
+        const { imageEl, imageDataUrl, bendCache, bendCacheFlipped, artBrush, ...rest } = c; // artBrush: an old per-layer field, ignored
+        const sig = JSON.stringify(rest);
+        const hit = repeatCache.get(key);
+        if (hit && hit.sig === sig && hit.src === imageDataUrl && hit.layer.imageEl === imageEl) {
+          made.push(hit.layer);
+          continue;
+        }
+        if (repeatCache.size > 12000) repeatCache.clear();
+        repeatCache.set(key, { sig, src: imageDataUrl, layer: c });
+        made.push(c);
+      }
+    }
+    budget -= made.length;
+    res.list.splice(last + 1, 0, ...made);
+    res.copies.push(...made);
+  }
+  const hint = document.getElementById("repeatCapHint");
+  if (hint) hint.hidden = !repeatCapped;
+}
+
+function selectedRepeatGroup() {
+  const whole = selectedWholeGroup(state);
+  if (whole && whole.repeat) return whole;
+  for (const l of [getActiveLayer(), ...getSelectedLayersFrom(state)]) {
+    if (!l || l.groupId == null) continue;
+    const chain = groupChainOf(state, l).reverse(); // nearest first
+    const g = chain.find((x) => x.repeat);
+    if (g) return g;
+  }
+  return null;
+}
+
+function selectedWholeRepeat() {
+  const g = selectedWholeGroup(state);
+  return g && g.repeat ? g : null;
+}
+
+function repeatCopiesProxy() {
+  const g = selectedWholeRepeat();
+  return g ? { id: REPEAT_COPIES_PROXY, type: REPEAT_COPIES_PROXY, copies: g.repeat.copies, group: g } : null;
+}
+
+// "" when the selection can be repeated, else why not (shown as the button's tooltip).
+function repeatDisabledReason(sel) {
+  if (currentMode !== "circle") return "Repeat works in Ring mode";
+  const g = selectedWholeGroup(state);
+  if (g && g.repeat) return "This group already repeats around a point";
+  if (!g && sel.length < 2) return "Select a group or several layers to repeat them around a point";
+  return "";
+}
+
+function createRepeatFromSelection() {
+  const sel = getSelectedLayersFrom(state);
+  if (repeatDisabledReason(sel)) return;
+  const whole = selectedWholeGroup(state);
+  if (whole) {
+    pushHistory();
+    whole.repeat = repeatDefaults();
+    renderLayerList();
+    refreshControls();
+    render();
+    return;
+  }
+  groupSelection(circleApi, (g) => {
+    g.repeat = repeatDefaults();
+  });
+}
+
+function repeatUpdateMeta(g) {
+  const el = document.querySelector(`#layerList [data-group-id="${g.id}"] .layer-meta`);
+  if (el) el.textContent = groupMetaText(g);
+}
+
+function setRepeatCopies(g, v) {
+  g.repeat.copies = Math.min(REPEAT_MAX_COPIES, Math.max(1, Math.round(v)));
+  repeatUpdateMeta(g);
+}
+
+function releaseRepeat() {
+  const g = selectedRepeatGroup();
+  if (!g) return;
+  pushHistory();
+  delete g.repeat;
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
+// Turns the copies into real layers. Each
+// copy becomes a SIBLING group "Copy 2" ... "Copy N" (the original group is copy 1) stacked above
+// the original; a blend's in-betweens become ordinary layers inside their copy. The original keeps
+// its members and any blend; the repeat flag is dropped.
+function expandRepeat() {
+  const g = selectedRepeatGroup();
+  if (!g) return;
+  const { copies } = blendRenderLayers(state);
+  const byCopy = new Map();
+  for (const l of copies) {
+    if (l._repeatGroup !== g.id) continue;
+    if (!byCopy.has(l._repeatCopy)) byCopy.set(l._repeatCopy, []);
+    byCopy.get(l._repeatCopy).push(l);
+  }
+  pushHistory();
+  const subIds = groupSubtreeIds(state, g.id);
+  const subGroups = state.groups.filter((x) => subIds.has(x.id));
+  const newLayers = [];
+  for (const k of [...byCopy.keys()].sort((a, b) => a - b)) {
+    // each copy is a sibling group "Copy N" with the same sub-groups as the original (flags dropped)
+    const map = new Map();
+    for (const sg of subGroups) map.set(sg.id, { id: nextGroupId++, name: sg.id === g.id ? `Copy ${k + 1}` : sg.name, visible: sg.visible !== false, parentId: null });
+    for (const sg of subGroups) {
+      const ng = map.get(sg.id);
+      ng.parentId = sg.id === g.id ? g.parentId ?? null : map.get(sg.parentId).id;
+      state.groups.push(ng);
+    }
+    for (const src of byCopy.get(k)) {
+      const c = snapshotLayers([src])[0];
+      for (const key of Object.keys(c)) if (key.startsWith("_")) delete c[key];
+      c.id = nextLayerId++;
+      c.imageEl = src.imageEl;
+      c.groupId = (map.get(src.groupId) || map.get(g.id)).id;
+      newLayers.push(c);
+    }
+  }
+  let lastIdx = -1;
+  state.layers.forEach((l, i) => {
+    if (l.groupId != null && subIds.has(l.groupId)) lastIdx = i;
+  });
+  state.layers.splice(lastIdx + 1, 0, ...newLayers);
+  delete g.repeat;
+  normalizeGroups(state);
+  const ids = subtreeLayers(state, g.id).map((l) => l.id);
+  state.selectedLayerIds = ids;
+  state.activeLayerId = ids[ids.length - 1];
+  reloadMissingImages(state.layers, render);
+  renderLayerList();
+  refreshControls();
+  render();
+}
+
+const REPEAT_FIELDS = {
+  repeatCopies: { key: "copies", min: 1, max: REPEAT_MAX_COPIES, int: true },
+  repeatTotal: { key: "totalAngle", min: -360, max: 360 },
+  repeatStart: { key: "startAngle", min: -360, max: 360 },
+  repeatPivotX: { key: "pivotX", min: -8192, max: 8192 },
+  repeatPivotY: { key: "pivotY", min: -8192, max: 8192 },
+};
+const REPEAT_SCALE_FIELD = "repeatScale"; // Scale (% about the pivot): its own handler, shares the badge's code
+
+function refreshRepeatUI() {
+  const btn = document.getElementById("repeatBtn");
+  if (!btn) return;
+  const reason = repeatDisabledReason(getSelectedLayersFrom(state));
+  const tip = reason || "Repeat around a point";
+  btn.disabled = !!reason;
+  btn.dataset.tip = tip;
+  btn.setAttribute("aria-label", tip);
+  document.getElementById("repeatBtnWrap").dataset.tip = tip;
+  const g = selectedRepeatGroup();
+  document.getElementById("repeatPanel").style.display = g ? "" : "none";
+  if (!g) return;
+  for (const [id, f] of Object.entries(REPEAT_FIELDS)) setFieldValue(id, g.repeat[f.key]);
+  document.getElementById("repeatRotate").checked = g.repeat.rotateCopies !== false;
+  setFieldValue(REPEAT_SCALE_FIELD, Math.round((g.repeat.pivotScale ?? 100) * 100) / 100);
+}
+
+let repeatGestureOpen = false;
+function onRepeatInput(id, src) {
+  const g = selectedRepeatGroup();
+  if (!g) return;
+  const f = REPEAT_FIELDS[id];
+  const raw = src.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return;
+  let v = Math.min(f.max, Math.max(f.min, Number(raw)));
+  v = f.int ? Math.round(v) : Math.round(v * 100) / 100;
+  document.getElementById(id).value = v;
+  if (v === g.repeat[f.key]) return;
+  if (!repeatGestureOpen) {
+    repeatGestureOpen = true;
+    pushHistory();
+  }
+  g.repeat[f.key] = v;
+  if (f.key === "copies") repeatUpdateMeta(g);
+  requestRender();
+}
+
+for (const id of Object.keys(REPEAT_FIELDS)) {
+  for (const el of [document.getElementById(id), document.getElementById(id + "Num")]) {
+    el.addEventListener("input", () => onRepeatInput(id, el));
+    el.addEventListener("change", () => {
+      repeatGestureOpen = false;
+      refreshRepeatUI();
+    });
+  }
+}
+for (const el of [document.getElementById(REPEAT_SCALE_FIELD), document.getElementById(REPEAT_SCALE_FIELD + "Num")]) {
+  el.addEventListener("input", () => {
+    const g = selectedRepeatGroup();
+    if (!g) return;
+    const raw = el.value.trim();
+    if (raw === "" || !Number.isFinite(Number(raw)) || !(Number(raw) > 0)) return;
+    applyPivotScale(g, Number(raw), el);
+  });
+  el.addEventListener("change", () => {
+    pivotScaleGesture = null;
+    refreshRepeatUI();
+  });
+}
+document.getElementById("repeatRotate").addEventListener("change", (e) => {
+  const g = selectedRepeatGroup();
+  if (!g) return;
+  pushHistory();
+  g.repeat.rotateCopies = e.target.checked;
+  render();
+});
+document.getElementById("repeatCentreBtn").addEventListener("click", () => {
+  const g = selectedRepeatGroup();
+  if (!g || (g.repeat.pivotX === 0 && g.repeat.pivotY === 0)) return;
+  pushHistory();
+  g.repeat.pivotX = 0;
+  g.repeat.pivotY = 0;
+  refreshControls();
+  render();
+});
+document.getElementById("repeatBtn").addEventListener("click", createRepeatFromSelection);
+document.getElementById("repeatExpandBtn").addEventListener("click", expandRepeat);
+document.getElementById("repeatReleaseBtn").addEventListener("click", releaseRepeat);
+
+// --- Scale about the pivot ---
+// Scales the whole repeating group about the pink pivot: the pivot stays put, every member's
+// origin moves toward or away from it, and radii, sizes, lengths, dashes and a shape's outline
+// scale by the same factor (SCALE_PROPS, the same rules as Group Scale; ring/line widths do not
+// change). Applied as new/old on the values captured when the gesture began, so a drag never
+// drifts and the whole gesture is one undo step. group.repeat.pivotScale only remembers the value
+// shown (100 when never scaled). Repeat pivots of groups nested inside move about the same point.
+const PIVOT_SCALE_PROXY = "__pivotScale";
+let pivotScaleGesture = null;
+
+function pivotScaleProxy() {
+  const g = selectedRepeatGroup();
+  return g ? { id: PIVOT_SCALE_PROXY, type: PIVOT_SCALE_PROXY, scale: g.repeat.pivotScale ?? 100, group: g } : null;
+}
+
+function applyPivotScale(g, raw, source) {
+  const newScale = Math.min(GROUP_SCALE_MAX, Math.max(GROUP_SCALE_MIN, raw));
+  let gs = pivotScaleGesture;
+  if (!gs || gs.gid !== g.id || gs.historyLen !== historyStack.length) {
+    const old = g.repeat.pivotScale ?? 100;
+    pushHistory();
+    const subIds = groupSubtreeIds(state, g.id);
+    const base = new Map();
+    for (const l of subtreeLayers(state, g.id)) {
+      const p = placementOf(l);
+      const props = {};
+      for (const prop of SCALE_PROPS.circle[l.type] || []) if (typeof l[prop] === "number") props[prop] = l[prop];
+      base.set(l.id, { x: p.originX, y: p.originY, props });
+    }
+    const reps = state.groups.filter((x) => x !== g && x.repeat && subIds.has(x.id)).map((x) => ({ g: x, x: x.repeat.pivotX, y: x.repeat.pivotY }));
+    gs = pivotScaleGesture = { gid: g.id, old, px: g.repeat.pivotX, py: g.repeat.pivotY, base, reps, historyLen: historyStack.length };
+  }
+  const ratio = newScale / gs.old;
+  const r4 = (v) => Math.round(v * 10000) / 10000 || 0;
+  for (const l of subtreeLayers(state, g.id)) {
+    const b = gs.base.get(l.id);
+    if (!b) continue;
+    l.originX = r4(gs.px + (b.x - gs.px) * ratio);
+    l.originY = r4(gs.py + (b.y - gs.py) * ratio);
+    for (const [prop, v] of Object.entries(b.props)) l[prop] = scaledValue(prop, v * ratio, l);
+  }
+  for (const r of gs.reps) {
+    r.g.repeat.pivotX = r4(gs.px + (r.x - gs.px) * ratio);
+    r.g.repeat.pivotY = r4(gs.py + (r.y - gs.py) * ratio);
+  }
+  g.repeat.pivotScale = newScale;
+  if (source) {
+    const id = REPEAT_SCALE_FIELD;
+    const other = source.id === id ? document.getElementById(id + "Num") : document.getElementById(id);
+    other.value = String(newScale);
+  }
+  refreshControls();
+  requestRender();
+}
+
+// The two badges beside the pink pivot: purple = Repeat copies, green = Scale % about the pivot.
+// They sit 40 px out like every badge, two either side of a direction chosen (every 15 degrees)
+// to stay as far as possible from the group handle, its knob, the origin anchor and the other badges.
+function appendPivotBadges(svg, g) {
+  const unit = svgUnitsPerPx(svg);
+  const px = CENTER + g.repeat.pivotX, py = CENTER + g.repeat.pivotY;
+  const obstacles = [];
+  svg.querySelectorAll(".value-badge").forEach((b) => obstacles.push({ x: Number(b.dataset.bx) + Number(b.dataset.bdx) * unit, y: Number(b.dataset.by) + Number(b.dataset.bdy) * unit }));
+  svg.querySelectorAll(".layer-handle").forEach((h) => {
+    const hx = Number(h.dataset.hx), hy = Number(h.dataset.hy);
+    const k = unitVector(Number(h.dataset.hrot));
+    obstacles.push({ x: hx, y: hy }, { x: hx + k.x * HANDLE_REACH_PX * unit, y: hy + k.y * HANDLE_REACH_PX * unit });
+  });
+  svg.querySelectorAll(".origin-handle").forEach((h) => {
+    const m = /translate\(\s*([-\d.e]+)[ ,]+([-\d.e]+)\s*\)/.exec(h.getAttribute("transform") || "");
+    if (m) obstacles.push({ x: Number(m[1]), y: Number(m[2]) });
+  });
+  const spot = (base, side) => {
+    const u = unitVector(base + side * BADGE_SPREAD_DEG);
+    return { x: px + u.x * BADGE_DISTANCE_PX * unit, y: py + u.y * BADGE_DISTANCE_PX * unit };
+  };
+  let best = 180, bestScore = -1;
+  const order = [180];
+  for (let d = 15; d <= 180; d += 15) order.push((180 + d) % 360, (180 - d + 360) % 360);
+  for (const base of order) {
+    let score = 70; // clearance beyond this is as good as any
+    for (const side of [-1, 1]) {
+      const p = spot(base, side);
+      for (const o of obstacles) score = Math.min(score, Math.hypot(o.x - p.x, o.y - p.y) / unit);
+    }
+    if (score > bestScore + 1e-6) {
+      bestScore = score;
+      best = base;
+    }
+  }
+  [["pcount", -1], ["pscale", 1]].forEach(([kind, side]) => {
+    const disp = badgeDisplay(kind);
+    if (!disp) return;
+    const u = unitVector(best + side * BADGE_SPREAD_DEG);
+    const el = document.createElementNS(SVG_NS, "g");
+    el.setAttribute("class", "editor-only value-badge pivot-badge");
+    el.dataset.badge = kind;
+    el.dataset.bx = px;
+    el.dataset.by = py;
+    el.dataset.bdx = u.x * BADGE_DISTANCE_PX;
+    el.dataset.bdy = u.y * BADGE_DISTANCE_PX;
+    el.innerHTML = badgeMarkup(kind, disp.text, disp.tip);
+    placeBadge(el, unit);
+    svg.appendChild(el);
+  });
+  positionBadgeEditor();
+}
+
+// The pivot crosshair (magenta, drawn last so it is on top of every other handle).
+const REPEAT_PINK = "#ff3fa4";
+let repeatPivotDrag = null;
+
+function appendRepeatPivotHandle(svg) {
+  const g = selectedRepeatGroup();
+  if (!g) return;
+  appendPivotBadges(svg, g);
+  const h = document.createElementNS(SVG_NS, "g");
+  h.setAttribute("class", "editor-only repeat-pivot-handle");
+  h.dataset.repeatPivot = g.id;
+  h.setAttribute("transform", `translate(${CENTER + g.repeat.pivotX} ${CENTER + g.repeat.pivotY}) scale(${svgUnitsPerPx(svg)})`);
+  const asBall = handleRepeatGroup() === g;
+  h.dataset.repeatBall = asBall ? "1" : "0";
+  const tip = asBall
+    ? "Repeat group handle (on the pivot): drag to move the whole group with its pivot (Shift: one axis). Alt+drag moves only the pivot. The knob turns the group about the pivot."
+    : "Repeat pivot: drag to move (Shift: one axis)";
+  h.innerHTML = `<title>${tip}</title>
+    <circle r="16" fill="transparent" pointer-events="all" />
+    <circle r="8" fill="rgba(255,63,164,0.18)" stroke="${REPEAT_PINK}" stroke-width="2.5" />
+    <path d="M -14 0 H 14 M 0 -14 V 14" stroke="${REPEAT_PINK}" stroke-width="2.5" />
+    <path d="M 0 -4.2 L 4.2 0 L 0 4.2 L -4.2 0 Z" fill="${REPEAT_PINK}" />`;
+  svg.appendChild(h);
+}
+
+function beginRepeatPivotDrag(e, gid) {
+  const g = state.groups.find((x) => x.id === gid);
+  if (!g || !g.repeat) return;
+  const svg = document.getElementById("canvas");
+  repeatPivotDrag = { pointerId: e.pointerId, gid, start: clientToSvgPoint(svg, e.clientX, e.clientY), x0: g.repeat.pivotX, y0: g.repeat.pivotY, moved: false };
+  try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+}
+
+function moveRepeatPivotDrag(e) {
+  const d = repeatPivotDrag;
+  const g = state.groups.find((x) => x.id === d.gid);
+  if (!g || !g.repeat) return;
+  const svg = document.getElementById("canvas");
+  const pt = clientToSvgPoint(svg, e.clientX, e.clientY);
+  let dx = pt.x - d.start.x;
+  let dy = pt.y - d.start.y;
+  if (e.shiftKey) {
+    if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+    else dx = 0;
+  }
+  const snapUnits = ORIGIN_SNAP_PX / svg.getScreenCTM().a;
+  if (Math.abs(d.x0 + dx) < snapUnits) dx = -d.x0; // onto the centre lines, like the origin handle
+  if (Math.abs(d.y0 + dy) < snapUnits) dy = -d.y0;
+  const nx = Math.round(d.x0 + dx), ny = Math.round(d.y0 + dy);
+  if (!d.moved) {
+    if (nx === g.repeat.pivotX && ny === g.repeat.pivotY) return;
+    d.moved = true;
+    pushHistory();
+  }
+  g.repeat.pivotX = nx;
+  g.repeat.pivotY = ny;
+  refreshControls();
+  requestRender(true);
+}
+
+function endRepeatPivotDrag(e) {
+  if (!repeatPivotDrag) return;
+  const svg = document.getElementById("canvas");
+  try { if (svg.hasPointerCapture(repeatPivotDrag.pointerId)) svg.releasePointerCapture(repeatPivotDrag.pointerId); } catch (_) { /* gone */ }
+  repeatPivotDrag = null;
+}
+
+{
+  const cv = document.getElementById("canvas");
+  cv.addEventListener("pointermove", (e) => {
+    if (repeatPivotDrag && e.pointerId === repeatPivotDrag.pointerId) moveRepeatPivotDrag(e);
+  });
+  cv.addEventListener("pointerup", endRepeatPivotDrag);
+  cv.addEventListener("pointercancel", endRepeatPivotDrag);
+}
 
 // Renaming is done with an inline <input> instead of window.prompt() — prompt()'s
 // native dialog is unreliable inside embedded/automated browser panes (it can be
@@ -1816,6 +2815,8 @@ function refreshControls() {
   // itself rather than any one type panel — handled before the early return below so
   // it still reflects "no active layer" (disabled) correctly.
   refreshGroupScale(circleApi);
+  refreshBlendUI();
+  refreshRepeatUI();
   document.getElementById("layerOpacityField").classList.toggle("disabled", !active);
   setFieldValue("layerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
 
@@ -2059,7 +3060,7 @@ function bindControl(id, apply) {
       apply(target, source);
     }
     refreshControls();
-    render();
+    requestRender();
   };
   const endGesture = () => {
     historyGestureOpen = false;
@@ -2273,7 +3274,7 @@ function bindMaskControl(id, apply) {
     // off-step value isn't silently rounded away by the slider's own step-snapping.
     apply(state.mask, source);
     refreshMaskControls();
-    render();
+    requestRender();
   };
   const endGesture = () => (historyGestureOpen = false);
 
@@ -2329,7 +3330,7 @@ function roughnessInput(e) {
   }
   state.roughness = Math.min(100, Math.max(0, Number(e.target.value)));
   setFieldValue("roughness", state.roughness);
-  render();
+  requestRender(false); // never a draft: the slider is about the roughness itself
 }
 document.getElementById("roughness").addEventListener("input", roughnessInput);
 document.getElementById("roughness").addEventListener("change", () => (historyGestureOpen = false));
@@ -2619,8 +3620,22 @@ function distributeStraight(layer, maxR, padY, centerX) {
 // `flip` defaults to the layer's own Flip toggle, but callers doing alternate-flip
 // cloning pass the opposite value explicitly to get the mirrored variant — cached
 // separately (keyed on the actual flip value used) so both variants can coexist.
+function bentImageKey(layer, flip) {
+  return [layer.imageDataUrl, layer.size, layer.bend, layer.radius, layer.naturalWidth, layer.naturalHeight, flip, layer.flipHorizontal].join("|");
+}
+
+// Draft mode: is the bitmap for the layer's CURRENT parameters (both flip variants when
+// Alternate flip is on) already cached? Never renders anything.
+function bentImageCached(layer) {
+  const ok = (flip) => {
+    const c = layer[flip ? "bendCacheFlipped" : "bendCache"];
+    return !!c && c.key === bentImageKey(layer, flip);
+  };
+  return ok(layer.flip) && (!layer.alternateFlip || ok(!layer.flip));
+}
+
 function getBentImage(layer, flip = layer.flip) {
-  const key = [layer.imageDataUrl, layer.size, layer.bend, layer.radius, layer.naturalWidth, layer.naturalHeight, flip, layer.flipHorizontal].join("|");
+  const key = bentImageKey(layer, flip);
   const cacheProp = flip ? "bendCacheFlipped" : "bendCache";
   if (layer[cacheProp] && layer[cacheProp].key === key) return layer[cacheProp];
   const result = renderBentImage(layer, flip);
@@ -2884,17 +3899,783 @@ function renderFlatShapeCanvas(layer) {
   return { canvas, width: canvasW, height: canvasH };
 }
 
-function getBentShapeImage(layer) {
-  const key = [
+function bentShapeKey(layer) {
+  return [
     layer.shapeKind, layer.size, layer.sizeY, layer.fillColor, layer.fillOpacity,
     layer.strokeWidth, layer.strokeColor, layer.bend, layer.radius,
   ].join("|");
+}
+
+function bentShapeCached(layer) {
+  return !!layer.bendCache && layer.bendCache.key === bentShapeKey(layer);
+}
+
+function getBentShapeImage(layer) {
+  const key = bentShapeKey(layer);
   if (layer.bendCache && layer.bendCache.key === key) return layer.bendCache;
   const flat = renderFlatShapeCanvas(layer);
   const result = renderBentFromSource(flat.canvas, flat.width, flat.height, flat.width, flat.height, layer.bend, layer.radius, false);
   layer.bendCache = { key, ...result };
   return layer.bendCache;
 }
+
+// --- Art brush ---
+// One brush IMAGE stretched (or tiled) along a stroke and bent with it, like Illustrator's Art
+// Brush. ONE global setting per mode, `state.brush` / `smState.brush` = { id, fit, tint, customDataUrl,
+// customName } (id "none" = Roughness mode, markup unchanged; any other id REPLACES Roughness for the
+// whole image; an old per-layer `artBrush` field is ignored). `curBrush` is the brush of the mode being
+// drawn (set by render, renderStraight, smRenderInto). Applies to ring layers (full and cut/gapped),
+// radial lines, free straight lines, and the same layers in the Straight preview (a ring becomes a
+// horizontal band). Brush length = path direction, brush height = stroke width; the brush's top
+// edge is on the left of the direction of travel (outside, for a ring drawn clockwise).
+//
+// Rings and arcs are warped into ONE bitmap per ring (per arc piece) by an inverse-mapped polar
+// warp that visits only the band's own pixels (renderBrushRingRaster). Lines and bands need no
+// warp: an <image> with preserveAspectRatio="none" (stretch) or a pre-tiled bitmap (tile).
+// Everything derived lives in module-level Maps keyed by CONTENT (never on the layer, so Blend
+// steps and Repeat copies, which are shallow copies, share entries and nothing leaks into
+// history, save or the layer signature). While `drafting`, only bitmaps already in the cache are
+// used; otherwise the layer is drawn as the plain vector stroke (roughness never applies to a
+// brushed layer). Resolution: 1 pixel per artboard unit, i.e. 1:1 at a 4096 export, capped at
+// 4096 px on a side (scaled down only beyond that).
+const BRUSH_SRC_W = 2048;
+const BRUSH_SRC_H = 64;
+const BRUSH_MAX_PX = 4096;
+// Pixel budget of one ring bitmap. Encoding the PNG costs about 20 ns per pixel whatever is in it,
+// so the live view uses a 2.5 M budget (a 1900-radius ring is drawn at about 0.4 px per unit, still more
+// than the screen shows); exports switch brushHiRes on and re-render, which gives 1 pixel per unit
+// (up to 4096 x 4096) like the 4096 export itself.
+const BRUSH_AREA_PREVIEW = 2.5e6;
+const BRUSH_AREA_EXPORT = 16.8e6;
+let brushHiRes = false;
+const BUILTIN_BRUSHES = [
+  { id: "ink", label: "Ink" },
+  { id: "dry", label: "Dry brush" },
+  { id: "chalk", label: "Chalk" },
+  { id: "double", label: "Double" },
+  { id: "ribbon", label: "Ribbon" },
+];
+const BRUSH_IDS = new Set(BUILTIN_BRUSHES.map((b) => b.id));
+const BRUSHABLE_TYPES = new Set(["ring", "line", "straight", "guide"]);
+
+// Small LRU keyed by content; `chars` is a rough memory weight (data URL length).
+function makeLru(maxEntries, maxChars) {
+  const map = new Map();
+  let chars = 0;
+  return {
+    map,
+    get(key) {
+      const v = map.get(key);
+      if (v !== undefined) {
+        map.delete(key);
+        map.set(key, v);
+      }
+      return v;
+    },
+    set(key, value, weight = 0) {
+      const old = map.get(key);
+      if (old !== undefined) chars -= old.__w || 0;
+      value.__w = weight;
+      map.delete(key);
+      map.set(key, value);
+      chars += weight;
+      while (map.size > maxEntries || chars > maxChars) {
+        const first = map.keys().next().value;
+        if (first === key) break;
+        chars -= map.get(first).__w || 0;
+        map.delete(first);
+      }
+    },
+    clear() {
+      map.clear();
+      chars = 0;
+    },
+    get size() {
+      return map.size;
+    },
+    get chars() {
+      return chars;
+    },
+  };
+}
+
+const brushRasterCache = makeLru(512, 80e6); // ring/arc bitmaps and tiled strips: { url, x, y, w, h }
+const brushTintCache = makeLru(48, 1e12); // tinted brush canvases: { canvas, url }
+const brushDataCache = makeLru(32, 1e12); // premultiplied float source at a working size
+const customBrushes = new Map(); // customDataUrl -> { id, state, canvas, w, h, hasAlpha }
+const customBrushIds = new Map();
+let builtinBrushCanvases = null;
+
+function customIdOf(dataUrl) {
+  let id = customBrushIds.get(dataUrl);
+  if (!id) {
+    id = "c" + (customBrushIds.size + 1);
+    customBrushIds.set(dataUrl, id);
+  }
+  return id;
+}
+
+// The art-brush UI and drawing are dormant (only Roughness is offered); set true to bring them back.
+const BRUSH_UI = false;
+let curBrush = null; // the global brush of the mode being drawn right now
+
+function brushOn(ab) {
+  return BRUSH_UI && !!ab && !!ab.id && ab.id !== "none" && (BRUSH_IDS.has(ab.id) || ab.id === "custom");
+}
+
+function brushActive(layer) {
+  return brushOn(curBrush) && BRUSHABLE_TYPES.has(layer.type);
+}
+
+// A brush read from a project file or history: unknown ids fall back to "none".
+function sanitizeBrush(b) {
+  const d = brushDefault();
+  if (!BRUSH_UI || !b || typeof b !== "object") return d;
+  const out = { ...d, ...b };
+  if (!(BRUSH_IDS.has(out.id) || out.id === "custom")) out.id = "none";
+  if (out.id === "custom" && !out.customDataUrl) out.id = "none";
+  out.fit = out.fit === "tile" ? "tile" : "stretch";
+  out.tint = out.tint !== false;
+  return out;
+}
+
+function brushDefault() {
+  return { id: "none", fit: "stretch", tint: true, customDataUrl: null, customName: null };
+}
+
+// --- Procedural built-ins (white alpha masks, deterministic) ---
+function brushRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// 1D smooth value noise with feature size `period` px: returns a function of x in [0, 1).
+function brushNoise1(rng, length, period) {
+  const n = Math.ceil(length / period) + 2;
+  const v = Array.from({ length: n }, () => rng());
+  return (x) => {
+    const f = x / period;
+    const i = Math.floor(f);
+    const t = f - i;
+    const s = t * t * (3 - 2 * t);
+    return v[i] * (1 - s) + v[i + 1] * s;
+  };
+}
+
+function brushSmooth(e0, e1, x) {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
+function makeBuiltinBrushes() {
+  const W = BRUSH_SRC_W, H = BRUSH_SRC_H;
+  const out = {};
+  const blank = () => {
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    return c;
+  };
+
+  // Ink: a solid stroke thinning towards both ends, slightly wobbly edges.
+  {
+    const c = blank(), ctx = c.getContext("2d");
+    const rng = brushRng(11);
+    const wob = brushNoise1(rng, W, 90);
+    const top = [], bot = [];
+    for (let x = 0; x <= W; x += 4) {
+      const u = x / W;
+      const t = Math.min(1, Math.min(u, 1 - u) / 0.2);
+      const env = 0.14 + 0.86 * (1 - (1 - t) * (1 - t));
+      const h = H * 0.94 * env * (0.93 + 0.14 * wob(x));
+      top.push([x, H / 2 - h / 2]);
+      bot.push([x, H / 2 + h / 2]);
+    }
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    top.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    for (let i = bot.length - 1; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    out.ink = c;
+  }
+
+  // Dry brush: horizontal bristle streaks that break up, more towards the edges and the ends.
+  {
+    const c = blank(), ctx = c.getContext("2d");
+    const img = ctx.createImageData(W, H);
+    const D = img.data;
+    const rng = brushRng(23);
+    const bristles = Math.ceil(H / 2);
+    const rows = Array.from({ length: bristles }, () => {
+      const lo = brushNoise1(rng, W, 140);
+      const hi = brushNoise1(rng, W, 28);
+      return (x) => 0.65 * lo(x) + 0.35 * hi(x);
+    });
+    for (let y = 0; y < H; y++) {
+      const row = rows[y >> 1];
+      const e = Math.abs((2 * (y + 0.5)) / H - 1);
+      const thrRow = 0.12 + 0.62 * Math.pow(e, 2.4);
+      for (let x = 0; x < W; x++) {
+        const u = x / W;
+        const endBreak = 0.75 * Math.pow(Math.max(0, 1 - Math.min(u, 1 - u) / 0.12), 2);
+        const a = brushSmooth(thrRow + endBreak, thrRow + endBreak + 0.1, row(x)) * (e > 0.96 ? 0.5 : 1);
+        const o = (y * W + x) * 4;
+        D[o] = D[o + 1] = D[o + 2] = 255;
+        D[o + 3] = Math.round(a * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    out.dry = c;
+  }
+
+  // Chalk / charcoal: a soft band with eroded edges and per-pixel grain.
+  {
+    const c = blank(), ctx = c.getContext("2d");
+    const img = ctx.createImageData(W, H);
+    const D = img.data;
+    const rng = brushRng(37);
+    const edgeN = brushNoise1(rng, W, 60);
+    const blobN = Array.from({ length: Math.ceil(H / 6) + 2 }, () => brushNoise1(rng, W, 14));
+    for (let y = 0; y < H; y++) {
+      const v = Math.abs((2 * (y + 0.5)) / H - 1);
+      const by = y / 6, bi = Math.floor(by), bt = by - bi;
+      for (let x = 0; x < W; x++) {
+        const edge = 0.78 + 0.2 * edgeN(x);
+        const inside = brushSmooth(edge, edge - 0.3, v);
+        const blob = blobN[bi](x) * (1 - bt) + blobN[bi + 1](x) * bt;
+        const g = 0.62 * rng() + 0.38 * blob;
+        const a = inside > 0 ? Math.min(1, Math.max(0, (inside * 1.15 + g * 0.95 - 0.62) * 3.2)) : 0;
+        const o = (y * W + x) * 4;
+        D[o] = D[o + 1] = D[o + 2] = 255;
+        D[o + 3] = Math.round(a * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    out.chalk = c;
+  }
+
+  // Double line: two parallel strokes.
+  {
+    const c = blank(), ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, H * 0.08, W, H * 0.24);
+    ctx.fillRect(0, H * 0.68, W, H * 0.24);
+    out.double = c;
+  }
+
+  // Ribbon: a band that twists, thin where it turns edge-on, paler on its back side.
+  {
+    const c = blank(), ctx = c.getContext("2d");
+    for (let x = 0; x < W; x += 2) {
+      const u = x / W;
+      const k = Math.cos(2 * Math.PI * 3 * u);
+      const h = H * (0.3 + 0.68 * Math.abs(k));
+      ctx.fillStyle = k >= 0 ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.55)";
+      ctx.fillRect(x, H / 2 - h / 2, 2.4, h);
+    }
+    out.ribbon = c;
+  }
+  return out;
+}
+
+function getBuiltinBrushCanvas(id) {
+  if (!builtinBrushCanvases) builtinBrushCanvases = makeBuiltinBrushes();
+  return builtinBrushCanvases[id];
+}
+
+// --- Custom image decode ---
+function getCustomBrush(dataUrl) {
+  let e = customBrushes.get(dataUrl);
+  if (e) return e;
+  e = { id: customIdOf(dataUrl), state: "loading", canvas: null, w: 0, h: 0, hasAlpha: false };
+  customBrushes.set(dataUrl, e);
+  const img = new Image();
+  img.onload = () => {
+    const k = Math.min(1, 2048 / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let hasAlpha = false;
+    for (let i = 3; i < d.length; i += 4) {
+      if (d[i] < 250) {
+        hasAlpha = true;
+        break;
+      }
+    }
+    e.canvas = c;
+    e.w = w;
+    e.h = h;
+    e.hasAlpha = hasAlpha;
+    e.state = "ready";
+    brushTintCache.clear();
+    brushDataCache.clear();
+    refreshBrushControlsSoon();
+    requestRender(false);
+    if (currentMode !== "circle") smRender();
+  };
+  img.onerror = () => {
+    e.state = "error";
+  };
+  img.src = dataUrl;
+  return e;
+}
+
+// The brush a layer asks for: { key, canvas, w, h, custom, hasAlpha } or null (custom image not decoded yet).
+function brushSourceOf(ab) {
+  if (ab.id === "custom") {
+    if (!ab.customDataUrl) return null;
+    const e = getCustomBrush(ab.customDataUrl);
+    if (e.state !== "ready") return null;
+    return { key: e.id, canvas: e.canvas, w: e.w, h: e.h, custom: true, hasAlpha: e.hasAlpha };
+  }
+  const c = getBuiltinBrushCanvas(ab.id);
+  return c ? { key: ab.id, canvas: c, w: c.width, h: c.height, custom: false, hasAlpha: true } : null;
+}
+
+// The brush painted in the stroke colour (tint on) or in its own colours (tint off; built-ins are
+// plain light grey masks). Cached; `url` is encoded on demand. cacheOnly: never build.
+function brushTinted(src, tint, color, cacheOnly) {
+  const key = `${src.key}|${tint ? color : "raw"}`;
+  let tb = brushTintCache.get(key);
+  if (tb) return tb;
+  if (cacheOnly) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = src.w;
+  canvas.height = src.h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: src.custom && tint });
+  if (!src.custom) {
+    ctx.drawImage(src.canvas, 0, 0);
+    ctx.globalCompositeOperation = "source-in";
+    ctx.fillStyle = tint ? color : "#e0e0e0";
+    ctx.fillRect(0, 0, src.w, src.h);
+  } else if (!tint) {
+    ctx.drawImage(src.canvas, 0, 0);
+  } else {
+    ctx.drawImage(src.canvas, 0, 0);
+    const img = ctx.getImageData(0, 0, src.w, src.h);
+    const d = img.data;
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color) || [];
+    const r = parseInt(m[1] || "e0", 16), g = parseInt(m[2] || "e0", 16), b = parseInt(m[3] || "e0", 16);
+    for (let i = 0; i < d.length; i += 4) {
+      // Pictures with transparency tint by their alpha; opaque ones by how dark they are.
+      const a = src.hasAlpha ? d[i + 3] : d[i + 3] * (1 - (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255);
+      d[i] = r;
+      d[i + 1] = g;
+      d[i + 2] = b;
+      d[i + 3] = a;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  tb = { canvas, w: src.w, h: src.h, url: null };
+  brushTintCache.set(key, tb, 0);
+  tb.key = key;
+  return tb;
+}
+
+function brushTintedUrl(tb) {
+  if (!tb.url) tb.url = tb.canvas.toDataURL("image/png");
+  return tb.url;
+}
+
+// Everything a draw call needs, or null when the brush cannot be drawn right now (a draft whose
+// bitmaps are not cached, a custom image still decoding): the caller then draws the plain stroke.
+function brushPrep(layer) {
+  const ab = curBrush;
+  const src = brushSourceOf(ab);
+  if (!src) return null;
+  const tint = ab.tint !== false;
+  const color = layer.strokeColor;
+  const tb = brushTinted(src, tint, color, drafting);
+  if (!tb) return null;
+  return { ab, src, tb, fit: ab.fit === "tile" ? "tile" : "stretch", tint, color, sw: layer.strokeWidth };
+}
+
+// --- Rasters ---
+// A rectangular brush strip (line, band): stretch = the brush itself; tile = the brush repeated
+// at its own aspect, the count rounded so whole tiles fit the length. Returns { url, count } or null.
+function brushStripUrl(info, len) {
+  if (info.fit !== "tile") {
+    if (drafting && !info.tb.url) return null;
+    return { url: brushTintedUrl(info.tb), count: 1 };
+  }
+  const tileLen = (info.sw * info.src.w) / info.src.h;
+  const count = Math.max(1, Math.round(len / tileLen));
+  const key = `strip|${info.tb.key}|${count}|${len.toFixed(2)}|${info.sw}`;
+  let r = brushRasterCache.get(key);
+  if (r) return { url: r.url, count };
+  if (drafting) return null;
+  const s = Math.min(1, BRUSH_MAX_PX / Math.max(len, info.sw));
+  const wPx = Math.max(1, Math.round(len * s)), hPx = Math.max(1, Math.round(info.sw * s));
+  const c = document.createElement("canvas");
+  c.width = wPx;
+  c.height = hPx;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  for (let i = 0; i < count; i++) ctx.drawImage(info.tb.canvas, (i * wPx) / count, 0, wPx / count + 0.5, hPx);
+  const url = c.toDataURL("image/png");
+  brushRasterCache.set(key, { url }, url.length);
+  return { url, count };
+}
+
+// Premultiplied float copy of the tinted brush at a working size close to what the output needs
+// (so a 64 px brush squeezed into a 10 unit stroke is filtered, not aliased).
+function brushWorkData(info, wantW, wantH) {
+  const tw = Math.min(info.src.w, Math.max(16, Math.ceil(wantW / 8) * 8));
+  const th = Math.min(info.src.h, Math.max(4, Math.ceil(wantH / 4) * 4));
+  const key = `${info.tb.key}|${tw}x${th}`;
+  let e = brushDataCache.get(key);
+  if (e) return e;
+  const c = document.createElement("canvas");
+  c.width = tw;
+  c.height = th;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(info.tb.canvas, 0, 0, tw, th);
+  const d = ctx.getImageData(0, 0, tw, th).data;
+  const P = new Float32Array(tw * th * 4);
+  for (let i = 0; i < P.length; i += 4) {
+    const a = d[i + 3]; // alpha weights the colour; the sum is divided back out after sampling
+    P[i] = d[i] * a;
+    P[i + 1] = d[i + 1] * a;
+    P[i + 2] = d[i + 2] * a;
+    P[i + 3] = a;
+  }
+  e = { P, w: tw, h: th };
+  brushDataCache.set(key, e, 0);
+  return e;
+}
+
+// One ring or arc piece (angles in degrees, 0 = top, clockwise, relative to the ring's centre) as a
+// bitmap: { url, x, y, w, h } in artboard units relative to the centre. Inverse mapping: only the
+// pixels inside the band are visited; each asks where it sits along the arc (u) and across the
+// stroke (v, 0 = outside edge) and samples the brush once, bilinear, premultiplied.
+function brushRingKey(info, R, a0, a1) {
+  return `ring|${brushHiRes ? "hi" : "lo"}|${info.tb.key}|${info.fit}|${R}|${info.sw}|${a0.toFixed(3)}|${a1.toFixed(3)}`;
+}
+
+function brushRingRaster(info, R, a0, a1) {
+  const key = brushRingKey(info, R, a0, a1);
+  const hit = brushRasterCache.get(key);
+  if (hit) return hit;
+  if (drafting) return null;
+  const sw = info.sw;
+  const rin = Math.max(0, R - sw / 2), rout = R + sw / 2;
+  const sweep = a1 - a0;
+  const full = sweep >= 359.99;
+  // Bounding box of the band in units (centre = 0,0).
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const steps = Math.max(2, Math.ceil(Math.min(sweep, 360) / 1));
+  for (let i = 0; i <= steps; i++) {
+    const th = ((a0 + (sweep * i) / steps) * Math.PI) / 180;
+    for (const r of [rin, rout]) {
+      const X = r * Math.sin(th), Y = -r * Math.cos(th);
+      if (X < minX) minX = X;
+      if (X > maxX) maxX = X;
+      if (Y < minY) minY = Y;
+      if (Y > maxY) maxY = Y;
+    }
+  }
+  minX = Math.floor(minX - 2);
+  minY = Math.floor(minY - 2);
+  maxX = Math.ceil(maxX + 2);
+  maxY = Math.ceil(maxY + 2);
+  const area = (brushHiRes ? BRUSH_AREA_EXPORT : BRUSH_AREA_PREVIEW) / ((maxX - minX) * (maxY - minY));
+  const s = Math.min(1, BRUSH_MAX_PX / Math.max(maxX - minX, maxY - minY), Math.sqrt(area));
+  const W = Math.max(1, Math.ceil((maxX - minX) * s)), H = Math.max(1, Math.ceil((maxY - minY) * s));
+  const arcLen = (sweep * Math.PI * R) / 180;
+  const tileLen = (sw * info.src.w) / info.src.h;
+  const count = info.fit === "tile" ? Math.max(1, Math.round(arcLen / tileLen)) : 1;
+  const tile = info.fit === "tile";
+  const work = brushWorkData(info, ((tile ? arcLen / count : arcLen) * s) * 1.5, sw * s * 1.5);
+  const P = work.P, sW = work.w, sH = work.h;
+
+  const out = new Uint8ClampedArray(W * H * 4);
+  const arcPx = arcLen * s;
+  const a0r = a0;
+  const pxMargin = 1 / s;
+  for (let py = 0; py < H; py++) {
+    const Y = minY + (py + 0.5) / s;
+    const ay = Math.abs(Y);
+    if (ay > rout + pxMargin) continue;
+    const xo = Math.sqrt(Math.max(0, (rout + pxMargin) * (rout + pxMargin) - Y * Y));
+    const xiSq = (rin - pxMargin) * (rin - pxMargin) - Y * Y;
+    const xi = xiSq > 0 ? Math.sqrt(xiSq) : 0;
+    const spans = xi > 0 ? [[-xo, -xi], [xi, xo]] : [[-xo, xo]];
+    for (const [xa, xb] of spans) {
+      const p0 = Math.max(0, Math.floor((xa - minX) * s)), p1 = Math.min(W - 1, Math.ceil((xb - minX) * s));
+      for (let px = p0; px <= p1; px++) {
+        const X = minX + (px + 0.5) / s;
+        const r = Math.sqrt(X * X + Y * Y);
+        const cov = Math.min(1, Math.max(0, (rout - r) * s + 0.5)) * Math.min(1, Math.max(0, (r - rin) * s + 0.5));
+        if (cov <= 0) continue;
+        let deg = (Math.atan2(X, -Y) * 180) / Math.PI - a0r;
+        deg = ((deg % 360) + 360) % 360;
+        let frac = deg / sweep;
+        let ucov = 1;
+        if (!full) {
+          if (frac > 1) {
+            // Just outside the piece: keep half a pixel of antialiasing at either end, else skip.
+            const over = (deg - sweep) * (Math.PI / 180) * r * s;
+            const under = (360 - deg) * (Math.PI / 180) * r * s;
+            if (over < 0.5) { frac = 1; ucov = 0.5 - over; }
+            else if (under < 0.5) { frac = 0; ucov = 0.5 - under; }
+            else continue;
+          } else {
+            ucov = Math.min(1, frac * arcPx + 0.5) * Math.min(1, (1 - frac) * arcPx + 0.5);
+          }
+        }
+        if (ucov <= 0) continue;
+        const v = Math.min(1, Math.max(0, (rout - r) / sw));
+        let u;
+        if (tile) {
+          const f = frac * count;
+          u = (f - Math.floor(f)) * sW - 0.5;
+        } else u = frac * sW - 0.5;
+        const vv = v * sH - 0.5;
+        const u0 = Math.floor(u), v0 = Math.floor(vv);
+        const fu = u - u0, fv = vv - v0;
+        let cu0 = u0, cu1 = u0 + 1;
+        if (tile) {
+          cu0 = ((cu0 % sW) + sW) % sW;
+          cu1 = ((cu1 % sW) + sW) % sW;
+        } else {
+          cu0 = cu0 < 0 ? 0 : cu0 > sW - 1 ? sW - 1 : cu0;
+          cu1 = cu1 < 0 ? 0 : cu1 > sW - 1 ? sW - 1 : cu1;
+        }
+        const cv0 = v0 < 0 ? 0 : v0 > sH - 1 ? sH - 1 : v0;
+        const cv1 = v0 + 1 < 0 ? 0 : v0 + 1 > sH - 1 ? sH - 1 : v0 + 1;
+        const i00 = (cv0 * sW + cu0) * 4, i10 = (cv0 * sW + cu1) * 4;
+        const i01 = (cv1 * sW + cu0) * 4, i11 = (cv1 * sW + cu1) * 4;
+        const w00 = (1 - fu) * (1 - fv), w10 = fu * (1 - fv), w01 = (1 - fu) * fv, w11 = fu * fv;
+        const a = P[i00 + 3] * w00 + P[i10 + 3] * w10 + P[i01 + 3] * w01 + P[i11 + 3] * w11;
+        if (a <= 0) continue;
+        const o = (py * W + px) * 4;
+        const k = 1 / a;
+        out[o] = (P[i00] * w00 + P[i10] * w10 + P[i01] * w01 + P[i11] * w11) * k;
+        out[o + 1] = (P[i00 + 1] * w00 + P[i10 + 1] * w10 + P[i01 + 1] * w01 + P[i11 + 1] * w11) * k;
+        out[o + 2] = (P[i00 + 2] * w00 + P[i10 + 2] * w10 + P[i01 + 2] * w01 + P[i11 + 2] * w11) * k;
+        out[o + 3] = a * cov * ucov;
+      }
+    }
+  }
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  c.getContext("2d").putImageData(new ImageData(out, W, H), 0, 0);
+  const url = c.toDataURL("image/png");
+  const r = { url, x: minX, y: minY, w: W / s, h: H / s, px: W * H };
+  brushRasterCache.set(key, r, url.length);
+  return r;
+}
+
+function brushImageEl(url, x, y, w, h, extra) {
+  const img = document.createElementNS(SVG_NS, "image");
+  img.setAttribute("href", url);
+  img.setAttribute("x", x);
+  img.setAttribute("y", y);
+  img.setAttribute("width", w);
+  img.setAttribute("height", h);
+  img.setAttribute("preserveAspectRatio", "none");
+  if (extra) for (const k in extra) img.setAttribute(k, extra[k]);
+  return img;
+}
+
+// Ring (full, or the given arc pieces) into `g` as one bitmap per piece. False = not drawable now.
+function drawBrushRing(g, layer, arc) {
+  if (!(layer.strokeWidth > 0) || !(layer.radius > 0)) return false;
+  const info = brushPrep(layer);
+  if (!info) return false;
+  const full = arc.full;
+  const pieces = full ? [[0, 360]] : arc.pieces.filter(([a, b]) => b - a > 0.01);
+  const rasters = [];
+  for (const [a0, a1] of pieces) {
+    const r = brushRingRaster(info, layer.radius, a0, a1);
+    if (!r) return false;
+    rasters.push(r);
+  }
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  const turn = document.createElementNS(SVG_NS, "g");
+  const base = full ? placementOf(layer).arcStart + (layer.startAngle || 0) : 0;
+  const rot = spin + base;
+  if (rot) turn.setAttribute("transform", `rotate(${rot} ${CENTER} ${CENTER})`);
+  rasters.forEach((r) => turn.appendChild(brushImageEl(r.url, CENTER + r.x, CENTER + r.y, r.w, r.h)));
+  g.appendChild(turn);
+  return true;
+}
+
+// Straight preview: horizontal bands [x0, x1] at height y.
+function drawBrushBands(g, layer, spans, y) {
+  if (!(layer.strokeWidth > 0)) return false;
+  const info = brushPrep(layer);
+  if (!info) return false;
+  const imgs = [];
+  for (const [x0, x1] of spans) {
+    const len = x1 - x0;
+    if (!(len > 0.01)) continue;
+    const strip = brushStripUrl(info, len);
+    if (!strip) return false;
+    imgs.push(brushImageEl(strip.url, x0, y - info.sw / 2, len, info.sw));
+  }
+  imgs.forEach((el) => g.appendChild(el));
+  return true;
+}
+
+// Line layers: one <image> in <defs>, reused by every copy through <use>. The line runs along y.
+function drawBrushLineDef(g, layer, defId, len) {
+  if (!(layer.strokeWidth > 0) || !(len > 0)) return false;
+  const info = brushPrep(layer);
+  if (!info) return false;
+  const strip = brushStripUrl(info, len);
+  if (!strip) return false;
+  const defs = document.createElementNS(SVG_NS, "defs");
+  defs.appendChild(brushImageEl(strip.url, -len / 2, -info.sw / 2, len, info.sw, { id: defId, transform: "rotate(90)" }));
+  g.appendChild(defs);
+  return true;
+}
+
+// --- Brush panel (one per mode, inside that mode's Roughness panel) ---
+const BRUSH_UIS = [];
+
+const BRUSH_MODES = {
+  circle: {
+    get: () => state.brush,
+    set: (b) => (state.brush = b),
+    push: () => pushHistory(),
+    render: () => render(),
+    layers: () => state.layers,
+  },
+  straight: {
+    get: () => smState.brush,
+    set: (b) => (smState.brush = b),
+    push: () => smPushHistory(),
+    render: () => {
+      smRender();
+      scheduleAnimSizeEstimateUpdate();
+    },
+    layers: () => smState.layers,
+  },
+};
+
+// One undo step per change. `patch` is merged into the mode's global brush.
+function applyBrushPatch(mode, patch) {
+  const m = BRUSH_MODES[mode];
+  m.push();
+  const was = m.get();
+  const next = { ...brushDefault(), ...was, ...patch };
+  if (patch.id && patch.id !== was.id && patch.tint === undefined) {
+    if (patch.id === "custom" || was.id === "custom" || was.id === "none") next.tint = patch.id !== "custom";
+  }
+  m.set(sanitizeBrush(next));
+  refreshBrushControls();
+  m.render();
+}
+
+function buildBrushUI(panelId, p, mode) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return null;
+  const opts = ['<option value="none">Rough</option>']
+    .concat(BUILTIN_BRUSHES.map((b) => `<option value="${b.id}">${b.label}</option>`))
+    .concat(['<option value="custom">Custom PNG…</option>']);
+  const grp = document.createElement("div");
+  grp.className = "brush-group";
+  grp.innerHTML = `<div class="sf-grid">
+<div class="sf sf-wide" title="Roughness, or one art brush for the whole image: the brush image is stretched (or tiled) along every ring, arc and line and bent with it, like an Illustrator art brush">
+<div class="sf-head"><label for="${p}BrushId">Style</label></div>
+<div class="sf-box"><select id="${p}BrushId">${opts.join("")}</select></div>
+</div>
+<div class="sf sf-wide brush-only" title="Stretch: the whole image over the stroke. Tile: the image repeated at its own shape.">
+<div class="sf-head"><label for="${p}BrushFit">Fit</label></div>
+<div class="sf-box"><select id="${p}BrushFit"><option value="stretch">Stretch</option><option value="tile">Tile</option></select></div>
+</div>
+</div>
+<div class="sf-toggles brush-only"><label class="sf-toggle" title="Paint the brush in each stroke's own colour"><input type="checkbox" id="${p}BrushTint" /><span>Tint with stroke colour</span></label></div>
+<div class="sf-btns brush-only brush-custom-btn"><button type="button" id="${p}BrushLoad" title="Choose a PNG (with transparency) to use as the brush">Choose image…</button></div>
+<div class="motif-preview brush-only"><canvas class="brush-thumb" id="${p}BrushThumb" width="240" height="40"></canvas><span class="motif-preview-name" id="${p}BrushName"></span></div>
+<p class="hint sf-hint brush-only">The brush replaces Roughness on every ring, arc and line, here and in the Straight preview. Shapes and text are drawn plain. While you drag, strokes show plain.</p>
+<input type="file" id="${p}BrushFile" accept="image/png,image/*" hidden />`;
+  const h2 = panel.querySelector("h2");
+  for (const el of panel.children) if (el !== h2) el.classList.add("rough-only"); // the Roughness hints and Amount
+  h2.after(grp);
+  const ui = { p, mode, grp, panel, id: grp.querySelector(`#${p}BrushId`), fit: grp.querySelector(`#${p}BrushFit`), tint: grp.querySelector(`#${p}BrushTint`), file: grp.querySelector(`#${p}BrushFile`) };
+  BRUSH_UIS.push(ui);
+
+  ui.id.addEventListener("change", () => {
+    const v = ui.id.value;
+    if (!v) return;
+    if (v === "custom" && !BRUSH_MODES[mode].get().customDataUrl) {
+      ui.file.value = "";
+      ui.file.click();
+      refreshBrushControls(); // keep showing the old choice until an image arrives
+      return;
+    }
+    applyBrushPatch(mode, { id: v });
+  });
+  ui.fit.addEventListener("change", () => applyBrushPatch(mode, { fit: ui.fit.value }));
+  ui.tint.addEventListener("change", () => applyBrushPatch(mode, { tint: ui.tint.checked }));
+  grp.querySelector(`#${p}BrushLoad`).addEventListener("click", () => {
+    ui.file.value = "";
+    ui.file.click();
+  });
+  ui.file.addEventListener("change", () => {
+    const f = ui.file.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => applyBrushPatch(mode, { id: "custom", customDataUrl: reader.result, customName: f.name, tint: false });
+    reader.readAsDataURL(f);
+  });
+  return ui;
+}
+
+let brushRefreshTimer = null;
+function refreshBrushControlsSoon() {
+  clearTimeout(brushRefreshTimer);
+  brushRefreshTimer = setTimeout(() => refreshBrushControls(), 0);
+}
+
+// Puts both Roughness panels in line with their mode's brush (undo, redo, load, any change).
+function refreshBrushControls() {
+  for (const ui of BRUSH_UIS) {
+    const m = BRUSH_MODES[ui.mode];
+    const b = m.get() || brushDefault();
+    const on = brushOn(b);
+    ui.id.value = b.id;
+    ui.fit.value = b.fit === "tile" ? "tile" : "stretch";
+    ui.tint.checked = b.tint !== false;
+    ui.grp.querySelectorAll(".brush-only").forEach((el) => (el.style.display = on ? "" : "none"));
+    ui.panel.querySelectorAll(".rough-only").forEach((el) => (el.style.display = on ? "none" : ""));
+    ui.grp.querySelector(".brush-custom-btn").style.display = on && b.id === "custom" ? "" : "none";
+    const thumb = ui.grp.querySelector(".brush-thumb");
+    const ctx = thumb.getContext("2d");
+    ctx.clearRect(0, 0, thumb.width, thumb.height);
+    ui.grp.querySelector(".motif-preview-name").textContent = b.id === "custom" ? b.customName || "Custom image" : "";
+    if (on) {
+      const src = brushSourceOf(b);
+      if (src) {
+        const sample = m.layers().find((l) => BRUSHABLE_TYPES.has(l.type));
+        const tb = brushTinted(src, b.tint !== false, (sample && sample.strokeColor) || "#e0e0e0", false);
+        ctx.imageSmoothingQuality = "high";
+        const h = Math.min(thumb.height, ((thumb.width * src.h) / src.w) * 4);
+        ctx.drawImage(tb.canvas, 0, (thumb.height - h) / 2, thumb.width, h);
+      }
+    }
+  }
+}
+
+if (BRUSH_UI) {
+  buildBrushUI("roughnessPanel", "ring", "circle");
+  buildBrushUI("smRoughnessPanel", "sm", "straight");
+} // first refresh: applyDefaultProject
 
 // --- Rendering ---
 // Shared per-type drawers: each takes a target <g> and a precomputed items list
@@ -2925,6 +4706,10 @@ function getRoughPiecePasses(layer, slot, keyBase, pieces, samplePiece, roughnes
 
 function drawRing(g, layer, roughness) {
   const arc = visibleArc(layer);
+  if (brushActive(layer)) {
+    if (drawBrushRing(g, layer, arc)) return;
+    roughness = 0; // plain stroke stands in for the brush (draft, or the custom image is still decoding)
+  }
   if (!arc.full) {
     drawRingArcs(g, layer, arc.pieces, roughness);
     return;
@@ -3262,6 +5047,12 @@ function appendRoughOutlineDef(defs, defId, passes, strokeColor) {
 // which one it is drawing into (see ROUGH_SCALE).
 function drawLine(g, layer, items, roughness, roughScale = ROUGH_SCALE) {
   let roughDefId = null;
+  let brushDefId = null;
+  if (brushActive(layer)) {
+    const id = `brush-line-${layer.id}`;
+    if (drawBrushLineDef(g, layer, id, layer.length)) brushDefId = id;
+    roughness = 0;
+  }
   if (roughness > 0) {
     const passes = getRoughOutlinePasses(
       layer, "line", String(layer.length),
@@ -3276,9 +5067,9 @@ function drawLine(g, layer, items, roughness, roughScale = ROUGH_SCALE) {
   for (const item of items) {
     const itemG = document.createElementNS(SVG_NS, "g");
     itemG.setAttribute("transform", `translate(${item.x} ${item.y}) rotate(${item.rotation})`);
-    if (roughDefId) {
+    if (roughDefId || brushDefId) {
       const use = document.createElementNS(SVG_NS, "use");
-      use.setAttribute("href", `#${roughDefId}`);
+      use.setAttribute("href", `#${brushDefId || roughDefId}`);
       itemG.appendChild(use);
     } else {
       const line = document.createElementNS(SVG_NS, "line");
@@ -3318,6 +5109,12 @@ function drawStraightLine(g, layer, roughness) {
   const half = layer.length / 2;
   const style = layer.lineStyle || "solid";
   let roughDefId = null;
+  let brushDefId = null;
+  if (brushActive(layer)) {
+    const id = `brush-straight-${layer.id}`;
+    if (drawBrushLineDef(g, layer, id, layer.length)) brushDefId = id;
+    roughness = 0;
+  }
   if (roughness > 0) {
     const passes = getRoughOutlinePasses(
       layer, "straight", String(layer.length),
@@ -3348,9 +5145,9 @@ function drawStraightLine(g, layer, roughness) {
     hit.setAttribute("stroke-dasharray", "none");
     hit.setAttribute("pointer-events", "stroke");
     copy.appendChild(hit);
-    if (roughDefId) {
+    if (roughDefId || brushDefId) {
       const use = document.createElementNS(SVG_NS, "use");
-      use.setAttribute("href", `#${roughDefId}`);
+      use.setAttribute("href", `#${brushDefId || roughDefId}`);
       copy.appendChild(use);
     } else {
       const line = document.createElementNS(SVG_NS, "line");
@@ -3540,6 +5337,7 @@ function appendMirrorTwins(content, layerG, layer, mirror) {
   for (const [sx, sy] of flips) {
     const wrap = document.createElementNS(SVG_NS, "g");
     wrap.dataset.layerId = layer.id;
+    tagBlendEl(wrap, layer);
     wrap.classList.add("layer-hit");
     const use = document.createElementNS(SVG_NS, "use");
     use.setAttribute("href", `#layer-grp-${layer.id}`);
@@ -3555,14 +5353,46 @@ function groupTransformActive(layers) {
 }
 
 // Centre of the selected layers' origins, in canvas coordinates: what a group turns about.
-function selectionPivot(layers) {
-  let sx = 0, sy = 0;
-  for (const l of layers) {
-    const p = placementOf(l);
-    sx += CENTER + p.originX;
-    sy += CENTER + p.originY;
+// Whole Repeat groups inside a multi-selection: each counts as ONE point (its pivot) for the
+// selection's anchors, so the blue anchor sits where the pattern is centred. A single Repeat group
+// selected on its own keeps the old behaviour (its members' own origins) so the original can still
+// be moved around its pivot.
+function anchorRepeatGroups(layers) {
+  if (layers.length < 2) return [];
+  const sel = new Set(layers.map((l) => l.id));
+  const whole = new Set();
+  for (const g of state.groups) {
+    if (!g.repeat) continue;
+    const ls = subtreeLayers(state, g.id);
+    if (ls.length && ls.every((l) => sel.has(l.id))) whole.add(g.id);
   }
-  return { x: sx / layers.length, y: sy / layers.length };
+  const roots = state.groups.filter((g) => {
+    if (!whole.has(g.id)) return false;
+    for (let p = parentGroupOf(state, g), n = 0; p && n < 64; p = parentGroupOf(state, p), n++) if (whole.has(p.id)) return false;
+    return true;
+  });
+  if (roots.length === 1 && subtreeLayers(state, roots[0].id).length === layers.length) return [];
+  return roots;
+}
+
+// The selection's anchor points in canvas coordinates: a repeat group's pivot, or a layer's origin.
+function selectionPoints(layers) {
+  const reps = anchorRepeatGroups(layers);
+  const covered = new Set();
+  for (const g of reps) for (const l of subtreeLayers(state, g.id)) covered.add(l.id);
+  const pts = reps.map((g) => ({ x: CENTER + g.repeat.pivotX, y: CENTER + g.repeat.pivotY }));
+  for (const l of layers) {
+    if (covered.has(l.id)) continue;
+    const p = placementOf(l);
+    pts.push({ x: CENTER + p.originX, y: CENTER + p.originY });
+  }
+  return { pts, reps, covered };
+}
+
+// Centre of the selection's anchor points, in canvas coordinates: what a group turns about.
+function selectionPivot(layers) {
+  const { pts } = selectionPoints(layers);
+  return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length };
 }
 
 // Editor-only grab handles for the origin of every selected layer. Sized in screen px
@@ -3571,11 +5401,25 @@ function selectionPivot(layers) {
 // group (or several layers) the per-layer handles give way to ONE handle pair (see
 // appendLayerHandles / groupAnchor).
 function appendOriginHandles(svg) {
-  const ctm = svg.getScreenCTM();
-  const unit = 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2); // SVG units per screen px
+  const unit = svgUnitsPerPx(svg); // SVG units per screen px
   const layers = getSelectedLayers();
-  // A group has only its one handle (see appendLayerHandles): no per-layer origin handles.
-  if (groupTransformActive(layers)) return;
+  // A group has ONE origin anchor at the mean of its members' origins (same look as a single
+  // layer's); dragging it moves every member by the same delta. It goes UNDER the radius ball
+  // and rotate knob (inserted before them) so those win the hit-test when they overlap.
+  if (groupTransformActive(layers)) {
+    const pv = selectionPivot(layers);
+    const h = document.createElementNS(SVG_NS, "g");
+    h.setAttribute("class", "editor-only origin-handle group-origin-handle");
+    h.dataset.originHandle = "pivot";
+    h.setAttribute("transform", `translate(${pv.x} ${pv.y}) scale(${unit})`);
+    h.innerHTML = `<circle r="14" fill="transparent" pointer-events="all" />
+      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+    const firstHandle = svg.querySelector(".layer-handle");
+    if (firstHandle) svg.insertBefore(h, firstHandle);
+    else svg.appendChild(h);
+    return;
+  }
   for (const layer of layers) {
     const p = placementOf(layer);
     const h = document.createElementNS(SVG_NS, "g");
@@ -3608,7 +5452,13 @@ function layerSpin(layer) {
   return (layer.animSpeed || 0) * getAnimElapsedSeconds();
 }
 
+// While render() runs, the Ring editor's screen scale is the one read BEFORE the SVG was rebuilt
+// (renderReads): asking the browser after the rebuild would force a synchronous layout of the whole
+// new drawing. Anything else (events, zoom) reads it live.
+let renderReads = null;
+
 function svgUnitsPerPx(svg) {
+  if (renderReads && svg.id === "canvas") return renderReads.unit;
   const ctm = svg.getScreenCTM();
   return 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2);
 }
@@ -3666,9 +5516,38 @@ function layerAnchor(layer) {
 
 // The group handle: the middle of its members' own handle anchors (falls back to the pivot of
 // the origins when none has one), and the angle from the pivot out to it (what the knob points at).
+// A whole Repeat group selected on its own: its handle (move ball, rotate knob, scale and copies
+// badges) sits ON the pink pivot instead of at the members' middle. null for anything else.
+function handleRepeatGroup(layers) {
+  if (currentMode !== "circle") return null;
+  layers = layers || getSelectedLayers();
+  if (!groupTransformActive(layers)) return null;
+  return selectedWholeRepeat();
+}
+
+// Repeat groups nested inside g (not g itself), with their pivots at the moment of the call.
+function nestedRepeatPivots(g) {
+  const ids = groupSubtreeIds(state, g.id);
+  return state.groups.filter((x) => x !== g && x.repeat && ids.has(x.id)).map((x) => ({ g: x, x: x.repeat.pivotX, y: x.repeat.pivotY }));
+}
+
 function groupAnchor(layers) {
+  const rg = handleRepeatGroup(layers);
+  if (rg) {
+    const pv = { x: CENTER + rg.repeat.pivotX, y: CENTER + rg.repeat.pivotY };
+    const pts = layers.map(layerAnchor).filter(Boolean);
+    let ang = 0;
+    if (pts.length) {
+      const mx = pts.reduce((s, q) => s + q.x, 0) / pts.length, my = pts.reduce((s, q) => s + q.y, 0) / pts.length;
+      // the knob points away from the members so it stays clear of the drawing
+      if (Math.hypot(mx - pv.x, my - pv.y) > 0.5) ang = ((Math.atan2(mx - pv.x, -(my - pv.y)) * 180) / Math.PI + 180) % 360;
+    }
+    return { x: pv.x, y: pv.y, ang, pivot: pv };
+  }
   const pv = selectionPivot(layers);
-  const pts = layers.map(layerAnchor).filter(Boolean);
+  const { reps, covered } = selectionPoints(layers);
+  const pts = layers.filter((l) => !covered.has(l.id)).map(layerAnchor).filter(Boolean);
+  for (const g of reps) pts.push({ x: CENTER + g.repeat.pivotX, y: CENTER + g.repeat.pivotY, ang: 0 });
   if (pts.length === 0) return { x: pv.x, y: pv.y, ang: 0, pivot: pv };
   const x = pts.reduce((s, q) => s + q.x, 0) / pts.length;
   const y = pts.reduce((s, q) => s + q.y, 0) / pts.length;
@@ -3684,6 +5563,11 @@ function appendGroupHandle(svg, unit, layers) {
   const lead = getActiveLayer();
   if (!lead) return;
   const g = groupAnchor(layers);
+  if (handleRepeatGroup(layers)) {
+    // the ball itself is the pink pivot (appendRepeatPivotHandle): only the knob is drawn here
+    appendHandleGroup(svg, g.x, g.y, g.ang, unit, ROTATE_HANDLE_MARKUP(lead.id, "grouprotate"));
+    return;
+  }
   appendHandleGroup(svg, g.x, g.y, g.ang, unit, `
     <g data-handle="groupradius" data-handle-layer="${lead.id}">
       <circle r="14" fill="transparent" pointer-events="all" />
@@ -3749,6 +5633,11 @@ const SIZE_FIELD = {
 
 // { key, min, max } for this badge on this layer, or null if the layer type lacks the field.
 function badgeField(layer, kind) {
+  if (layer.type === REPEAT_COPIES_PROXY) return kind === "pcount" ? { key: "copies", min: 1, max: REPEAT_MAX_COPIES } : null;
+  if (layer.type === PIVOT_SCALE_PROXY) return kind === "pscale" ? { key: "scale", min: 1, max: 1000 } : null;
+  if (kind === "pcount" || kind === "pscale") return null;
+  if (layer.type === BLEND_STEPS_PROXY) return kind === "count" ? { key: "steps", min: 1, max: BLEND_MAX_STEPS } : null;
+  if (layer.type === GROUP_SCALE_PROXY) return kind === "size" ? { key: "scale", min: 1, max: 1000 } : null;
   if (kind === "count") {
     const r = COUNT_RANGE[layer.type];
     return r ? { key: "count", min: r[0], max: r[1] } : null;
@@ -3756,7 +5645,43 @@ function badgeField(layer, kind) {
   return SIZE_FIELD[layer.type] || null;
 }
 
+// With a group (or several layers) selected, the green badge is the group's Scale %, not each
+// layer's own size field (for a ring that would be its stroke width, which a group resize must
+// leave alone). It reads and writes through the same code as the sidebar's Scale field.
+const GROUP_SCALE_PROXY = "__groupScale";
+
+// With a blend group selected, the purple count badge is the blend's Steps (same idea).
+const BLEND_STEPS_PROXY = "__blendSteps";
+
+function blendStepsProxy() {
+  const g = selectedWholeBlend();
+  return g ? { id: BLEND_STEPS_PROXY, type: BLEND_STEPS_PROXY, steps: g.blend.steps, group: g } : null;
+}
+
+function groupScaleProxy() {
+  if (!groupTransformActive(getSelectedLayers())) return null;
+  const info = groupScaleInfo(circleApi);
+  if (!info) return null;
+  return { id: GROUP_SCALE_PROXY, type: GROUP_SCALE_PROXY, scale: groupScaleValue(circleApi, info) };
+}
+
 function badgeLayers(kind) {
+  if (kind === "size") {
+    const proxy = groupScaleProxy();
+    if (proxy) return [proxy];
+  }
+  if (kind === "pcount") {
+    const rproxy = repeatCopiesProxy();
+    return rproxy ? [rproxy] : [];
+  }
+  if (kind === "pscale") {
+    const sproxy = pivotScaleProxy();
+    return sproxy ? [sproxy] : [];
+  }
+  if (kind === "count") {
+    const proxy = blendStepsProxy();
+    if (proxy) return [proxy];
+  }
   return getSelectedLayers().filter((l) => badgeField(l, kind));
 }
 
@@ -3766,18 +5691,30 @@ function badgeDisplay(kind) {
   if (layers.length === 0) return null;
   const values = layers.map((l) => l[badgeField(l, kind).key]);
   const mixed = values.some((v) => v !== values[0]);
+  if (layers[0].type === GROUP_SCALE_PROXY) {
+    const v = Math.round(values[0]);
+    return { value: v, mixed: false, text: `${v}%` };
+  }
+  if (layers[0].type === REPEAT_COPIES_PROXY) return { value: values[0], mixed: false, text: String(values[0]), tip: "Repeat copies" };
+  if (layers[0].type === PIVOT_SCALE_PROXY) {
+    const v = Math.round(values[0]);
+    return { value: v, mixed: false, text: `${v}%`, tip: "Scale about the pivot (%)" };
+  }
+  if (layers[0].type === BLEND_STEPS_PROXY) return { value: values[0], mixed: false, text: String(values[0]), tip: "Blend steps" };
   return { value: values[0], mixed, text: mixed ? MIXED_VALUE_TEXT : String(values[0]) };
 }
 
 const SIZE_GLYPH = `<path d="M -5 -8.5 H 5 M -5 -8.5 L -3 -10.5 M -5 -8.5 L -3 -6.5 M 5 -8.5 L 3 -10.5 M 5 -8.5 L 3 -6.5" fill="none" stroke="${BADGE_GREEN}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />`;
 
-function badgeMarkup(kind, text) {
-  const colour = kind === "count" ? BADGE_PURPLE : BADGE_GREEN;
-  const tip = kind === "count" ? "Clones" : "Size";
+function badgeMarkup(kind, text, customTip) {
+  const isCount = kind === "count" || kind === "pcount";
+  const isSize = kind === "size" || kind === "pscale";
+  const colour = isCount ? BADGE_PURPLE : BADGE_GREEN;
+  const tip = customTip || (isCount ? "Clones" : String(text).endsWith("%") ? "Group size (%)" : "Size");
   return `<title>${tip}: click to type, drag left/right or scroll to change (Shift: coarser)</title>
     <circle r="${BADGE_RADIUS_PX}" fill="#1d2026" stroke="${colour}" stroke-width="2" />
-    ${kind === "size" ? SIZE_GLYPH : ""}
-    <text y="${kind === "size" ? 6 : 4.5}" text-anchor="middle" font-size="${kind === "size" ? 10.5 : 11.5}" font-weight="600" fill="#e8eefc" font-family="system-ui, sans-serif" pointer-events="none">${text}</text>`;
+    ${isSize ? SIZE_GLYPH : ""}
+    <text y="${isSize ? 6 : 4.5}" text-anchor="middle" font-size="${isSize ? 10.5 : 11.5}" font-weight="600" fill="#e8eefc" font-family="system-ui, sans-serif" pointer-events="none">${text}</text>`;
 }
 
 function placeBadge(el, unit) {
@@ -3789,10 +5726,13 @@ function placeBadge(el, unit) {
 function appendValueBadges(svg) {
   const lead = getActiveLayer();
   if (!lead || layerIsHidden(state, lead)) return;
-  const kinds = ["count", "size"].filter((k) => badgeDisplay(k));
+  const selected = getSelectedLayers();
+  // A repeat group's handle sits on the pivot, where the pink Copies and Scale badges are: the
+  // ball's own Scale (group anchor) and per-layer Count give way; a blend's Steps stays.
+  const onPivot = !!handleRepeatGroup(selected);
+  const kinds = ["count", "size"].filter((k) => badgeDisplay(k) && !(onPivot && (k === "size" || !selectedWholeBlend())));
   if (kinds.length === 0) return;
   const unit = svgUnitsPerPx(svg);
-  const selected = getSelectedLayers();
   const grouped = groupTransformActive(selected);
   // For a group the badges sit by the group ball, on the side away from its rotate knob.
   const ga = grouped ? groupAnchor(selected) : null;
@@ -3809,7 +5749,8 @@ function appendValueBadges(svg) {
     g.dataset.by = CENTER + p.originY;
     g.dataset.bdx = u.x * BADGE_DISTANCE_PX;
     g.dataset.bdy = u.y * BADGE_DISTANCE_PX;
-    g.innerHTML = badgeMarkup(kind, badgeDisplay(kind).text);
+    const disp = badgeDisplay(kind);
+    g.innerHTML = badgeMarkup(kind, disp.text, disp.tip);
     placeBadge(g, unit);
     svg.appendChild(g);
   });
@@ -3827,6 +5768,86 @@ let badgeBurstRatios = new Map(); // locked shapes keep the proportions they had
 // `burst` is false for a typed value (its own undo step), true for wheel notches (one step per
 // burst) or "drag" for a scrub (the drag pushes its one undo step itself, on its first change).
 function applyBadgeValue(kind, compute, burst) {
+  const proxy = kind === "size" ? groupScaleProxy() : null;
+  if (proxy) {
+    const field = badgeField(proxy, kind);
+    const value = Math.min(field.max, Math.max(field.min, Math.round(compute(proxy, field))));
+    if (value === Math.round(proxy.scale)) return;
+    const num = document.getElementById(circleApi.scale.id + "Num");
+    num.value = String(value);
+    applyGroupScale(circleApi, num); // opens its own undo step when a new gesture starts
+    if (burst === true) {
+      clearTimeout(badgeBurstTimer);
+      badgeBurstTimer = setTimeout(() => (circleApi.scale.gesture = null), BADGE_BURST_MS);
+    } else if (burst !== "drag") {
+      circleApi.scale.gesture = null;
+    }
+    return;
+  }
+  const pivotProxy = kind === "pscale" ? pivotScaleProxy() : null;
+  if (pivotProxy) {
+    const field = badgeField(pivotProxy, kind);
+    const value = Math.min(field.max, Math.max(field.min, Math.round(compute(pivotProxy, field))));
+    if (value === Math.round(pivotProxy.scale)) return;
+    applyPivotScale(pivotProxy.group, value, null); // opens its own undo step when a new gesture starts
+    if (burst === true) {
+      clearTimeout(badgeBurstTimer);
+      badgeBurstTimer = setTimeout(() => (pivotScaleGesture = null), BADGE_BURST_MS);
+    } else if (burst !== "drag") {
+      pivotScaleGesture = null;
+    }
+    return;
+  }
+  const repeatProxy = kind === "pcount" ? repeatCopiesProxy() : null;
+  if (repeatProxy) {
+    const field = badgeField(repeatProxy, kind);
+    const value = Math.min(field.max, Math.max(field.min, Math.round(compute(repeatProxy, field))));
+    if (value === repeatProxy.copies) return;
+    if (burst === "drag") {
+      if (badgeDrag && !badgeDrag.pushed) {
+        badgeDrag.pushed = true;
+        pushHistory();
+      }
+    } else if (burst) {
+      if (!badgeBurstOpen) {
+        badgeBurstOpen = true;
+        pushHistory();
+      }
+      clearTimeout(badgeBurstTimer);
+      badgeBurstTimer = setTimeout(() => (badgeBurstOpen = false), BADGE_BURST_MS);
+    } else {
+      pushHistory();
+    }
+    setRepeatCopies(repeatProxy.group, value);
+    refreshControls();
+    requestRender(!!burst);
+    return;
+  }
+  const blendProxy = kind === "count" ? blendStepsProxy() : null;
+  if (blendProxy) {
+    const field = badgeField(blendProxy, kind);
+    const value = Math.min(field.max, Math.max(field.min, Math.round(compute(blendProxy, field))));
+    if (value === blendProxy.steps) return;
+    if (burst === "drag") {
+      if (badgeDrag && !badgeDrag.pushed) {
+        badgeDrag.pushed = true;
+        pushHistory();
+      }
+    } else if (burst) {
+      if (!badgeBurstOpen) {
+        badgeBurstOpen = true;
+        pushHistory();
+      }
+      clearTimeout(badgeBurstTimer);
+      badgeBurstTimer = setTimeout(() => (badgeBurstOpen = false), BADGE_BURST_MS);
+    } else {
+      pushHistory();
+    }
+    setBlendSteps(blendProxy.group, value);
+    refreshControls();
+    requestRender(!!burst);
+    return;
+  }
   const changes = [];
   for (const l of badgeLayers(kind)) {
     const field = badgeField(l, kind);
@@ -3863,7 +5884,7 @@ function applyBadgeValue(kind, compute, burst) {
     l[field.key] = value;
   }
   refreshControls();
-  render();
+  requestRender(!!burst);
 }
 
 // Press and drag a badge left/right to scrub its value; a press that barely moves is a click and
@@ -3894,7 +5915,7 @@ function moveBadgeDrag(e) {
   const coarse = e.shiftKey;
   applyBadgeValue(d.kind, (l, field) => {
     const base = d.base.has(l.id) ? d.base.get(l.id) : l[field.key];
-    if (d.kind === "count") return base + Math.round(dx / COUNT_PX_PER_STEP) * (coarse ? 5 : 1);
+    if (d.kind === "count" || d.kind === "pcount") return base + Math.round(dx / COUNT_PX_PER_STEP) * (coarse ? 5 : 1);
     // Size moves in proportion to the value it starts from (a 300 asset changes faster than a
     // 10 px stroke); Shift is five times coarser and lands on multiples of 10.
     const v = base + dx * Math.max(1, base * 0.01) * (coarse ? 5 : 1);
@@ -3907,6 +5928,8 @@ function endBadgeDrag(e) {
   if (!d) return;
   const svg = document.getElementById("canvas");
   badgeDrag = null;
+  circleApi.scale.gesture = null; // a group-scale scrub ends with the drag
+  pivotScaleGesture = null;
   if (svg.hasPointerCapture(d.pointerId)) svg.releasePointerCapture(d.pointerId);
   svg.classList.remove("badge-scrubbing");
   if (!d.moved && e.type === "pointerup") openBadgeEditor(d.kind);
@@ -3942,7 +5965,7 @@ function openBadgeEditor(kind) {
   input.type = "text";
   input.inputMode = "numeric";
   input.className = "badge-editor";
-  input.setAttribute("aria-label", kind === "count" ? "Clone count" : "Size");
+  input.setAttribute("aria-label", kind === "count" ? "Clone count" : kind === "pcount" ? "Repeat copies" : kind === "pscale" ? "Scale about the pivot (%)" : "Size");
   input.value = disp.mixed ? "" : String(disp.value);
   document.body.appendChild(input);
   badgeEditor = { kind, input };
@@ -3992,6 +6015,10 @@ function rescaleHandles() {
     const m = /translate\(([^)]*)\)/.exec(h.getAttribute("transform"));
     if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${unit})`);
   });
+  svg.querySelectorAll(".repeat-pivot-handle").forEach((h) => {
+    const m = /translate\(([^)]*)\)/.exec(h.getAttribute("transform"));
+    if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${unit})`);
+  });
   svg.querySelectorAll(".value-badge").forEach((b) => placeBadge(b, unit));
   positionBadgeEditor();
 }
@@ -3999,23 +6026,122 @@ function rescaleHandles() {
 // Artwork outside the artboard stays visible in the editor but is not exported. So that
 // it is clear what the export covers, the area outside the artboard (as far as there is
 // artwork) is shaded and the artboard edge drawn. Editor-only: exports strip it.
-function appendArtboardShade(svg) {
+function buildArtboardShade() {
   const b = designBox;
-  if (!b) return;
+  if (!b) return null;
   const x0 = Math.min(0, b.x), y0 = Math.min(0, b.y);
   const x1 = Math.max(CANVAS_SIZE, b.x + b.width), y1 = Math.max(CANVAS_SIZE, b.y + b.height);
-  if (x0 === 0 && y0 === 0 && x1 === CANVAS_SIZE && y1 === CANVAS_SIZE) return;
+  if (x0 === 0 && y0 === 0 && x1 === CANVAS_SIZE && y1 === CANVAS_SIZE) return null;
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", "editor-only");
   g.setAttribute("pointer-events", "none");
   g.innerHTML = `<path fill-rule="evenodd" fill="rgba(11,12,14,0.6)" d="M ${x0} ${y0} H ${x1} V ${y1} H ${x0} Z M 0 0 V ${CANVAS_SIZE} H ${CANVAS_SIZE} V 0 Z" />
     <rect x="0" y="0" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="none" stroke="#8fb8f0" stroke-opacity="0.8" stroke-width="1.5" vector-effect="non-scaling-stroke" />`;
-  svg.appendChild(g);
+  return g;
 }
+
+// Drawn with the design box of the PREVIOUS measure; flushDesignBox swaps it when the box changed.
+let shadeEl = null;
+function appendArtboardShade(svg) {
+  shadeEl = buildArtboardShade();
+  if (shadeEl) svg.appendChild(shadeEl);
+}
+
+// --- Draft mode and render coalescing ---
+// While a gesture is running (a handle, badge, pivot or origin drag, a slider or scrub, a wheel
+// burst) every redraw is a DRAFT: plain vector strokes (roughness counts as 0, see
+// effectiveRoughness), a bent asset or shape whose bitmap is not already cached is drawn flat,
+// and the Straight preview is not rebuilt. About DRAFT_END_MS after the last gesture signal, and
+// only once the pointer is up, endDraft() redraws once at full quality. Anything added later that
+// is expensive to draw (an art brush, say) should check `drafting` / effectiveRoughness() too.
+const DRAFT_END_MS = 150;
+let drafting = false;
+let straightStale = false; // the Straight preview was skipped by a draft render
+let draftTimer = null;
+let pointerIsDown = false;
+let renderQueued = false;
+
+function effectiveRoughness() {
+  return drafting || brushOn(state.brush) ? 0 : state.roughness; // an art brush replaces roughness (shapes then draw plain)
+}
+
+// Called by gesture handlers: starts (or extends) draft mode.
+function noteGesture() {
+  drafting = true;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(draftTimerFired, DRAFT_END_MS);
+}
+
+function draftTimerFired() {
+  if (pointerIsDown) {
+    draftTimer = setTimeout(draftTimerFired, DRAFT_END_MS); // still holding the pointer: stay in draft
+    return;
+  }
+  endDraft();
+}
+
+// Leave draft mode without drawing (exports call this, then render themselves).
+function settleDraft() {
+  drafting = false;
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  renderQueued = false;
+}
+
+function renderCurrentMode() {
+  if (currentMode === "circle") render();
+  else smRender();
+}
+
+function endDraft() {
+  if (!drafting) return;
+  settleDraft();
+  renderCurrentMode();
+}
+
+// Schedules ONE render per animation frame. `gesture`: true = this is part of a gesture (draft),
+// false = never draft, omitted = draft while the pointer is down. Use render() itself when the DOM
+// is needed straight afterwards.
+function requestRender(gesture) {
+  if (gesture === undefined ? pointerIsDown : gesture) noteGesture();
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    if (renderQueued) renderCurrentMode();
+  });
+}
+
+window.addEventListener("pointerdown", () => (pointerIsDown = true), true);
+const pointerUpHandler = () => {
+  pointerIsDown = false;
+  if (drafting) {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(draftTimerFired, DRAFT_END_MS);
+  }
+};
+window.addEventListener("pointerup", pointerUpHandler, true);
+window.addEventListener("pointercancel", pointerUpHandler, true);
+window.addEventListener("blur", pointerUpHandler);
 
 function render() {
   const svg = document.getElementById("canvas");
+  // Read what layout is needed BEFORE the drawing is rebuilt (cheap: layout is clean here); the
+  // rebuild itself then never forces a layout. See renderReads, syncStraightPreviewToRing.
+  const ctm = svg.getScreenCTM();
+  renderReads = { unit: 1 / (ctm && ctm.a > 0 ? ctm.a : 0.2), ringW: svg.getBoundingClientRect().width };
+  try {
+    renderCircle(svg);
+  } finally {
+    renderReads = null;
+  }
+}
+
+function renderCircle(svg) {
+  renderQueued = false; // a synchronous render satisfies any queued one
+  curBrush = state.brush;
   svg.innerHTML = "";
+  const rough = effectiveRoughness();
+  const blendRendered = blendRenderLayers(state); // built once, handed to renderStraight below
 
   // Everything actual-artwork goes into one wrapper so the global mask (if any) can
   // apply once to the whole composition, without touching the editor-only indicator/seam
@@ -4023,9 +6149,10 @@ function render() {
   const content = document.createElementNS(SVG_NS, "g");
   const groupCursor = { id: null, el: null };
 
-  for (const layer of state.layers) {
+  for (const layer of blendRendered.list) {
     const layerG = document.createElementNS(SVG_NS, "g");
     layerG.dataset.layerId = layer.id;
+    tagBlendEl(layerG, layer);
     layerG.classList.add("layer-hit");
     layerG.setAttribute("opacity", (layer.opacity != null ? layer.opacity : 100) / 100);
     const parent = layerParentFor(state, content, layer, groupCursor);
@@ -4049,7 +6176,7 @@ function render() {
     }
 
     if (layer.type === "ring") {
-      drawRing(g, layer, state.roughness);
+      drawRing(g, layer, rough);
     } else if (layer.type === "text") {
       drawRingText(g, layer);
     } else if (layer.type === "motif") {
@@ -4057,7 +6184,8 @@ function render() {
       // part of the file (see snapshotLayers) and gets reloaded from imageDataUrl
       // asynchronously, so bend falls back to flat for the instant before that finishes
       // rather than handing a not-yet-loaded image to canvas drawImage.
-      if (!layer.bend || !layer.imageDataUrl || !layer.imageEl) {
+      // While drafting, a bend whose bitmap is not cached yet is drawn flat (no raster pass).
+      if (!layer.bend || !layer.imageDataUrl || !layer.imageEl || (drafting && !bentImageCached(layer))) {
         drawMotifFlat(g, layer, distributeAngles(layer));
       } else {
         // Bend is pre-rendered once per layer into a single seamless bitmap (see
@@ -4100,12 +6228,12 @@ function render() {
         }
       }
     } else if (layer.type === "line") {
-      drawLine(g, layer, distributeAngles(layer), state.roughness);
+      drawLine(g, layer, distributeAngles(layer), rough);
     } else if (layer.type === "straight") {
-      drawStraightLine(g, layer, state.roughness);
+      drawStraightLine(g, layer, rough);
     } else if (layer.type === "shape") {
-      if (!layer.bend) {
-        drawShape(g, layer, distributeAngles(layer), state.roughness);
+      if (!layer.bend || (drafting && !bentShapeCached(layer))) {
+        drawShape(g, layer, distributeAngles(layer), rough);
       } else {
         // Same <defs>/<use> sharing as the bent-motif path above: the bent bitmap is
         // rendered once per layer and every copy just places that same image rigidly.
@@ -4145,10 +6273,16 @@ function render() {
 
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle");
   svg.appendChild(content);
-  designBox = measureDesignBox(content, svg);
+  scheduleDesignBox(content); // measured later (getBBox forces a layout of the whole drawing)
   appendArtboardShade(svg);
 
-  renderStraight();
+  // The Straight preview is a second full rebuild; while a gesture is running it is left as it
+  // was and redone with the final full render (see endDraft).
+  if (drafting) straightStale = true;
+  else {
+    renderStraight(blendRendered.list);
+    straightStale = false;
+  }
 
   const active = getActiveLayer();
   // (a straight line has no ring to outline; its end handles show where it is instead)
@@ -4199,7 +6333,7 @@ function render() {
   appendValueBadges(svg);
   appendLayerHandles(svg);
   appendOriginHandles(svg);
-  syncOverhang();
+  appendRepeatPivotHandle(svg); // last = on top of every other handle
 }
 
 // Click-to-select: delegated once (not re-added on every render, since render() only
@@ -4241,7 +6375,8 @@ function makeLayerClickCycler() {
     for (const el of document.elementsFromPoint(clientX, clientY)) {
       const g = el.closest("g[data-layer-id]");
       if (!g) continue;
-      const id = Number(g.dataset.layerId);
+      // an in-between of a blend picks the blend's start layer
+      const id = g.dataset.repeatGroup != null ? `g${g.dataset.repeatGroup}` : g.dataset.blendStart != null ? Number(g.dataset.blendStart) : Number(g.dataset.layerId);
       if (!ids.includes(id)) ids.push(id);
     }
     if (ids.length === 0) {
@@ -4302,8 +6437,13 @@ function moveOriginDrag(e) {
     layer.originX = o.x + dx;
     layer.originY = o.y + dy;
   }
+  for (const r of drag.reps || []) {
+    // a whole repeat group in the selection moves rigidly: members (above) and its pivot
+    r.g.repeat.pivotX = r.x + dx;
+    r.g.repeat.pivotY = r.y + dy;
+  }
   refreshControls();
-  render();
+  requestRender(true);
 }
 
 function endOriginDrag(e) {
@@ -4364,13 +6504,13 @@ function beginHandleDrag(e, kind, layerId) {
   // layer (or layers sharing one origin) just turns about its own.
   const groupMode = kind === "grouprotate" || kind === "groupradius" || base.size > 1;
   let pivot = origin;
-  if (base.size > 1) {
-    let sx = 0, sy = 0;
-    for (const b of base.values()) {
-      sx += CENTER + b.originX;
-      sy += CENTER + b.originY;
-    }
-    pivot = { x: sx / base.size, y: sy / base.size };
+  if (base.size > 1) pivot = selectionPivot(getSelectedLayers());
+  let reps = base.size > 1 ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: g.repeat.pivotX, y: g.repeat.pivotY })) : [];
+  // A whole repeat group turns about its own pivot (which stays put); pivots nested inside swing.
+  const repeatG = kind === "grouprotate" ? handleRepeatGroup() : null;
+  if (repeatG) {
+    pivot = { x: CENTER + repeatG.repeat.pivotX, y: CENTER + repeatG.repeat.pivotY };
+    reps = nestedRepeatPivots(repeatG);
   }
   // The group radius ball measures from the pivot, like its rotate knob turns about it.
   const ringOrigin = kind === "groupradius" ? pivot : origin;
@@ -4379,9 +6519,11 @@ function beginHandleDrag(e, kind, layerId) {
     groupMode,
     pointerId: e.pointerId,
     leadId: lead.id,
+    repeatG: !!repeatG,
     start: clientToSvgPoint(svg, e.clientX, e.clientY),
     origin: ringOrigin,
     pivot,
+    reps,
     base,
     moved: false,
   };
@@ -4439,11 +6581,17 @@ function moveHandleDrag(e) {
       if (d.groupMode && l.followRing === false && l.type !== "text" && typeof b.rotation === "number") {
         l.rotation = round2(wrapDegrees(b.rotation + delta));
       }
-      if (d.base.size > 1) {
+      if (d.base.size > 1 || d.repeatG) {
         const rx = CENTER + b.originX - d.pivot.x, ry = CENTER + b.originY - d.pivot.y;
         l.originX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
         l.originY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
       }
+    }
+    for (const r of d.reps || []) {
+      // a whole repeat group in the selection turns as one point: its pivot swings with the rest
+      const rx = CENTER + r.x - d.pivot.x, ry = CENTER + r.y - d.pivot.y;
+      r.g.repeat.pivotX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
+      r.g.repeat.pivotY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
     }
     readout = d.kind === "grouprotate" ? `${delta > 0 ? "+" : ""}${delta}°` : `${lead[rotateKeyOf(lead)]}°`;
   } else {
@@ -4504,7 +6652,7 @@ function moveHandleDrag(e) {
   }
   showDragReadout(e, readout);
   refreshControls();
-  render();
+  requestRender(true);
 }
 
 function endHandleDrag(e) {
@@ -4534,6 +6682,28 @@ document.getElementById("canvas").addEventListener("pointercancel", (e) => {
 
 document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+  const pivotHandle = e.target.closest("[data-repeat-pivot]");
+  if (pivotHandle) {
+    closeBadgeEditor(true);
+    const rg = pivotHandle.dataset.repeatBall === "1" && !e.altKey ? handleRepeatGroup() : null;
+    if (rg && rg.id === Number(pivotHandle.dataset.repeatPivot)) {
+      // the ball: move every member, the pivot and nested pivots by one shared delta
+      const svg = document.getElementById("canvas");
+      const origins = new Map();
+      for (const layer of getSelectedLayers()) {
+        const p = placementOf(layer);
+        origins.set(layer.id, { x: p.originX, y: p.originY });
+      }
+      const reps = [{ g: rg, x: rg.repeat.pivotX, y: rg.repeat.pivotY }, ...nestedRepeatPivots(rg)];
+      const pivot = { x: CENTER + rg.repeat.pivotX, y: CENTER + rg.repeat.pivotY };
+      originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
+      try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    } else {
+      beginRepeatPivotDrag(e, Number(pivotHandle.dataset.repeatPivot));
+    }
+    e.preventDefault();
+    return;
+  }
   const badge = e.target.closest("[data-badge]");
   if (badge) {
     closeBadgeEditor(true);
@@ -4549,7 +6719,8 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
       origins.set(layer.id, { x: p.originX, y: p.originY });
     }
     const pivot = e.target.closest("[data-origin-handle]").dataset.originHandle === "pivot" ? selectionPivot(getSelectedLayers()) : null;
-    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, moved: false };
+    const reps = pivot ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: g.repeat.pivotX, y: g.repeat.pivotY })) : [];
+    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
     svg.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
@@ -4563,7 +6734,8 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   // Ctrl/Cmd or Shift adds or removes the layer under the pointer, like the layer list.
   const multi = e.ctrlKey || e.metaKey || e.shiftKey;
   const id = pickCircleClickLayer(e.clientX, e.clientY, multi);
-  if (id != null) selectLayer(id, { toggle: multi });
+  if (typeof id === "string") selectGroupIn(circleApi, Number(id.slice(1)), { toggle: multi }); // a repeat copy picks its group's members
+  else if (id != null) selectLayer(id, { toggle: multi });
   else beginMarquee(e, "circle");
 });
 
@@ -4675,6 +6847,25 @@ function finishMarquee(m, cancelled) {
   for (const layer of t.layers) {
     if (layerIsHidden(t, layer)) continue;
     if (layerMeetsRect(m.svg, layer, rect)) hit.push(layer.id);
+  }
+  if (circle) {
+    // touching an in-between of a blend selects that blend's start and end layers
+    const blends = new Set();
+    const rendered = blendRenderLayers(state);
+    const repeats = new Set(); // touching a repeat copy selects the whole group
+    for (const layer of rendered.copies) {
+      if (repeats.has(layer._repeatGroup) || layerIsHidden(state, layer)) continue;
+      if (layerMeetsRect(m.svg, layer, rect)) repeats.add(layer._repeatGroup);
+    }
+    for (const gid of repeats) for (const l of subtreeLayers(state, gid)) if (!hit.includes(l.id)) hit.push(l.id);
+    for (const layer of rendered.synth) {
+      if (blends.has(layer._blendGroup) || layerIsHidden(state, layer)) continue;
+      if (layerMeetsRect(m.svg, layer, rect)) blends.add(layer._blendGroup);
+    }
+    for (const gid of blends) {
+      const g = state.groups.find((x) => x.id === gid);
+      for (const id of [g.blend.startId, g.blend.endId]) if (!hit.includes(id)) hit.push(id);
+    }
   }
   if (!hit.length) return;
   const ids = m.add ? [...new Set([...getSelectedLayersFrom(t).map((l) => l.id), ...hit])] : hit;
@@ -4816,6 +7007,51 @@ function applyPreviewSlack() {
 // off-artboard parts included. Measured at the end of each render().
 let designBox = null;
 
+// The measure is NOT done inside render(): getBBox forces a synchronous layout of the whole new
+// drawing (15-30 ms), and a draft or an idle redraw has no need of the answer at once. render()
+// calls scheduleDesignBox; the box is measured in the next animation frame (never while a gesture
+// is running: the settle render schedules it), or straight away when something asks for it
+// (flushDesignBox from syncOverhang and the fit-to-design view).
+let designBoxPending = false;
+let designBoxQueued = false;
+let designBoxContent = null;
+
+function scheduleDesignBox(content) {
+  designBoxContent = content;
+  designBoxPending = true;
+  if (drafting || designBoxQueued) return;
+  designBoxQueued = true;
+  requestAnimationFrame(() => {
+    designBoxQueued = false;
+    if (!drafting) flushDesignBox();
+  });
+}
+
+function sameBox(a, b) {
+  if (!a || !b) return a === b;
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+function flushDesignBox() {
+  if (!designBoxPending) return;
+  designBoxPending = false;
+  const content = designBoxContent;
+  if (!content || !content.isConnected) return;
+  const svg = document.getElementById("canvas");
+  const b = measureDesignBox(content, svg);
+  const changed = !sameBox(b, designBox);
+  designBox = b;
+  if (changed) {
+    const fresh = buildArtboardShade();
+    if (shadeEl && shadeEl.isConnected) {
+      if (fresh) shadeEl.replaceWith(fresh);
+      else shadeEl.remove();
+    } else if (fresh) content.after(fresh);
+    shadeEl = fresh;
+  }
+  syncOverhang();
+}
+
 function measureDesignBox(content, svg) {
   // A hidden SVG can't be measured; keep the last good box.
   if (!(svg.getBoundingClientRect().width > 0)) return designBox;
@@ -4834,6 +7070,7 @@ function measureDesignBox(content, svg) {
 // being edited or animated doesn't make the pane twitch. The Ring editor is held still
 // when it changes.
 function syncOverhang() {
+  flushDesignBox();
   const ring = document.getElementById("canvas");
   const want = { top: 0, right: 0, bottom: 0, left: 0 };
   const inCircle = currentMode === "circle";
@@ -5041,6 +7278,7 @@ function fitArtboardView() {
 // Everything visible in the Ring editor, off-artboard artwork and mirror twins included.
 // Straight mode has no such artwork, so there it is the same as fitting the artboard.
 function fitDesignView() {
+  flushDesignBox();
   if (currentMode !== "circle" || !designBox) return fitArtboardView();
   fitBoxInView(designBox, CANVAS_SIZE);
 }
@@ -5179,7 +7417,7 @@ function syncStraightPreviewToRing(makeRoom = false) {
   const svg = document.getElementById("straightCanvas");
   const ring = document.getElementById("canvas");
   if (!svg || !ring) return;
-  const ringPx = ring.getBoundingClientRect().width;
+  const ringPx = renderReads && ring.id === "canvas" ? renderReads.ringW : ring.getBoundingClientRect().width;
   // 0 while Straight mode is showing (Circle mode's preview is display:none, so it has no
   // box to measure). Leave the last good size alone — setMode calls applyZoom on the way
   // back into Circle mode, which re-syncs before anything is visible.
@@ -5251,11 +7489,13 @@ function drawStraightRingArcs(g, layer, maxR, padY, centerX) {
       from = to;
     }
   }
-  if (state.roughness > 0) {
+  const brushed = brushActive(layer);
+  if (brushed && drawBrushBands(g, layer, runs.map(([a, b]) => [toX(a), toX(b)]), y)) return;
+  if (!brushed && effectiveRoughness() > 0) {
     const passes = getRoughPiecePasses(
       layer, "ringStraightArc", `${layer.radius}|${y}`, runs,
       ([a, b]) => sampleSegmentPoints(toX(a), y, toX(b), y, ROUGH_SAMPLE_SPACING),
-      state.roughness
+      effectiveRoughness()
     );
     const defId = `rough-ringstraight-${layer.id}`;
     const defs = document.createElementNS(SVG_NS, "defs");
@@ -5278,11 +7518,12 @@ function drawStraightRingArcs(g, layer, maxR, padY, centerX) {
   }
 }
 
-function renderStraight() {
+function renderStraight(list = blendRenderLayers(state).list) {
+  curBrush = state.brush;
   const svg = document.getElementById("straightCanvas");
   svg.innerHTML = "";
   // Free straight lines belong to no ring, so there is nothing to unroll for them.
-  const stripLayers = state.layers.filter((l) => l.type !== "straight");
+  const stripLayers = list.filter((l) => l.type !== "straight");
   if (stripLayers.length === 0) {
     straightExportWidth = CANVAS_SIZE;
     straightExportHeight = 400;
@@ -5324,7 +7565,10 @@ function renderStraight() {
     } else if (layer.type === "ring") {
       const y = radiusToStraightY(layer.radius, maxR, padY);
       const half = Math.PI * layer.radius; // half this ring's own circumference
-      if (state.roughness > 0) {
+      const brushed = brushActive(layer);
+      if (brushed && drawBrushBands(g, layer, [[centerX - half, centerX + half]], y)) {
+        // drawn as an art brush band
+      } else if (!brushed && effectiveRoughness() > 0) {
         // Own cache slot ("ringStraight") — drawRing above already roughens this SAME
         // layer for the Ring editor itself, keyed by radius; this is a differently-shaped
         // path (a flat segment, not a circle) for the same layer, so it can't share that
@@ -5332,7 +7576,7 @@ function renderStraight() {
         const passes = getRoughOutlinePasses(
           layer, "ringStraight", `${half}|${y}`,
           () => sampleSegmentPoints(centerX - half, y, centerX + half, y, ROUGH_SAMPLE_SPACING),
-          false, state.roughness
+          false, effectiveRoughness()
         );
         const defId = `rough-ringstraight-${layer.id}`;
         const defs = document.createElementNS(SVG_NS, "defs");
@@ -5358,9 +7602,9 @@ function renderStraight() {
       // flat artwork even for a bent layer.
       drawMotifFlat(g, layer, distributeStraight(layer, maxR, padY, centerX));
     } else if (layer.type === "line") {
-      drawLine(g, layer, distributeStraight(layer, maxR, padY, centerX), state.roughness);
+      drawLine(g, layer, distributeStraight(layer, maxR, padY, centerX), effectiveRoughness());
     } else if (layer.type === "shape") {
-      drawShape(g, layer, distributeStraight(layer, maxR, padY, centerX), state.roughness);
+      drawShape(g, layer, distributeStraight(layer, maxR, padY, centerX), effectiveRoughness());
     }
 
     svg.appendChild(g);
@@ -5423,14 +7667,18 @@ function existingSvgIds(root) {
 
 // Names the user-group wrappers (data-group-id, see layerParentFor) in an export clone.
 function nameGroupWrappers(root) {
-  const wraps = root.querySelectorAll("g[data-group-id]");
+  const wraps = root.querySelectorAll("g[data-group-id], g[data-repeat-wrap]");
   if (wraps.length === 0) return;
   const used = existingSvgIds(root);
-  wraps.forEach((g) => setSvgNames(g, g.dataset.groupName, used, false));
+  wraps.forEach((g) => setSvgNames(g, g.dataset.groupId != null ? g.dataset.groupName : `Repeat copy ${Number(g.dataset.repeatK) + 1}`, used, false));
   root.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:inkscape", INKSCAPE_NS);
 }
 
 function getExportSvgString(svgId) {
+  if (drafting || renderQueued || straightStale) {
+    settleDraft();
+    render(); // never export a draft
+  }
   const svg = document.getElementById(svgId);
   const clone = svg.cloneNode(true);
   clone.querySelectorAll(".editor-only").forEach((el) => el.remove());
@@ -5451,14 +7699,17 @@ function getExportSvgString(svgId) {
 // for exports that read the LIVE DOM (the ring/straight artboards); Straight mode's tile
 // export builds its own detached SVG, so it just needs the clock frozen while it does.
 function withFrozenAnimation(capture, renderFn) {
+  settleDraft();
   flushTextRasters();
   const previous = animTimeOverride;
   animTimeOverride = 0;
+  brushHiRes = true; // art brush bitmaps at export resolution while capturing
   try {
     if (renderFn) renderFn();
     return capture();
   } finally {
     animTimeOverride = previous;
+    brushHiRes = false;
     if (renderFn) renderFn(); // restore the live, still-animating view
   }
 }
@@ -5716,18 +7967,21 @@ async function exportLayers() {
 // stacking order. Without "flatten groups" each user group becomes a folder in the ZIP, with
 // its own rings file; loose layers stay at the top level.
 async function exportLayersZip(opts) {
+  settleDraft();
   const statusEl = document.getElementById("layersExportStatus");
   const originalLayers = state.layers;
   const originalOverride = animTimeOverride;
 
   // A cut or gapped ring visibly turns, so it needs its own file like any other layer.
-  const isPlainRing = (l) => l.type === "ring" && visibleArc(l).full;
-  const exportable = originalLayers.filter((l) => layerExportable(l, opts));
+  // (a blend's start, end and in-betweens always get a file each, rings included)
+  const isPlainRing = (l) => l.type === "ring" && visibleArc(l).full && !(groupOf(state, l) || {}).blend && !groupChainOf(state, l).some((g) => g.repeat);
+  // a blend's in-betweens are exported as files of their own, between its start and end layer
+  const exportable = blendRenderLayers(state).list.filter((l) => layerExportable(l, opts));
   const buckets = new Map(); // group id (or null) -> { folder, rings, others }, in stacking order
   for (const l of exportable) {
-    const g = opts.flatten ? null : groupOf(state, l);
-    const key = g ? g.id : null;
-    if (!buckets.has(key)) buckets.set(key, { folder: g ? sanitizeFilePart(g.name) : "", rings: [], others: [] });
+    const chain = opts.flatten ? [] : groupChainOf(state, l); // folders follow the group tree
+    const key = chain.map((g) => g.id).join("/");
+    if (!buckets.has(key)) buckets.set(key, { folder: chain.map((g) => sanitizeFilePart(g.name)).join("/"), rings: [], others: [] });
     buckets.get(key)[isPlainRing(l) ? "rings" : "others"].push(l);
   }
   const totalSteps = [...buckets.values()].reduce((n, b) => n + (b.rings.length > 0 ? 1 : 0) + b.others.length, 0);
@@ -5740,6 +7994,8 @@ async function exportLayersZip(opts) {
   flushTextRasters();
   animTimeOverride = 0;
   exportShowHidden = opts.includeHidden;
+  blendExpansionOff = true; // the list above already holds the in-betweens
+  brushHiRes = true; // art brush bitmaps at export resolution
   try {
     const files = [];
     const digits = Math.max(2, String(totalSteps).length);
@@ -5762,7 +8018,7 @@ async function exportLayersZip(opts) {
       }
       for (const layer of bucket.others) {
         step++;
-        const label = layerDisplayName(layer);
+        const label = layerDisplayName(layer) + (layer._repeatCopy != null ? ` (copy ${layer._repeatCopy + 1})` : "");
         if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (${label})…`;
         state.layers = [layer];
         const buf = await captureCurrentLayers();
@@ -5781,6 +8037,8 @@ async function exportLayersZip(opts) {
     if (statusEl) statusEl.textContent = "Layer export failed — see console for details.";
   } finally {
     exportShowHidden = false;
+    blendExpansionOff = false;
+    brushHiRes = false;
     state.layers = originalLayers;
     animTimeOverride = originalOverride;
     render();
@@ -5796,15 +8054,18 @@ async function exportLayersZip(opts) {
 // of it. A global mask is applied to each layer rather than to one outer wrapper, so the layers
 // stay direct children of the root (or of their group), where layer-aware apps look for them.
 function buildLayersSvgString(opts) {
+  settleDraft();
   flushTextRasters();
   const prevOverride = animTimeOverride;
   animTimeOverride = 0;
   exportShowHidden = opts.includeHidden;
+  brushHiRes = true; // art brush bitmaps at export resolution
   let clone;
   try {
     render();
     clone = document.getElementById("canvas").cloneNode(true);
   } finally {
+    brushHiRes = false;
     exportShowHidden = false;
     animTimeOverride = prevOverride;
     render();
@@ -5827,26 +8088,30 @@ function buildLayersSvgString(opts) {
     if (hidden) el.setAttribute("style", "display:none");
   };
 
-  // A layer is its own <g> plus any mirror twins right after it (same data-layer-id).
-  const unitsOf = (parent) => {
-    const units = [];
-    for (const el of [...parent.children]) {
-      if (!el.dataset || el.dataset.layerId == null) continue;
-      const id = Number(el.dataset.layerId);
-      const last = units[units.length - 1];
-      if (last && last.id === id) last.els.push(el);
-      else units.push({ id, els: [el] });
-    }
-    return units;
-  };
   const buildLayer = (unit) => {
-    const layer = layerById.get(unit.id);
+    const first = unit.els[0];
+    const strip = (el) => {
+      for (const a of ["data-layer-id", "data-blend-step", "data-blend-group", "data-blend-start", "data-repeat-copy", "data-repeat-group", "data-repeat-src", "class"]) el.removeAttribute(a);
+    };
+    if (first.dataset.blendStep != null) {
+      // an in-between of a blend: a named sub-group of the blend group
+      const bg = state.groups.find((g) => g.id === Number(first.dataset.blendGroup));
+      if (!opts.includeHidden && bg && bg.visible === false) return null;
+      const wrap = make(`Blend step ${first.dataset.blendStep}`);
+      for (const el of unit.els) {
+        strip(el);
+        wrap.appendChild(el);
+      }
+      if (mask) wrap.setAttribute("mask", mask);
+      return wrap;
+    }
+    // a copy made by Repeat is named after the layer it copies
+    const layer = layerById.get(first.dataset.repeatSrc != null ? Number(first.dataset.repeatSrc) : unit.id);
     if (!layer) return null;
     if (!opts.includeHidden && layerIsHidden(state, layer)) return null;
     const wrap = make(layer.name);
     for (const el of unit.els) {
-      el.removeAttribute("data-layer-id");
-      el.removeAttribute("class");
+      strip(el);
       wrap.appendChild(el);
     }
     if (mask) wrap.setAttribute("mask", mask);
@@ -5854,37 +8119,59 @@ function buildLayersSvgString(opts) {
     return wrap;
   };
 
-  // The artwork's top level in order: loose layers and group wrappers (see layerParentFor).
-  const items = [];
-  for (const el of [...content.children]) {
-    if (!el.dataset) continue;
-    if (el.dataset.groupId != null) {
-      items.push({ group: state.groups.find((g) => g.id === Number(el.dataset.groupId)), units: unitsOf(el) });
-    } else if (el.dataset.layerId != null) {
-      const id = Number(el.dataset.layerId);
-      const last = items[items.length - 1];
-      if (last && last.unit && last.unit.id === id) last.unit.els.push(el);
-      else items.push({ unit: { id, els: [el] } });
+  // The artwork as a tree of wrappers (see layerParentFor): group wrappers (data-group-id) nest, a
+  // Repeat copy has its own wrapper (data-repeat-wrap) inside the repeating group. Each becomes a named <g>.
+  const groupOfEl = (el) => state.groups.find((g) => g.id === Number(el.dataset.groupId));
+  const build = (parent, skipRepeat) => {
+    const out = [];
+    let lastUnit = null;
+    for (const el of [...parent.children]) {
+      if (!el.dataset) continue;
+      if (el.dataset.layerId != null) {
+        const id = Number(el.dataset.layerId);
+        if (lastUnit && lastUnit.id === id) lastUnit.els.push(el);
+        else {
+          lastUnit = { id, els: [el] };
+          const slot = { unit: lastUnit };
+          out.push(slot);
+        }
+        continue;
+      }
+      lastUnit = null;
+      if (el.dataset.groupId != null) out.push({ group: el });
+      else if (el.dataset.repeatWrap != null && !skipRepeat) out.push({ flat: el }); // outside a repeating group: just its contents
     }
-  }
-  const out = [];
-  for (const item of items) {
-    if (item.unit) {
-      const w = buildLayer(item.unit);
-      if (w) out.push(w);
-      continue;
+    const nodes = [];
+    for (const it of out) {
+      if (it.unit) {
+        const w = buildLayer(it.unit);
+        if (w) nodes.push(w);
+      } else if (it.group) nodes.push(...buildGroupEl(it.group));
+      else nodes.push(...build(it.flat, false));
     }
-    const layerEls = item.units.map(buildLayer).filter(Boolean);
-    if (opts.flatten || !item.group) {
-      out.push(...layerEls);
-      continue;
-    }
-    if (!opts.includeHidden && item.group.visible === false) continue;
-    const gEl = make(item.group.name);
-    layerEls.forEach((l) => gEl.appendChild(l));
-    hideIf(gEl, item.group.visible === false);
-    out.push(gEl);
-  }
+    return nodes;
+  };
+  const buildGroupEl = (el) => {
+    const group = groupOfEl(el);
+    if (opts.flatten || !group) return build(el, false);
+    if (!opts.includeHidden && group.visible === false) return [];
+    const gEl = make(group.name);
+    if (group.repeat) {
+      // Repeat: one named sub-group per copy; the original is copy 1
+      const sub1 = make("Repeat copy 1");
+      build(el, true).forEach((n) => sub1.appendChild(n));
+      gEl.appendChild(sub1);
+      for (const r of [...el.children]) {
+        if (!r.dataset || r.dataset.repeatWrap == null) continue;
+        const sub = make(`Repeat copy ${Number(r.dataset.repeatK) + 1}`);
+        build(r, false).forEach((n) => sub.appendChild(n));
+        gEl.appendChild(sub);
+      }
+    } else build(el, false).forEach((n) => gEl.appendChild(n));
+    hideIf(gEl, group.visible === false);
+    return [gEl];
+  };
+  const out = build(content, false);
   const maskDefs = mask ? [...content.children].filter((el) => el.tagName.toLowerCase() === "defs") : [];
   clone.replaceChildren(...maskDefs, ...out);
   return new XMLSerializer().serializeToString(clone);
@@ -6034,6 +8321,7 @@ const smState = {
   fps: 24,
   mask: createDefaultMask(),
   roughness: 50,
+  brush: brushDefault(), // global art brush (replaces Roughness when its id is not "none")
 };
 let smNextLayerId = 1;
 
@@ -6160,6 +8448,7 @@ function smPushHistory() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    brush: { ...smState.brush },
   });
   if (smHistoryStack.length > HISTORY_LIMIT) smHistoryStack.shift();
   smRedoStack.length = 0; // a fresh change invalidates whatever redo branch existed
@@ -6176,6 +8465,7 @@ function smUndo() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    brush: { ...smState.brush },
   });
   const snap = smHistoryStack.pop();
   smState.layers = snap.layers;
@@ -6186,6 +8476,8 @@ function smUndo() {
   smState.fps = snap.fps ?? smState.fps;
   smState.mask = snap.mask;
   smState.roughness = snap.roughness ?? smState.roughness;
+  smState.brush = snap.brush ? { ...snap.brush } : smState.brush;
+  refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
   smSetFieldValue("smLoopDuration", smState.loopDuration);
   smSetFieldValue("smFps", smState.fps);
@@ -6209,6 +8501,7 @@ function smRedo() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    brush: { ...smState.brush },
   });
   const snap = smRedoStack.pop();
   smState.layers = snap.layers;
@@ -6219,6 +8512,8 @@ function smRedo() {
   smState.fps = snap.fps ?? smState.fps;
   smState.mask = snap.mask;
   smState.roughness = snap.roughness ?? smState.roughness;
+  smState.brush = snap.brush ? { ...snap.brush } : smState.brush;
+  refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
   smSetFieldValue("smLoopDuration", smState.loopDuration);
   smSetFieldValue("smFps", smState.fps);
@@ -6411,14 +8706,14 @@ const SCALE_PROPS = {
     ring: ["radius"],
     motif: ["radius", "size"],
     line: ["radius", "length"],
-    shape: ["radius", "size", "sizeY", "flipOffset"],
+    shape: ["radius", "size", "sizeY", "flipOffset", "strokeWidth"],
     text: ["radius", "size"],
     straight: ["length", "offset", "dashLength", "dashGap"],
   },
   straight: {
     motif: ["size"],
     line: ["length"],
-    shape: ["size", "sizeY", "flipOffset"],
+    shape: ["size", "sizeY", "flipOffset", "strokeWidth"],
     text: ["size"],
   },
 };
@@ -6426,13 +8721,19 @@ const SCALE_ORIGIN_KEYS = { circle: ["originX", "originY"], straight: ["position
 const GROUP_SCALE_MIN = 1;
 const GROUP_SCALE_MAX = 1000;
 
+// A shape's outline is part of its size (a fixed 10 px outline on a shrunken shape swallows
+// whatever sits beside it), so it scales with the shape; ring, line and straight widths do not
+// (they are not in SCALE_PROPS). Values are kept to 4 decimals and almost never clamped from
+// below (0.01), so shrinking to 1% and back up restores the original numbers.
+const SCALE_MIN_LEN = 0.01;
+const SCALE_MIN_TEXT = 0.5;
 function scaledValue(prop, v, layer) {
-  const r = Math.round(v * 100) / 100;
+  const r = Math.round(v * 10000) / 10000;
   if (prop === "flipOffset" || prop === "offset") return r;
   if (prop === "strokeWidth") return Math.max(0, r);
-  if (prop === "size" && layer.type === "text") return Math.min(TEXT_SIZE_MAX, Math.max(TEXT_SIZE_MIN, r));
-  if (prop === "radius") return Math.min(RADIUS_MAX, Math.max(1, r));
-  return Math.max(1, r);
+  if (prop === "size" && layer.type === "text") return Math.min(TEXT_SIZE_MAX, Math.max(SCALE_MIN_TEXT, r));
+  if (prop === "radius") return Math.min(RADIUS_MAX, Math.max(SCALE_MIN_LEN, r));
+  return Math.max(SCALE_MIN_LEN, r);
 }
 
 function groupScaleInfo(api) {
@@ -6447,9 +8748,12 @@ function groupScaleInfo(api) {
 function groupScaleValue(api, info) {
   if (info.group) return info.group.scale || 100;
   const a = api.scale.adhoc;
-  if (a.key !== info.key) {
+  // A loose selection's scale is relative to how it looked after its last resize: any other
+  // edit, undo or redo since then starts it again from 100.
+  if (a.key !== info.key || (a.hist !== undefined && a.hist !== api.historyLen())) {
     a.key = info.key;
     a.value = 100;
+    a.hist = undefined;
   }
   return a.value;
 }
@@ -6492,6 +8796,11 @@ function applyGroupScale(api, source) {
     const keys = SCALE_ORIGIN_KEYS[sc.mode];
     const pivot = {};
     for (const k of keys) pivot[k] = info.layers.reduce((sum, l) => sum + originOf(sc.mode, l, k), 0) / info.layers.length;
+    if (sc.mode === "circle") {
+      const sp = selectionPivot(info.layers); // a whole repeat group in a multi-selection counts as its pivot
+      pivot.originX = sp.x - CENTER;
+      pivot.originY = sp.y - CENTER;
+    }
     const base = new Map();
     for (const l of info.layers) {
       const snap = { origin: {}, props: {} };
@@ -6507,14 +8816,16 @@ function applyGroupScale(api, source) {
     const snap = g.base.get(l.id);
     if (!snap) continue;
     for (const k of Object.keys(snap.origin)) {
-      l[k] = Math.round((g.pivot[k] + (snap.origin[k] - g.pivot[k]) * ratio) * 100) / 100 || 0;
+      l[k] = Math.round((g.pivot[k] + (snap.origin[k] - g.pivot[k]) * ratio) * 10000) / 10000 || 0;
     }
     for (const [prop, v] of Object.entries(snap.props)) l[prop] = scaledValue(prop, v * ratio, l);
   }
+  // (a Repeat pivot is an artboard point and is never scaled)
   if (info.group) info.group.scale = newScale;
   else {
     sc.adhoc.key = info.key;
     sc.adhoc.value = newScale;
+    sc.adhoc.hist = api.historyLen();
   }
   api.refresh();
   api.redraw();
@@ -6591,6 +8902,7 @@ function smDistributeWrapped(layer) {
 
 function smDrawGuide(g, layer, width, roughness, roughScale = ROUGH_SCALE_TILE) {
   const y = SM_CENTER_Y + layer.position;
+  if (brushActive(layer) && drawBrushBands(g, layer, [[0, width]], y)) return;
   if (roughness > 0) {
     // width varies between the live preview (3 tiles wide) and single-tile export, so
     // it's part of the cache key — same reasoning as drawRing keying on radius.
@@ -6620,6 +8932,8 @@ function smDrawGuide(g, layer, width, roughness, roughScale = ROUGH_SCALE_TILE) 
 
 function smRenderInto(svg, width, itemsFor) {
   svg.innerHTML = "";
+  curBrush = smState.brush;
+  const rough = drafting || brushOn(curBrush) ? 0 : smState.roughness; // a brush replaces roughness; a draft is plain
   // Everything actual-artwork goes into one wrapper so the global mask (if any) can
   // apply once to the whole composition — callers (smRender's live preview, the
   // single-tile export path) both append their own editor-only extras (seam guides, the
@@ -6641,14 +8955,14 @@ function smRenderInto(svg, width, itemsFor) {
     // 1000 units in 640px, ~3x more magnified than the Ring editor, so the brush texture
     // has to be authored ~3x smaller in units to land at the same size on screen.
     if (layer.type === "guide") {
-      smDrawGuide(g, layer, width, smState.roughness, ROUGH_SCALE_TILE);
+      smDrawGuide(g, layer, width, rough, ROUGH_SCALE_TILE);
     } else if (layer.type === "motif" || layer.type === "text") {
       if (layer.type === "text") ensureTextRaster(layer);
       drawMotifFlat(g, layer, itemsFor(layer));
     } else if (layer.type === "line") {
-      drawLine(g, layer, itemsFor(layer), smState.roughness, ROUGH_SCALE_TILE);
+      drawLine(g, layer, itemsFor(layer), rough, ROUGH_SCALE_TILE);
     } else if (layer.type === "shape") {
-      drawShape(g, layer, itemsFor(layer), smState.roughness, ROUGH_SCALE_TILE);
+      drawShape(g, layer, itemsFor(layer), rough, ROUGH_SCALE_TILE);
     }
     parent.appendChild(g);
   }
@@ -6657,6 +8971,7 @@ function smRenderInto(svg, width, itemsFor) {
 }
 
 function smRender() {
+  renderQueued = false; // a synchronous render satisfies any queued one
   const w = smState.tileWidth;
 
   const previewSvg = document.getElementById("tileCanvas");
@@ -6869,7 +9184,7 @@ function smBindControl(id, apply) {
       apply(target, source);
     }
     smRefreshControls();
-    smRender();
+    requestRender(); // one render per frame; a draft (plain strokes) while the pointer is down
   };
   const endGesture = () => {
     smHistoryGestureOpen = false;
@@ -7056,7 +9371,7 @@ function smBindMaskControl(id, apply) {
     // Same reasoning as smBindControl — read from `source`, not always `el`.
     apply(smState.mask, source);
     smRefreshMaskControls();
-    smRender();
+    requestRender();
   };
   const endGesture = () => (smHistoryGestureOpen = false);
 
@@ -7108,7 +9423,7 @@ function smRoughnessInput(e) {
   }
   smState.roughness = Math.min(100, Math.max(0, Number(e.target.value)));
   smSetFieldValue("smRoughness", smState.roughness);
-  smRender();
+  requestRender(false); // coalesced, never a draft: the slider is about the roughness itself
   scheduleAnimSizeEstimateUpdate(); // roughness is a real driver of exported file size
 }
 document.getElementById("smRoughness").addEventListener("input", smRoughnessInput);
@@ -7121,6 +9436,7 @@ document.getElementById("smRoughnessNum").addEventListener("change", () => (smHi
 // to exactly one tile width via the viewBox — see smDistributeWrapped for why that
 // still shows edge-straddling shapes whole instead of cut off.
 function smBuildExportSvgString() {
+  settleDraft(); // never export a draft
   flushTextRasters();
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", `0 0 ${smState.tileWidth} ${SM_HEIGHT}`);
@@ -7459,6 +9775,7 @@ function buildProjectData() {
       activeLayerId: state.activeLayerId,
       mask: JSON.parse(JSON.stringify(state.mask)),
       roughness: state.roughness,
+      brush: { ...state.brush },
     };
   }
   return {
@@ -7473,6 +9790,7 @@ function buildProjectData() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    brush: { ...smState.brush },
   };
 }
 
@@ -7520,11 +9838,13 @@ function saveProject() {
 function applyDefaultProject(data) {
   pushHistory();
   state.layers = withPlacementDefaults(snapshotLayers(data.circle.layers));
-  state.groups = sanitizeGroups(data.circle.groups);
+  state.groups = sanitizeGroups(data.circle.groups, true);
   normalizeGroups(state);
   state.activeLayerId = data.circle.activeLayerId ?? null;
   state.mask = data.circle.mask ? JSON.parse(JSON.stringify(data.circle.mask)) : createDefaultMask();
   state.roughness = data.circle.roughness ?? 50;
+  state.brush = sanitizeBrush(data.circle.brush);
+  refreshBrushControls();
   setFieldValue("roughness", state.roughness);
   nextLayerId = maxLayerId(state.layers) + 1;
   reloadMissingImages(state.layers, render);
@@ -7543,6 +9863,8 @@ function applyDefaultProject(data) {
   smState.fps = data.straight.fps || 24;
   smState.mask = data.straight.mask ? JSON.parse(JSON.stringify(data.straight.mask)) : createDefaultMask();
   smState.roughness = data.straight.roughness ?? 50;
+  smState.brush = sanitizeBrush(data.straight.brush);
+  refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
   smSetFieldValue("smLoopDuration", smState.loopDuration);
   smSetFieldValue("smFps", smState.fps);
@@ -7571,11 +9893,13 @@ function applyProjectData(data) {
   if (data.mode === "circle") {
     pushHistory();
     state.layers = withPlacementDefaults(snapshotLayers(data.layers));
-    state.groups = sanitizeGroups(data.groups);
+    state.groups = sanitizeGroups(data.groups, true);
     normalizeGroups(state);
     state.activeLayerId = data.activeLayerId ?? null;
     state.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     state.roughness = data.roughness ?? 50;
+    state.brush = sanitizeBrush(data.brush);
+    refreshBrushControls();
     setFieldValue("roughness", state.roughness);
     nextLayerId = maxLayerId(state.layers) + 1;
     reloadMissingImages(state.layers, render);
@@ -7594,6 +9918,8 @@ function applyProjectData(data) {
     smState.fps = data.fps || 24;
     smState.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     smState.roughness = data.roughness ?? 50;
+    smState.brush = sanitizeBrush(data.brush);
+    refreshBrushControls();
     smSetFieldValue("smTileWidth", smState.tileWidth);
     smSetFieldValue("smLoopDuration", smState.loopDuration);
     smSetFieldValue("smFps", smState.fps);
@@ -7719,6 +10045,7 @@ document.querySelectorAll(".num-input").forEach((el) => {
       const decimals = (String(step).split(".")[1] || "").length;
       const next = Math.min(max, Math.max(min, base + (e.deltaY < 0 ? step : -step)));
       el.value = Number(next.toFixed(decimals));
+      if (currentMode === "circle") noteGesture(); // a wheel burst is a gesture: draft until it stops
       el.dispatchEvent(new Event("input", { bubbles: true }));
     },
     { passive: false }
@@ -8189,7 +10516,13 @@ resetPreviewView();
   panels.forEach((p) => {
     const h = p.querySelector(":scope > h2");
     if (h) targets.push({ el: p, head: h, key: panelKey(p), cls: "is-folded" });
+    // A panel whose content is exactly one sub-section needs no sub-heading or fold toggle of its
+    // own: the group's label is hidden and the panel heading folds the whole panel.
+    const content = [...p.children].filter((c) => c.tagName !== "H2" && !c.classList.contains("ornament-divider"));
+    const solo = content.length === 1 && content[0].classList.contains("sf-group") ? content[0] : null;
+    if (solo) solo.classList.add("sf-solo");
     p.querySelectorAll(".sf-group").forEach((g, i) => {
+      if (g === solo) return; // no head to fold (the index i still counts it, so other keys keep their place)
       const lab = g.querySelector(":scope > .sf-group-label");
       if (lab) targets.push({ el: g, head: lab, key: `${panelKey(p)}/${i}`, cls: "is-folded" });
     });

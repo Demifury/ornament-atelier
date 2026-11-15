@@ -1110,7 +1110,8 @@ kbd {
    long column reads in groups: pattern settings (gold: Ring, Asset), geometry (teal: Line, Shape, Straight,
    Guide), Type (violet) and the neutral Placement (steel) and Export (stone). Look only; nothing here changes what
    a control does. Scoped to .sidebar so the layer panel on the right keeps its own style. */
-.sidebar .panel {
+.sidebar .panel,
+.layers-sidebar .panel {
   --fam: #3a3c46;
   --fam-ink: #d2d2da;
   padding: 14px 14px 6px 16px;
@@ -1118,13 +1119,14 @@ kbd {
   border-left: 3px solid var(--fam);
 }
 
-.sidebar .panel.fam-pattern { --fam: #c9a24a; --fam-ink: #e6c987; }
-.sidebar .panel.fam-geom { --fam: #4fa3a0; --fam-ink: #94d3d0; }
-.sidebar .panel.fam-type { --fam: #b07cc6; --fam-ink: #d4b2e4; }
-.sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
-.sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
+.sidebar .panel.fam-pattern, .layers-sidebar .panel.fam-pattern { --fam: #c9a24a; --fam-ink: #e6c987; }
+.sidebar .panel.fam-geom, .layers-sidebar .panel.fam-geom { --fam: #4fa3a0; --fam-ink: #94d3d0; }
+.sidebar .panel.fam-type, .layers-sidebar .panel.fam-type { --fam: #b07cc6; --fam-ink: #d4b2e4; }
+.sidebar .panel.fam-place, .layers-sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
+.sidebar .panel.fam-export, .layers-sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
 
-.sidebar .panel h2 {
+.sidebar .panel h2,
+.layers-sidebar .panel h2 {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -1406,8 +1408,8 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .layers-sidebar .panel .sf-group { margin-top: 10px; }
 
 /* Families: Geometry (ring, line, straight, guide) teal; Asset gold; Shape coral; Text violet. */
-.sidebar .panel.fam-asset { --fam: #c9a24a; --fam-ink: #e6c987; }
-.sidebar .panel.fam-shape { --fam: #d0805a; --fam-ink: #eab096; }
+.sidebar .panel.fam-asset, .layers-sidebar .panel.fam-asset { --fam: #c9a24a; --fam-ink: #e6c987; }
+.sidebar .panel.fam-shape, .layers-sidebar .panel.fam-shape { --fam: #d0805a; --fam-ink: #eab096; }
 .layers-sidebar .fam-asset { --fam: #c9a24a; }
 .layers-sidebar .fam-shape { --fam: #d0805a; }
 .layer-dot.fam-asset { background: #c9a24a; }
@@ -1480,3 +1482,32 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .panel.is-folded > :not(h2) { display: none !important; }
 .sf-group.is-folded > :not(.sf-group-label) { display: none !important; }
 .panel.is-folded > h2 { margin-bottom: 0; border-bottom-color: transparent; }
+
+/* --- Blend --- */
+.layer-actions .tip-wrap { flex: 1 1 10px; display: flex; min-width: 0; }
+.layer-actions .tip-wrap .icon-btn { flex: 1; }
+.tip-wrap .icon-btn:disabled { pointer-events: none; }
+.layer-blend-mark { flex: none; display: inline-flex; width: 12px; height: 12px; margin-right: 2px; color: #8b909a; }
+.layer-blend-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; }
+
+/* --- Repeat around a point --- */
+.repeat-pivot-handle { cursor: move; }
+
+/* --- Right sidebar accents: same family look as the left panels --- */
+.layers-sidebar .panel { margin-bottom: 20px; }
+.layers-sidebar .panel.fam-blend { --fam: #6f9fd8; --fam-ink: #a9c6ea; }
+.layers-sidebar .panel.fam-repeat { --fam: #ff3fa4; --fam-ink: #ff9fcf; }
+.layers-sidebar .panel.fam-effects { --fam: #a3a05c; --fam-ink: #cdca8e; }
+.sf-group.sf-solo > .sf-group-label { display: none; }
+.sf-group.sf-solo { margin-top: 0; }
+
+/* Art brush panel: thumbnail of the chosen brush */
+.brush-thumb {
+  width: 100%;
+  height: 30px;
+  border-radius: 4px;
+  border: 1px solid #2c2d33;
+  background: repeating-conic-gradient(#1c1d21 0% 25%, #0e0f11 0% 50%) 50% / 12px 12px;
+}
+.brush-group .motif-preview { flex-wrap: wrap; }
+.brush-group .motif-preview .motif-preview-name:empty { display: none; }

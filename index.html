@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Ornament Visualiser</title>
-<link rel="stylesheet" href="style.css?v=60" />
+<title>Ornament Atelier</title>
+<link rel="stylesheet" href="style.css?v=65" />
 </head>
 <body>
 <div class="app">
@@ -679,6 +679,8 @@
           <button id="renameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
           <button id="groupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
           <button id="ungroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
+          <span class="tip-wrap" id="blendBtnWrap" data-tip="Blend (Ctrl+Alt+B)"><button id="blendBtn" class="icon-btn" data-tip="Blend (Ctrl+Alt+B)" aria-label="Blend (Ctrl+Alt+B)"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="4.2"/><circle cx="13.2" cy="12" r="2.8"/><circle cx="18.8" cy="12" r="1.6"/></svg></button></span>
+          <span class="tip-wrap" id="repeatBtnWrap" data-tip="Repeat around a point"><button id="repeatBtn" class="icon-btn" data-tip="Repeat around a point" aria-label="Repeat around a point"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="4.6" r="2.2"/><circle cx="18.4" cy="15.7" r="2.2"/><circle cx="5.6" cy="15.7" r="2.2"/></svg></button></span>
           <button id="removeLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
         <div class="order-history-row">
@@ -724,7 +726,76 @@
 <button id="clearLayersBtn" title="Remove every layer">Clear layers</button>
 </div>
       </section>
-      <section class="panel fam-export">
+      <section class="panel fam-blend" id="blendPanel" style="display:none">
+        <h2>Blend</h2>
+        <p class="hint sf-hint">Rings and shapes between the start and end layer, redrawn live as either one changes.</p>
+        <div class="sf-grid">
+<div class="sf sf-wide" id="blendStepsField" title="How many in-between layers">
+<div class="sf-head"><label for="blendStepsNum">Steps</label></div>
+<div class="sf-box"><input type="range" id="blendSteps" min="1" max="200" step="1" /><input type="text" inputmode="decimal" id="blendStepsNum" min="1" max="200" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" id="blendEasingField">
+<div class="sf-head"><label for="blendEasing">Distribution</label></div>
+<div class="sf-box"><select id="blendEasing">
+<option value="linear">Linear</option>
+<option value="easeIn">Ease in</option>
+<option value="easeOut">Ease out</option>
+<option value="easeInOut">Ease in-out</option>
+</select></div>
+</div>
+</div>
+        <div class="sf-btns">
+<button type="button" id="blendSwapBtn" data-tip="Swap start and end layer">Swap start/end</button>
+<button type="button" id="blendExpandBtn" data-tip="Turn the in-between layers into real layers">Expand</button>
+<button type="button" id="blendReleaseBtn" data-tip="Remove the blend, keep start and end">Release</button>
+</div>
+      </section>
+      <section class="panel fam-repeat" id="repeatPanel" style="display:none">
+        <h2>Repeat around a point</h2>
+        <p class="hint sf-hint">Copies of the group turned about the pink pivot, redrawn live as the group changes.</p>
+        <p class="hint sf-hint" id="repeatCapHint" hidden>Copy limit reached (5000 generated layers): the remaining copies are not drawn.</p>
+        <div class="sf-grid">
+<div class="sf" title="Total copies, the original included">
+<div class="sf-head"><label for="repeatCopiesNum">Copies</label></div>
+<div class="sf-box"><input type="range" id="repeatCopies" min="1" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatCopiesNum" min="1" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="360 = full circle; any other angle is an arc with a copy at both ends">
+<div class="sf-head"><label for="repeatTotalNum">Total angle</label></div>
+<div class="sf-box"><input type="range" id="repeatTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" title="Added to every copy's turn (the original stays where it is)">
+<div class="sf-head"><label for="repeatStartNum">Start angle</label></div>
+<div class="sf-box"><input type="range" id="repeatStart" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatStartNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-grid">
+<div class="sf" title="Pivot X (offset from center)">
+<div class="sf-head"><label for="repeatPivotXNum">Pivot X</label></div>
+<div class="sf-box"><input type="range" id="repeatPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotXNum" min="-8192" max="8192" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot Y (offset from center)">
+<div class="sf-head"><label for="repeatPivotYNum">Pivot Y</label></div>
+<div class="sf-box"><input type="range" id="repeatPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotYNum" min="-8192" max="8192" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-grid">
+<div class="sf sf-wide" title="Scale the whole group about the pink pivot (the pivot stays put; line widths do not change)">
+<div class="sf-head"><label for="repeatScaleNum">Scale (% about the pivot)</label></div>
+<div class="sf-box"><input type="range" id="repeatScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="repeatScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-btns">
+<button type="button" id="repeatCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
+</div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Turn each copy's own orientation with it (off: only its position moves)"><input type="checkbox" id="repeatRotate" /><span>Rotate copies</span></label>
+</div>
+        <div class="sf-btns">
+<button type="button" id="repeatExpandBtn" data-tip="Turn the copies into real layers (one group each)">Expand</button>
+<button type="button" id="repeatReleaseBtn" data-tip="Remove the repeat, keep the group">Release</button>
+</div>
+      </section>
+      <section class="panel fam-effects" id="roughnessPanel">
         <h2>Roughness</h2>
         <p class="hint sf-hint">Sketchy brush texture on every ring, line &amp; shape outline.</p>
         <p class="hint sf-hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
@@ -735,7 +806,7 @@
 </div>
 </div>
       </section>
-      <section class="panel fam-export">
+      <section class="panel fam-effects">
         <h2>Mask</h2>
         <p class="hint sf-hint">One erase-style texture mask over the whole Ring editor artboard.</p>
         <div class="sf-toggles">
@@ -845,7 +916,7 @@
 <button id="smClearLayersBtn" title="Remove every layer">Clear layers</button>
 </div>
       </section>
-      <section class="panel fam-export">
+      <section class="panel fam-effects" id="smRoughnessPanel">
         <h2>Roughness</h2>
         <p class="hint sf-hint">Sketchy brush texture on every guide, line &amp; shape outline.</p>
         <p class="hint sf-hint">Above 0 this increases render and export time a lot — higher values cost more.</p>
@@ -856,7 +927,7 @@
 </div>
 </div>
       </section>
-      <section class="panel fam-export">
+      <section class="panel fam-effects">
         <h2>Mask</h2>
         <p class="hint sf-hint">One erase-style texture mask over the whole tile artboard.</p>
         <div class="sf-toggles">
@@ -944,6 +1015,6 @@
   </div>
 </div>
 
-<script src="app.js?v=78"></script>
+<script src="app.js?v=98"></script>
 </body>
 </html>

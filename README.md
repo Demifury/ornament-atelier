@@ -109,14 +109,68 @@ layers together, of any types. The sidebar then shows only what all of them shar
 speed and, in Circle mode, the Placement fields) and an edit never adds a field to a layer type that
 lacks it. Duplicate, Remove, Move Up/Down and the eye act on the whole selection.
 
-**Groups** (both modes): **Group** (<kbd>Ctrl</kbd>+<kbd>G</kbd>) puts the selected layers in one
-folder; **Ungroup** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>) takes the selected layers out of
-theirs (select the group's row to dissolve all of it). A group is a row in the layer list with a
-collapse arrow, an eye that hides every member (their own eyes are untouched, so showing the group
-again restores them), and an editable name (double-click, or Rename). Clicking the row selects all its
-layers; clicking a member selects just that one. Members stay together in the stacking order, at the
-position of the group's topmost layer when it is made; Move Up/Down on the row moves the whole
-block, and a single member only moves within its group. Remove on the row removes the group and its
-layers; Duplicate copies it as a new group. Groups are one level deep, are saved in project files
-(older files open with none) and are covered by undo. A hidden group is left out of previews and
-exports, and of the separate-layer export.
+**Groups** (both modes): groups nest. **Group** (<kbd>Ctrl</kbd>+<kbd>G</kbd>) puts the selection in a new
+group: whole groups in the selection become its children, loose layers its direct members, and if everything
+selected already shares one parent the new group stays in it (otherwise it is top level). **Ungroup**
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>) removes ONE level: a whole selected group is dissolved and its
+children move to its parent; selected layers that are only part of a group step out of it into its parent. A
+group is a row in the layer list, indented one step per level, with a collapse arrow, an eye that hides
+everything under it (their own eyes are untouched) and an editable name (double-click, or Rename). Clicking a
+row selects every layer in its subtree, so it counts as that whole group (one handle, anchor, scale, rotate,
+badges); clicking a layer selects just it. Members stay together in the stacking order, a group sitting at the
+position of its topmost layer; Move Up/Down moves rows among their siblings inside their parent. Remove on a row
+removes the group with its whole subtree; Duplicate copies the subtree with every setting (blend, repeat, scale).
+Data: each group has `parentId` (null = top level) and a layer's `groupId` is its direct parent; files without
+`parentId` load as top-level groups. Groups are saved in project files and covered by undo. A hidden group is
+left out of previews and exports, and of the separate-layer export. Exports follow the tree: the layered SVG
+nests named `<g>` elements, the single SVG keeps nested groups, the PNG ZIP makes nested folders. A Blend group
+stays exactly 2 layers (it can sit inside other groups). A Repeat group repeats everything under it, the
+generated in-betweens and any nested Repeat included (innermost first, Blend before Repeat), so a Repeat inside
+a Repeat gives a flower of flowers; the total of generated copies in one drawing is capped at 5000 and the
+Repeat panel says so when the cap cuts copies off.
+
+**Blend** (Ring mode): like Illustrator's blend. Select exactly 2 layers of the same type (list,
+<kbd>Ctrl</kbd>/<kbd>Shift</kbd>+click or a marquee) and press the Blend button in the layer toolbar or
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd>. The two layers go into a group flagged as a blend (the first one
+selected is the start), and 5 in-between layers appear. They are not stored: they are rebuilt from the
+start layer, the end layer, the step count and the distribution every time the artwork is drawn or
+exported, so editing the start or end (sidebar, handles, badges, group scale and rotate) moves them
+live. Every number the two share is mixed (radius, origin, stroke width, size, count, angles by the
+shortest way round, arc, gaps, opacity, letter spacing, ...) and colours mix in RGB; the image, shape
+kind, text, font and flags come from the start layer. Two rings of different radius and origin give
+eccentric nested rings, like a tunnel. The Blend panel (shown when a blend group or one of its layers
+is selected) sets **Steps** (1-200; the purple badge on the canvas edits it too when the group is
+selected), **Distribution** (Linear / Ease in / Ease out / Ease in-out), **Swap start/end**,
+**Expand** (turns the in-betweens into real layers in the group and ends the blend) and **Release**
+(ends the blend and keeps start and end). The group row shows a blend mark and "blend · N steps". A
+hidden start or end layer still blends while the group is visible; hiding the group hides everything.
+Deleting the start or end ends the blend. Duplicate copies the blend, and it is saved in project files
+and covered by undo. PNG and SVG exports include the in-betweens; the layered SVG puts them in the
+group as "Blend step 1", "Blend step 2", ...; the separate-layer PNG ZIP gives the start, end and every
+in-between its own file. Straight mode has no blend.
+
+**Repeat around a point** (Ring mode): select a group or several layers and press the Repeat button in the
+layer toolbar (several loose layers are grouped first). The group gets `repeat = { pivotX, pivotY, copies,
+totalAngle, startAngle, rotateCopies }`; the copies are never stored, they are built whenever the artwork is
+drawn or exported, so editing a member, moving or turning the group, the origin anchor or a Blend updates
+them live (a blend's in-betweens are generated first and the whole result is repeated). *Copies* counts the
+original, which stays where it is; copy k is the group turned about the pivot by Start angle + k x step, with
+step = Total angle / Copies for a full circle (360) and Total angle / (Copies - 1) for any other angle (a
+copy at both ends of the arc). Each layer's origin moves along the circle; with **Rotate copies** on its own
+orientation turns by the same angle (ring arc start, item start angle, straight-line angle, and the rotation
+of items that do not follow the ring), off: only the position moves. Pivot X/Y are in origin space (0,0 =
+artboard centre). The pivot is a pink crosshair, drawn on top of every other handle while the group is
+selected: drag it (Shift = one axis, snaps to the centre lines, one undo step per drag). The Repeat panel has
+Copies, Total angle, Start angle, Pivot X/Y, Centre, Rotate copies, **Expand** (each copy becomes a real
+sibling group "Copy 2" ... "Copy N" above the original, which is copy 1) and **Release** (removes the
+repeat, keeps the group). With the whole group selected the purple badge edits Copies (when the group also has
+a blend, Steps stays in the Blend panel). Clicking or marqueeing a copy selects the group's members. The group
+row shows "repeat · N" (or "blend · N steps · repeat · N"). Duplicate copies the settings; they are saved in
+project files. Layered SVG: inside the group's `<g>`, sub-groups "Repeat copy 1" ... "Repeat copy N" (the
+original is copy 1); the PNG ZIP gives every copy layer a file ("..._copy_k"). Group Scale and Group rotate never move
+the pivot. When several layers and/or groups are selected and the selection contains a whole Repeat group, that
+group counts as ONE point at its pivot for the blue origin anchor, the radius ball and the rotate pivot; dragging
+the anchor then moves the loose layers, the repeat groups' members and their pivots by the same delta, and
+rotating swings those pivots too. With a single whole Repeat group selected, the group's ball sits on the pink
+pivot: dragging it moves the members and every pivot inside the group together, the rotate knob turns the group
+about the pivot, and <kbd>Alt</kbd>+drag moves the pivot alone. Straight mode has no repeat.
