@@ -17,6 +17,7 @@ const state = {
   activeLayerId: null,
   mask: createDefaultMask(),
   roughness: 50,
+  scaleStrokes: false, // group scale also scales line widths (off: widths stay)
   brush: brushDefault(), // global art brush (replaces Roughness when its id is not "none")
 };
 let nextLayerId = 1;
@@ -1045,6 +1046,7 @@ function pushHistory() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    scaleStrokes: state.scaleStrokes,
     brush: { ...state.brush },
   });
   if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
@@ -1075,6 +1077,7 @@ function undo() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    scaleStrokes: state.scaleStrokes,
     brush: { ...state.brush },
   });
   const snap = historyStack.pop();
@@ -1083,6 +1086,7 @@ function undo() {
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
+  state.scaleStrokes = snap.scaleStrokes ?? state.scaleStrokes;
   state.brush = snap.brush ? { ...snap.brush } : state.brush;
   setFieldValue("roughness", state.roughness);
   refreshBrushControls();
@@ -1105,6 +1109,7 @@ function redo() {
     activeLayerId: state.activeLayerId,
     mask: JSON.parse(JSON.stringify(state.mask)),
     roughness: state.roughness,
+    scaleStrokes: state.scaleStrokes,
     brush: { ...state.brush },
   });
   const snap = redoStack.pop();
@@ -1113,6 +1118,7 @@ function redo() {
   state.activeLayerId = snap.activeLayerId;
   state.mask = snap.mask;
   state.roughness = snap.roughness ?? state.roughness;
+  state.scaleStrokes = snap.scaleStrokes ?? state.scaleStrokes;
   state.brush = snap.brush ? { ...snap.brush } : state.brush;
   setFieldValue("roughness", state.roughness);
   refreshBrushControls();
@@ -2451,6 +2457,7 @@ function refreshRepeatUI() {
   if (!g) return;
   for (const [id, f] of Object.entries(REPEAT_FIELDS)) setFieldValue(id, g.repeat[f.key]);
   document.getElementById("repeatRotate").checked = g.repeat.rotateCopies !== false;
+  document.getElementById("repeatScaleStrokes").checked = !!state.scaleStrokes;
   setFieldValue(REPEAT_SCALE_FIELD, Math.round((g.repeat.pivotScale ?? 100) * 100) / 100);
 }
 
@@ -2519,8 +2526,8 @@ document.getElementById("repeatReleaseBtn").addEventListener("click", releaseRep
 // --- Scale about the pivot ---
 // Scales the whole repeating group about the pink pivot: the pivot stays put, every member's
 // origin moves toward or away from it, and radii, sizes, lengths, dashes and a shape's outline
-// scale by the same factor (SCALE_PROPS, the same rules as Group Scale; ring/line widths do not
-// change). Applied as new/old on the values captured when the gesture began, so a drag never
+// scale by the same factor (SCALE_PROPS, the same rules as Group Scale; line widths only with the
+// "Scale line widths" option). Applied as new/old on the values captured when the gesture began, so a drag never
 // drifts and the whole gesture is one undo step. group.repeat.pivotScale only remembers the value
 // shown (100 when never scaled). Repeat pivots of groups nested inside move about the same point.
 const PIVOT_SCALE_PROXY = "__pivotScale";
@@ -2542,7 +2549,7 @@ function applyPivotScale(g, raw, source) {
     for (const l of subtreeLayers(state, g.id)) {
       const p = placementOf(l);
       const props = {};
-      for (const prop of SCALE_PROPS.circle[l.type] || []) if (typeof l[prop] === "number") props[prop] = l[prop];
+      for (const prop of scalePropsFor("circle", l.type)) if (typeof l[prop] === "number") props[prop] = l[prop];
       base.set(l.id, { x: p.originX, y: p.originY, props });
     }
     const reps = state.groups.filter((x) => x !== g && x.repeat && subIds.has(x.id)).map((x) => ({ g: x, x: x.repeat.pivotX, y: x.repeat.pivotY }));
@@ -8321,6 +8328,7 @@ const smState = {
   fps: 24,
   mask: createDefaultMask(),
   roughness: 50,
+  scaleStrokes: false,
   brush: brushDefault(), // global art brush (replaces Roughness when its id is not "none")
 };
 let smNextLayerId = 1;
@@ -8448,6 +8456,7 @@ function smPushHistory() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    scaleStrokes: smState.scaleStrokes,
     brush: { ...smState.brush },
   });
   if (smHistoryStack.length > HISTORY_LIMIT) smHistoryStack.shift();
@@ -8465,6 +8474,7 @@ function smUndo() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    scaleStrokes: smState.scaleStrokes,
     brush: { ...smState.brush },
   });
   const snap = smHistoryStack.pop();
@@ -8476,6 +8486,7 @@ function smUndo() {
   smState.fps = snap.fps ?? smState.fps;
   smState.mask = snap.mask;
   smState.roughness = snap.roughness ?? smState.roughness;
+  smState.scaleStrokes = snap.scaleStrokes ?? smState.scaleStrokes;
   smState.brush = snap.brush ? { ...snap.brush } : smState.brush;
   refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
@@ -8501,6 +8512,7 @@ function smRedo() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    scaleStrokes: smState.scaleStrokes,
     brush: { ...smState.brush },
   });
   const snap = smRedoStack.pop();
@@ -8512,6 +8524,7 @@ function smRedo() {
   smState.fps = snap.fps ?? smState.fps;
   smState.mask = snap.mask;
   smState.roughness = snap.roughness ?? smState.roughness;
+  smState.scaleStrokes = snap.scaleStrokes ?? smState.scaleStrokes;
   smState.brush = snap.brush ? { ...snap.brush } : smState.brush;
   refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
@@ -8706,14 +8719,14 @@ const SCALE_PROPS = {
     ring: ["radius"],
     motif: ["radius", "size"],
     line: ["radius", "length"],
-    shape: ["radius", "size", "sizeY", "flipOffset", "strokeWidth"],
+    shape: ["radius", "size", "sizeY", "flipOffset"],
     text: ["radius", "size"],
     straight: ["length", "offset", "dashLength", "dashGap"],
   },
   straight: {
     motif: ["size"],
     line: ["length"],
-    shape: ["size", "sizeY", "flipOffset", "strokeWidth"],
+    shape: ["size", "sizeY", "flipOffset"],
     text: ["size"],
   },
 };
@@ -8721,10 +8734,16 @@ const SCALE_ORIGIN_KEYS = { circle: ["originX", "originY"], straight: ["position
 const GROUP_SCALE_MIN = 1;
 const GROUP_SCALE_MAX = 1000;
 
-// A shape's outline is part of its size (a fixed 10 px outline on a shrunken shape swallows
-// whatever sits beside it), so it scales with the shape; ring, line and straight widths do not
-// (they are not in SCALE_PROPS). Values are kept to 4 decimals and almost never clamped from
-// below (0.01), so shrinking to 1% and back up restores the original numbers.
+// Line widths (strokeWidth of ring, line, straight and shape layers) scale only when the
+// "Scale line widths" option is on (state.scaleStrokes / smState.scaleStrokes, off by default,
+// like Illustrator's "Scale strokes"); off, no width changes. Values are kept to 4 decimals and
+// almost never clamped from below (0.01), so shrinking to 1% and back up restores the numbers.
+const STROKE_SCALE_TYPES = new Set(["ring", "line", "straight", "shape"]);
+function scalePropsFor(mode, type) {
+  const props = SCALE_PROPS[mode][type] || [];
+  const on = mode === "circle" ? state.scaleStrokes : smState.scaleStrokes;
+  return on && STROKE_SCALE_TYPES.has(type) ? [...props, "strokeWidth"] : props;
+}
 const SCALE_MIN_LEN = 0.01;
 const SCALE_MIN_TEXT = 0.5;
 function scaledValue(prop, v, layer) {
@@ -8765,7 +8784,28 @@ function refreshGroupScale(api) {
   field.style.display = info ? "" : "none";
   if (!info) return;
   setFieldValue(api.scale.id, Math.round(groupScaleValue(api, info) * 100) / 100);
+  syncScaleStrokes();
 }
+
+// "Scale line widths": one flag per mode, every checkbox of that mode bound to it. Toggling is
+// one undo step and redraws nothing (it only changes what a later scale does).
+function syncScaleStrokes() {
+  for (const id of ["scaleStrokes", "repeatScaleStrokes"]) document.getElementById(id).checked = !!state.scaleStrokes;
+  document.getElementById("smScaleStrokes").checked = !!smState.scaleStrokes;
+}
+function bindScaleStrokes(id, st, push) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    push();
+    st.scaleStrokes = e.target.checked;
+    circleApi.scale.gesture = null;
+    smApi.scale.gesture = null;
+    pivotScaleGesture = null;
+    syncScaleStrokes();
+  });
+}
+bindScaleStrokes("scaleStrokes", state, () => pushHistory());
+bindScaleStrokes("repeatScaleStrokes", state, () => pushHistory());
+bindScaleStrokes("smScaleStrokes", smState, () => smPushHistory());
 
 function originOf(mode, layer, key) {
   if (mode === "circle") return placementOf(layer)[key];
@@ -8805,7 +8845,7 @@ function applyGroupScale(api, source) {
     for (const l of info.layers) {
       const snap = { origin: {}, props: {} };
       for (const k of keys) snap.origin[k] = originOf(sc.mode, l, k);
-      for (const prop of SCALE_PROPS[sc.mode][l.type] || []) if (typeof l[prop] === "number") snap.props[prop] = l[prop];
+      for (const prop of scalePropsFor(sc.mode, l.type)) if (typeof l[prop] === "number") snap.props[prop] = l[prop];
       base.set(l.id, snap);
     }
     g = sc.gesture = { key: info.key, old, pivot, base, historyLen: api.historyLen() };
@@ -9775,6 +9815,7 @@ function buildProjectData() {
       activeLayerId: state.activeLayerId,
       mask: JSON.parse(JSON.stringify(state.mask)),
       roughness: state.roughness,
+      ...(state.scaleStrokes ? { scaleStrokes: true } : {}),
       brush: { ...state.brush },
     };
   }
@@ -9790,6 +9831,7 @@ function buildProjectData() {
     fps: smState.fps,
     mask: JSON.parse(JSON.stringify(smState.mask)),
     roughness: smState.roughness,
+    ...(smState.scaleStrokes ? { scaleStrokes: true } : {}),
     brush: { ...smState.brush },
   };
 }
@@ -9843,6 +9885,7 @@ function applyDefaultProject(data) {
   state.activeLayerId = data.circle.activeLayerId ?? null;
   state.mask = data.circle.mask ? JSON.parse(JSON.stringify(data.circle.mask)) : createDefaultMask();
   state.roughness = data.circle.roughness ?? 50;
+  state.scaleStrokes = !!data.circle.scaleStrokes;
   state.brush = sanitizeBrush(data.circle.brush);
   refreshBrushControls();
   setFieldValue("roughness", state.roughness);
@@ -9863,6 +9906,7 @@ function applyDefaultProject(data) {
   smState.fps = data.straight.fps || 24;
   smState.mask = data.straight.mask ? JSON.parse(JSON.stringify(data.straight.mask)) : createDefaultMask();
   smState.roughness = data.straight.roughness ?? 50;
+  smState.scaleStrokes = !!data.straight.scaleStrokes;
   smState.brush = sanitizeBrush(data.straight.brush);
   refreshBrushControls();
   smSetFieldValue("smTileWidth", smState.tileWidth);
@@ -9898,6 +9942,7 @@ function applyProjectData(data) {
     state.activeLayerId = data.activeLayerId ?? null;
     state.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     state.roughness = data.roughness ?? 50;
+    state.scaleStrokes = !!data.scaleStrokes;
     state.brush = sanitizeBrush(data.brush);
     refreshBrushControls();
     setFieldValue("roughness", state.roughness);
@@ -9918,6 +9963,7 @@ function applyProjectData(data) {
     smState.fps = data.fps || 24;
     smState.mask = data.mask ? JSON.parse(JSON.stringify(data.mask)) : createDefaultMask();
     smState.roughness = data.roughness ?? 50;
+    smState.scaleStrokes = !!data.scaleStrokes;
     smState.brush = sanitizeBrush(data.brush);
     refreshBrushControls();
     smSetFieldValue("smTileWidth", smState.tileWidth);

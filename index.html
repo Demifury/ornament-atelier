@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Ornament Atelier</title>
-<link rel="stylesheet" href="style.css?v=65" />
+<link rel="stylesheet" href="style.css?v=66" />
 </head>
 <body>
 <div class="app">
@@ -718,6 +718,7 @@
 <div class="sf sf-wide" id="groupScaleField" style="display:none" title="Scale (% of the group, about its pivot)">
 <div class="sf-head"><label for="groupScaleNum">Scale (% of the group)</label></div>
 <div class="sf-box"><input type="range" id="groupScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="groupScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+<div class="sf-toggles"><label class="sf-toggle" title="Group scale also scales line widths (off: widths stay)"><input type="checkbox" id="scaleStrokes" /><span>Scale line widths</span></label></div>
 </div>
 </div></div>
         <div class="sf-btns">
@@ -779,9 +780,10 @@
 </div>
 </div>
         <div class="sf-grid">
-<div class="sf sf-wide" title="Scale the whole group about the pink pivot (the pivot stays put; line widths do not change)">
+<div class="sf sf-wide" title="Scale the whole group about the pink pivot (the pivot stays put)">
 <div class="sf-head"><label for="repeatScaleNum">Scale (% about the pivot)</label></div>
 <div class="sf-box"><input type="range" id="repeatScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="repeatScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+<div class="sf-toggles"><label class="sf-toggle" title="Group scale also scales line widths (off: widths stay)"><input type="checkbox" id="repeatScaleStrokes" /><span>Scale line widths</span></label></div>
 </div>
 </div>
         <div class="sf-btns">
@@ -908,6 +910,7 @@
 <div class="sf sf-wide" id="smGroupScaleField" style="display:none" title="Scale (% of the group, about its pivot)">
 <div class="sf-head"><label for="smGroupScaleNum">Scale (% of the group)</label></div>
 <div class="sf-box"><input type="range" id="smGroupScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="smGroupScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+<div class="sf-toggles"><label class="sf-toggle" title="Group scale also scales line widths (off: widths stay)"><input type="checkbox" id="smScaleStrokes" /><span>Scale line widths</span></label></div>
 </div>
 </div></div>
         <div class="sf-btns">
@@ -1015,6 +1018,6 @@
   </div>
 </div>
 
-<script src="app.js?v=98"></script>
+<script src="app.js?v=99"></script>
 </body>
 </html>
