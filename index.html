@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0e0f12" />
 <link rel="icon" type="image/png" href="images/icon-192.png" />
 <link rel="apple-touch-icon" href="images/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=75" />
+<link rel="stylesheet" href="style.css?v=77" />
 </head>
 <body>
 <div class="app">
@@ -1099,10 +1099,6 @@
         <svg id="straightCanvas" class="straight-canvas" viewBox="0 0 4096 1000" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
       <div class="artboard-block">
-        <div class="artboard-label">
-          <div>Ring editor <span class="artboard-size">infinite canvas</span></div>
-          <div class="artboard-onscreen">shown at <span id="ringOnScreenSize">—</span> on screen</div>
-        </div>
         <svg id="canvas" viewBox="0 0 4096 4096" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
     </div>
@@ -1125,6 +1121,9 @@
     </div>
 
     <div class="viewport-tools" id="viewportTools">
+      <div class="zoom-control ring-editor-info" id="ringEditorInfo" title="The Ring editor has no edge; exports are a square centred on the ring centre, up to 4096 px">
+        <span class="ring-editor-name">Ring editor</span> <span class="artboard-size">infinite canvas</span> <span>· <span id="ringOnScreenSize">—</span> on screen</span>
+      </div>
       <div class="zoom-control" title="Magnification of the artboard. Ctrl + Scroll (or Alt + Scroll, or a trackpad pinch) zooms around the pointer; Space + drag or middle-mouse drag pans.">
         <span>Zoom</span>
         <input type="text" inputmode="decimal" id="ringZoomNum" min="10" max="800" step="10" class="num-input" />
@@ -1149,6 +1148,6 @@
   </div>
 </div>
 
-<script src="app.js?v=115"></script>
+<script src="app.js?v=120"></script>
 </body>
 </html>

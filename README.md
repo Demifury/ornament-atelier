@@ -37,7 +37,7 @@ Both modes share the layer list, roughness and mask controls.
 - **Blend** (Circle mode) – pick two layers of the same type and generate smooth in-between steps, like a blend in a vector editor, either in a straight line or around a point, optionally closing the loop.
 - **Repeat around a point** (Circle mode) – copy a group around a pivot you place yourself, for rosettes and flowers of flowers.
 - **Roughness** – gives edges a hand-made, uneven look.
-- **Mask layers** – turn any layer into a mask that cuts out everything below it in its group, for example letters cut out of a thick ring.
+- **Mask layers** – turn any layer or group into a mask that cuts out everything below it in its group, for example letters cut out of a thick ring.
 - **Texture mask** – an uploaded texture that erases parts of the whole artwork, for a worn or printed look.
 - **Animation** – per-layer speed and an animated export.
 - **Handles and badges** – drag a layer's origin, radius or rotation in the preview, and edit count or size from small badges next to it.

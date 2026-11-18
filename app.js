@@ -1860,6 +1860,7 @@ function sanitizeGroups(raw, allowBlend = false) {
       };
     }
     if (allowBlend && g.repeat && typeof g.repeat === "object") group.repeat = sanitizeRepeat(g.repeat);
+    if (allowBlend && g.mask === true) group.mask = true; // the whole group is a mask (see "Layer masks")
     out.push(group);
   }
   for (const g of out) nextGroupId = Math.max(nextGroupId, g.id + 1);
@@ -1954,6 +1955,7 @@ function duplicateSelection(api) {
       const copy = { id: nextGroupId++, name: g.id === root.id ? g.name + " copy" : g.name, visible: g.visible !== false, parentId: null };
       if (g.scale) copy.scale = g.scale;
       if (g.repeat) copy.repeat = { ...g.repeat };
+      if (g.mask) copy.mask = true;
       gmap.set(g.id, copy);
     }
     for (const g of olds) gmap.get(g.id).parentId = g.id === root.id ? root.parentId ?? null : gmap.get(g.parentId).id;
@@ -2173,18 +2175,70 @@ function layerFamily(layer) {
   return "geom";
 }
 
+// Layer list icons (design C): kind of a group, type of a layer, 14 px line icons that take the row's colour.
+const listSvg = (inner, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+const LIST_ICONS = {
+  plain: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  blend: '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/>',
+  around: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/>',
+  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  mask: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
+  ring: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>',
+  text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+  shape: '<path d="M12 3l8 5v8l-8 5-8-5V8z"/>',
+  line: '<path d="M5 19L19 5"/>',
+  straight: '<path d="M3 12h18M3 8v8M21 8v8"/>',
+  asset: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/>',
+  guide: '<path d="M3 12h18" stroke-dasharray="3 3"/>',
+};
+
+function layerListKind(layer) {
+  return layer.type === "motif" ? "asset" : LIST_ICONS[layer.type] ? layer.type : "ring";
+}
+
+function groupListKind(group) {
+  if (group.blend) return blendIsAround(group) ? "around" : "blend";
+  if (group.repeat) return "repeat";
+  if (group.mask) return "mask";
+  return "plain";
+}
+
+// The small right-aligned text on a group card's header: layer count, "around 10", "×8", "mask".
+function groupCardMeta(target, group) {
+  let t;
+  if (group.blend) t = `${blendIsAround(group) ? "around" : "blend"} ${group.blend.steps}`;
+  else if (group.repeat) t = `×${group.repeat.copies}`;
+  else t = String(subtreeLayers(target, group.id).length);
+  if (group.mask) t = group.blend || group.repeat ? `${t} · mask` : `mask · ${t}`;
+  return t;
+}
+
+// Re-reads a group header's kind (colour, icon) and meta after a blend / Repeat edit, without a rebuild.
+function refreshGroupHeader(target, group, root) {
+  const item = root && root.querySelector(`[data-group-id="${group.id}"]`);
+  if (!item) return;
+  const kind = groupListKind(group);
+  const card = item.closest(".layer-card");
+  if (card) card.className = card.className.replace(/\bk-\w+\b/g, "").trim() + " k-" + kind;
+  const ico = item.querySelector(".layer-ico");
+  if (ico) ico.innerHTML = listSvg(LIST_ICONS[kind]);
+  const meta = item.querySelector(".layer-meta");
+  if (meta) meta.textContent = groupCardMeta(target, group);
+}
+
 function buildLayerRow(api, layer, depth = 0) {
   const item = document.createElement("div");
-  item.className = "layer-item" + (depth > 0 ? " layer-grouped" : "");
-  if (depth > 0) item.style.marginLeft = depth * 14 + "px";
+  const kind = layerListKind(layer);
+  const visible = layer.visible !== false;
+  item.className = `layer-item layer-row t-${kind}` + (visible ? "" : " layer-hidden");
   item.dataset.layerId = layer.id;
+  item.title = `${api.displayName(layer)} · ${api.typeLabel(layer)}`;
   const ed = api.editing;
   if (ed && ed.kind === "layer" && ed.id === layer.id) {
     buildRenameInput(api, item, "layer", layer.id, layer.name);
     return item;
   }
-  const visible = layer.visible !== false;
-  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button><i class="layer-dot fam-${layerFamily(layer)}" aria-hidden="true"></i><span>${escapeHtml(api.displayName(layer))}</span></div><span class="layer-meta">${api.typeLabel(layer)}</span>`;
+  item.innerHTML = `<span class="layer-ico">${listSvg(LIST_ICONS[kind])}</span><span class="layer-name">${escapeHtml(api.displayName(layer))}</span>${layer.mask ? `<span class="layer-mask-mark" title="Mask">${listSvg(LIST_ICONS.mask, 12)}</span>` : ""}<button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button>`;
   item.draggable = true; // drag to reorder or into a group (see attachListDnD)
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
@@ -2199,20 +2253,22 @@ function buildLayerRow(api, layer, depth = 0) {
   return item;
 }
 
+// A group is a card: this header row, tinted in the group kind colour, and (renderLayerListInto) a body below it
+// holding the children. Nested groups are cards inside the card.
 function buildGroupRow(api, group, depth = 0) {
   const item = document.createElement("div");
-  item.className = "layer-item layer-group-item";
-  if (depth > 0) item.style.marginLeft = depth * 14 + "px";
+  const collapsed = collapsedGroups.has(group.id);
+  const visible = group.visible !== false;
+  item.className = "layer-item layer-group-item" + (visible ? "" : " layer-hidden");
   item.dataset.groupId = group.id;
+  item.title = `${group.name} · ${group.blend || group.repeat ? groupMetaText(group) : `group · ${subtreeLayers(api.target, group.id).length}`}`;
   const ed = api.editing;
   if (ed && ed.kind === "group" && ed.id === group.id) {
     buildRenameInput(api, item, "group", group.id, group.name);
     return item;
   }
-  const count = subtreeLayers(api.target, group.id).length;
-  const collapsed = collapsedGroups.has(group.id);
-  const visible = group.visible !== false;
-  item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>${group.blend ? BLEND_MARK_HTML : group.repeat ? REPEAT_MARK_HTML : '<i class="layer-dot fam-group" aria-hidden="true"></i>'}<span>${escapeHtml(group.name)}</span></div><span class="layer-meta">${group.blend || group.repeat ? groupMetaText(group) : `group · ${count}`}</span>`;
+  const kind = groupListKind(group);
+  item.innerHTML = `<button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><span class="layer-ico">${listSvg(LIST_ICONS[kind])}</span><span class="layer-name">${escapeHtml(group.name)}</span><span class="layer-meta">${groupCardMeta(api.target, group)}</span><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>`;
   item.draggable = true;
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
@@ -2234,20 +2290,28 @@ function renderLayerListInto(api) {
   const t = api.target;
   const list = document.getElementById(api.listId);
   list.innerHTML = "";
-  // Top of the visible list = front of the stack (last in the array). A group's row sits above
-  // its children, which are indented under it one level per group unless it is collapsed.
-  const emit = (nodes, depth) => {
+  // Top of the visible list = front of the stack (last in the array). A group is a card: its header row, then
+  // (unless collapsed) a body holding its children.
+  const emit = (nodes, parent) => {
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
       if (n.layer) {
-        list.appendChild(buildLayerRow(api, n.layer, depth));
+        parent.appendChild(buildLayerRow(api, n.layer));
         continue;
       }
-      list.appendChild(buildGroupRow(api, n.group, depth));
-      if (!collapsedGroups.has(n.group.id)) emit(n.children, depth + 1);
+      const card = document.createElement("div");
+      card.className = "layer-card k-" + groupListKind(n.group);
+      card.appendChild(buildGroupRow(api, n.group));
+      if (!collapsedGroups.has(n.group.id) && n.children.length) {
+        const body = document.createElement("div");
+        body.className = "layer-card-body";
+        emit(n.children, body);
+        card.appendChild(body);
+      }
+      parent.appendChild(card);
     }
   };
-  emit(buildLayerTree(t), 0);
+  emit(buildLayerTree(t), list);
   attachListDnD(api, list);
   api.updateSelection();
 }
@@ -2444,6 +2508,9 @@ function updateLayerListSelectionIn(api) {
       const n = members.filter((l) => selected.has(l.id)).length;
       el.classList.toggle("active", n > 0 && n === members.length);
       el.classList.toggle("multi-selected", n > 0 && n < members.length);
+      // the card of a group that holds only part of the selection gets a subtle tint
+      const card = el.closest(".layer-card");
+      if (card) card.classList.toggle("has-selection", n > 0 && n < members.length);
       return;
     }
     const id = Number(el.dataset.layerId);
@@ -2733,8 +2800,7 @@ function createBlendFromSelection() {
 }
 
 function blendUpdateMeta(g) {
-  const el = document.querySelector(`#layerList [data-group-id="${g.id}"] .layer-meta`);
-  if (el) el.textContent = groupMetaText(g);
+  refreshGroupHeader(state, g, document.getElementById("layerList"));
 }
 
 function setBlendSteps(g, v) {
@@ -2970,6 +3036,7 @@ function groupMetaText(group) {
   const parts = [];
   if (group.blend) parts.push(blendMetaText(group));
   if (group.repeat) parts.push(`repeat · ${group.repeat.copies}`);
+  if (group.mask) parts.push("mask");
   return parts.join(" · ");
 }
 
@@ -3089,7 +3156,7 @@ function selectedWholePivot() {
   return g && pivotOf(g) ? g : null;
 }
 function selectedPivotGroup() {
-  const whole = selectedWholePivot();
+  const whole = selectedWholePivot() || handleRepeatGroup();
   if (whole) return whole;
   for (const l of [getActiveLayer(), ...getSelectedLayersFrom(state)]) {
     if (!l || l.groupId == null) continue;
@@ -3141,8 +3208,7 @@ function createRepeatFromSelection() {
 }
 
 function repeatUpdateMeta(g) {
-  const el = document.querySelector(`#layerList [data-group-id="${g.id}"] .layer-meta`);
-  if (el) el.textContent = groupMetaText(g);
+  refreshGroupHeader(state, g, document.getElementById("layerList"));
 }
 
 function setRepeatCopies(g, v) {
@@ -3419,8 +3485,8 @@ function appendRepeatPivotHandle(svg) {
   const pv = pivotOf(g);
   // Only the WHOLE group selected gets the live pivot (ball, badges). With one member (or a few) selected the
   // pivot is a plain marker that never takes a click, so the layer's own handles stay reachable.
-  const live = selectedWholePivot() === g;
-  if (live && g.repeat) appendPivotBadges(svg, g);
+  const live = handleRepeatGroup() === g;
+  if (live && g.repeat && selectedWholePivot() === g) appendPivotBadges(svg, g);
   const h = document.createElementNS(SVG_NS, "g");
   h.setAttribute("class", "editor-only repeat-pivot-handle" + (live ? "" : " repeat-pivot-passive"));
   if (!live) h.setAttribute("pointer-events", "none");
@@ -3429,7 +3495,7 @@ function appendRepeatPivotHandle(svg) {
   const asBall = handleRepeatGroup() === g;
   h.dataset.repeatBall = asBall ? "1" : "0";
   const tip = asBall
-    ? (g.repeat ? "Repeat" : "Blend") + " group handle (on the pivot): drag to move the whole group with its pivot (Shift: one axis). Alt+drag moves only the pivot. The knob turns the group about the pivot."
+    ? (selectedWholePivot() === g ? (g.repeat ? "Repeat" : "Blend") + " group handle (on the pivot)" : "Group handle (on the pivot of the " + (g.repeat ? "Repeat" : "Blend") + " inside it)") + ": drag to move the whole group with its pivot (Shift: one axis). Alt+drag moves only the pivot. The knob turns the group about the pivot."
     : (g.repeat ? "Repeat" : "Blend") + " pivot: drag to move (Shift: one axis)";
   h.innerHTML = `<title>${tip}</title>
     <circle r="16" fill="transparent" pointer-events="all" />
@@ -3567,10 +3633,9 @@ function layerMetaText(layer) {
 function updateLayerListMeta() {
   document.querySelectorAll("#layerList .layer-item").forEach((el) => {
     const layer = state.layers.find((l) => l.id === Number(el.dataset.layerId));
-    const meta = el.querySelector(".layer-meta");
-    if (layer && meta) meta.textContent = layerMetaText(layer);
+    if (layer) el.title = `${layerDisplayName(layer)} · ${layerMetaText(layer)}`;
     // A text layer's name carries its text, which changes while typing.
-    const label = el.querySelector(".layer-item-main > span");
+    const label = el.querySelector(".layer-name");
     if (layer && label && layer.type === "text") label.textContent = layerDisplayName(layer);
   });
 }
@@ -3610,7 +3675,8 @@ function refreshControls() {
   document.getElementById("layerOpacityField").classList.toggle("disabled", !active);
   setFieldValue("layerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
   document.getElementById("layerMaskField").classList.toggle("disabled", !active);
-  document.getElementById("layerMask").checked = !!active && getSelectedLayers().every((l) => l.mask);
+  const maskGroup = active ? selectedWholeGroup(state) : null; // a whole group selected: the toggle is the group's
+  document.getElementById("layerMask").checked = !!active && (maskGroup ? !!maskGroup.mask : getSelectedLayers().every((l) => l.mask));
 
   // Layer type: only Motif/Line/Shape can change into one another (see
   // CONVERTIBLE_TYPES) — Ring has no equivalent among them, so it's excluded here too.
@@ -3896,6 +3962,14 @@ function bindControl(id, apply) {
 // regardless of its type, since it's rendered directly on the shared <g> wrapper.
 bindControl("layerOpacity", (l, el) => (l.opacity = Number(el.value)));
 bindControl("layerMask", (l, el) => {
+  const whole = currentMode === "circle" ? selectedWholeGroup(state) : null;
+  if (whole) {
+    // a whole group selected: the GROUP becomes the mask (applied once, not per member)
+    if (el.checked) whole.mask = true;
+    else delete whole.mask;
+    blendUpdateMeta(whole);
+    return;
+  }
   if (el.checked) l.mask = true;
   else delete l.mask;
 });
@@ -6210,6 +6284,14 @@ function layerIsActiveMask(target, layer) {
   return !!layer.mask && layer.visible !== false && !groupHidden(target, layer);
 }
 
+// A group used as a mask: the whole painted result of its members (blend steps and Repeat copies included)
+// cuts what is below the group in its parent. Hidden group, or a hidden group above it = no effect.
+function groupIsActiveMask(target, g) {
+  if (!g.mask) return false;
+  for (let p = g, n = 0; p && n < 64; p = parentGroupOf(target, p), n++) if (p.visible === false) return false;
+  return true;
+}
+
 function maskSvgEl(tag, attrs) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const k in attrs) el.setAttribute(k, attrs[k]);
@@ -6239,7 +6321,7 @@ function buildLayerMaskEl(els) {
 // Editor-only: a faint outline of the mask layer's painted area. data-layer-id so it picks like the layer.
 function buildMaskGhost(layerId, srcId, filterId) {
   const g = maskSvgEl("g", { "class": "layer-hit editor-only", filter: `url(#${filterId})`, opacity: 0.85 });
-  g.dataset.layerId = layerId;
+  if (layerId != null) g.dataset.layerId = layerId;
   g.appendChild(maskSvgEl("use", { href: `#${srcId}` }));
   return g;
 }
@@ -6258,13 +6340,16 @@ function buildMaskEdgeFilter(filterId, radius) {
 // everything before them in `parent` is wrapped in a <g mask>. Returns the ghosts (or null with no masks).
 function applyLayerMasks(recs) {
   if (recs.length === 0) return null;
+  // bottom to top, so a mask higher up also cuts the wrapper an earlier one made
+  recs.sort((a, b) => (a.els[0] === b.els[0] ? 0 : a.els[0].compareDocumentPosition(b.els[0]) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
   const ghosts = document.createElementNS(SVG_NS, "g");
   ghosts.setAttribute("class", "editor-only");
   const unit = (renderReads && renderReads.unit) || 4;
   const edgeId = `lmask-edge-${layerMaskSeq + 1}`;
   ghosts.appendChild(maskSvgEl("defs", {})).appendChild(buildMaskEdgeFilter(edgeId, Math.max(0.5, 1.2 * unit)));
-  for (const { layer, parent, els } of recs) {
+  for (const { layer, group, parent, els } of recs) {
     const first = els[0];
+    const maskLabel = group ? group.name : layer.name;
     const below = [];
     for (const nd of Array.from(parent.childNodes)) {
       if (nd === first) break;
@@ -6275,14 +6360,30 @@ function applyLayerMasks(recs) {
       const wrap = document.createElementNS(SVG_NS, "g");
       wrap.setAttribute("mask", `url(#${id})`);
       wrap.dataset.maskWrap = "1";
-      wrap.dataset.maskName = `Mask: ${layer.name}`;
+      wrap.dataset.maskName = `Mask: ${maskLabel}`;
       parent.insertBefore(wrap, below[0]);
       wrap.appendChild(mask);
       for (const nd of below) wrap.appendChild(nd);
     } else {
       parent.appendChild(mask); // nothing below: kept only so the ghost has something to draw
     }
-    ghosts.appendChild(buildMaskGhost(layer.id, srcId, edgeId));
+    if (!group) ghosts.appendChild(buildMaskGhost(layer.id, srcId, edgeId));
+    else {
+      // a group mask: one outline of the whole painted result (not pickable) plus an invisible, pickable
+      // stand-in for every member so a click still reaches the layers
+      const outline = buildMaskGhost(null, srcId, edgeId);
+      outline.classList.remove("layer-hit");
+      outline.setAttribute("pointer-events", "none");
+      ghosts.appendChild(outline);
+      Array.from(mask.querySelectorAll(".layer-hit[data-layer-id]")).forEach((m, k) => {
+        const mid = m.getAttribute("id") || `${id}-m${k}`;
+        m.setAttribute("id", mid);
+        const hit = maskSvgEl("g", { "class": "layer-hit editor-only", opacity: 0 });
+        for (const key in m.dataset) hit.dataset[key] = m.dataset[key];
+        hit.appendChild(maskSvgEl("use", { href: `#${mid}` }));
+        ghosts.appendChild(hit);
+      });
+    }
   }
   return ghosts;
 }
@@ -6484,7 +6585,36 @@ function handleRepeatGroup(layers) {
   if (currentMode !== "circle") return null;
   layers = layers || getSelectedLayers();
   if (!groupTransformActive(layers)) return null;
-  return selectedWholePivot();
+  return selectedWholePivot() || parentPivotOwner();
+}
+
+// A plain group selected whole (the parent of a Repeat or "Around a point" blend group): when every
+// outermost pivot group inside it shares ONE pivot, that pivot is the parent's anchor too (ball, knob and
+// move/turn behave as for the pivot group itself, with everything in the parent). null when it has no pivot
+// group or they sit at different pivots (then the usual middle-of-the-parts anchor applies). Returns the first
+// of those pivot groups (the owner of the pivot the handle is on).
+function parentPivotOwner() {
+  const w = selectedWholeGroup(state);
+  if (!w || pivotOf(w)) return null;
+  const ids = groupSubtreeIds(state, w.id);
+  const inside = state.groups.filter((x) => x !== w && pivotOf(x) && ids.has(x.id));
+  const outer = inside.filter((x) => {
+    for (let p = parentGroupOf(state, x), n = 0; p && p !== w && n < 64; p = parentGroupOf(state, p), n++) if (pivotOf(p)) return false;
+    return true;
+  });
+  if (outer.length === 0) return null;
+  const q = pivotOf(outer[0]);
+  return outer.every((x) => Math.hypot(pivotOf(x).pivotX - q.pivotX, pivotOf(x).pivotY - q.pivotY) < 0.5) ? outer[0] : null;
+}
+
+// The pivot groups a handle gesture on the group handle must carry along, with their pivots now. For the pivot
+// group selected itself: the groups nested in it (plus itself when it moves). For its parent: every pivot group
+// inside the parent.
+function handlePivotGroups(owner, includeOwner) {
+  const w = selectedWholeGroup(state);
+  if (!w || w === owner) return [...(includeOwner ? [{ g: owner, x: pivotOf(owner).pivotX, y: pivotOf(owner).pivotY }] : []), ...nestedRepeatPivots(owner)];
+  const ids = groupSubtreeIds(state, w.id);
+  return state.groups.filter((x) => x !== w && pivotOf(x) && ids.has(x.id)).map((x) => ({ g: x, x: pivotOf(x).pivotX, y: pivotOf(x).pivotY }));
 }
 
 // Groups with a pivot nested inside g (not g itself), with their pivots at the moment of the call.
@@ -6717,7 +6847,7 @@ function appendValueBadges(svg) {
   const selected = getSelectedLayers();
   // A repeat group's handle sits on the pivot, where the pink Copies and Scale badges are: the
   // ball's own Scale (group anchor) and per-layer Count give way; a blend's Steps stays.
-  const onPivot = !!handleRepeatGroup(selected);
+  const onPivot = !!selectedWholePivot() && !!handleRepeatGroup(selected); // (a parent group's ball keeps its own Scale badge)
   const kinds = ["count", "size"].filter((k) => badgeDisplay(k) && !(onPivot && (k === "size" || !selectedWholeBlend())));
   if (kinds.length === 0) return;
   const unit = svgUnitsPerPx(svg);
@@ -7255,6 +7385,10 @@ function renderCircle(svg) {
     if (layer.mask && layerIsActiveMask(state, layer)) maskRecs.push({ layer, parent, els: Array.from(parent.childNodes).slice(firstIdx) });
   }
 
+  for (const g of state.groups) {
+    if (!groupIsActiveMask(state, g)) continue;
+    for (const wrap of content.querySelectorAll(`g[data-group-id="${g.id}"]`)) maskRecs.push({ group: g, parent: wrap.parentNode, els: [wrap] });
+  }
   const maskGhosts = applyLayerMasks(maskRecs);
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle", INFINITE_MASK_EXTENT);
   svg.appendChild(content);
@@ -7529,7 +7663,7 @@ function beginHandleDrag(e, kind, layerId) {
   const repeatG = kind === "grouprotate" ? handleRepeatGroup() : null;
   if (repeatG) {
     pivot = { x: CENTER + pivotOf(repeatG).pivotX, y: CENTER + pivotOf(repeatG).pivotY };
-    reps = nestedRepeatPivots(repeatG);
+    reps = handlePivotGroups(repeatG, false);
   }
   // The group radius ball measures from the pivot, like its rotate knob turns about it.
   const ringOrigin = kind === "groupradius" ? pivot : origin;
@@ -7699,7 +7833,7 @@ document.getElementById("canvas").addEventListener("pointercancel", (e) => {
   endHandleDrag(e);
 });
 
-document.getElementById("canvas").addEventListener("pointerdown", (e) => {
+function onCanvasPointerDown(e) {
   if (e.button !== 0) return;
   const pivotHandle = e.target.closest("[data-repeat-pivot]:not(.repeat-pivot-passive)");
   if (pivotHandle) {
@@ -7713,7 +7847,7 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
         const p = placementOf(layer);
         origins.set(layer.id, { x: p.originX, y: p.originY });
       }
-      const reps = [{ g: rg, x: pivotOf(rg).pivotX, y: pivotOf(rg).pivotY }, ...nestedRepeatPivots(rg)];
+      const reps = handlePivotGroups(rg, true);
       const pivot = { x: CENTER + pivotOf(rg).pivotX, y: CENTER + pivotOf(rg).pivotY };
       originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
       try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
@@ -7758,6 +7892,16 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (typeof id === "string") selectGroupIn(circleApi, Number(id.slice(1)), { toggle: multi });
   else if (id != null) selectLayer(id, { toggle: multi });
   else beginMarquee(e, "circle");
+}
+document.getElementById("canvas").addEventListener("pointerdown", onCanvasPointerDown);
+// The Ring canvas is infinite, but the <svg> is only as big as the old artboard, so a press on EMPTY space
+// outside that box lands on the pane around it instead of the svg (artwork that overflows the box is still
+// hit-tested). The same press handling (click-select by point, deselect, marquee) runs from there too.
+document.querySelector(".preview").addEventListener("pointerdown", (e) => {
+  if (currentMode !== "circle" || e.target.closest("#canvas")) return;
+  const t = e.target;
+  if (t.id !== "circleModePreview" && !t.classList.contains("preview") && !(t.classList.contains("artboard-block") && t.id !== "straightPreviewBlock")) return; // bare space only, never a control
+  onCanvasPointerDown(e);
 });
 
 document.getElementById("canvas").addEventListener("dblclick", (e) => {
@@ -8667,27 +8811,52 @@ function renderStraight(list = blendRenderLayers(state).list) {
     svg.appendChild(g);
   }
 
-  // A mask layer cuts the run of layers just before it that sit in its own group (or deeper).
+  // A mask layer cuts the run of layers just before it that sit in its own group (or deeper); a mask GROUP
+  // (all its members, copies and steps together, per occurrence) cuts the run before it that shares its parent.
+  const units = [];
   placed.forEach((m, mi) => {
-    if (!m.mask) return;
+    if (m.mask) units.push({ idxs: [mi], parent: m.path, last: mi });
+  });
+  for (const gr of state.groups) {
+    if (!groupIsActiveMask(state, gr)) continue;
+    const key = "g" + gr.id;
+    const occ = new Map();
+    placed.forEach((e, i) => {
+      const at = e.path.indexOf(key);
+      if (at < 0) return;
+      const pre = e.path.slice(0, at + 1).join("/");
+      if (!occ.has(pre)) occ.set(pre, { parent: e.path.slice(0, at), idxs: [] });
+      occ.get(pre).idxs.push(i);
+    });
+    for (const o of occ.values()) units.push({ idxs: o.idxs, parent: o.parent, last: Math.max(...o.idxs) });
+  }
+  units.sort((a, b) => a.last - b.last);
+  for (const u of units) {
+    const members = [];
+    for (const i of u.idxs) if (placed[i].node && !members.includes(placed[i].node)) members.push(placed[i].node);
+    const first = Math.min(...u.idxs);
+    const cutIdx = [];
     const nodes = [];
-    for (let i = mi - 1; i >= 0; i--) {
+    for (let i = first - 1; i >= 0; i--) {
       const e = placed[i];
-      if (!m.path.every((k, j) => e.path[j] === k)) break;
+      if (!u.parent.every((k, j) => e.path[j] === k)) break;
+      if (!e.node) continue;
+      cutIdx.push(i);
       if (!nodes.includes(e.node)) nodes.unshift(e.node);
     }
-    const { mask, id } = buildLayerMaskEl([m.g]);
+    const { mask, id } = buildLayerMaskEl(members);
+    for (const i of u.idxs) placed[i].node = null; // inside the mask now
     if (nodes.length === 0) {
       svg.appendChild(mask);
-      return;
+      continue;
     }
     const wrap = document.createElementNS(SVG_NS, "g");
     wrap.setAttribute("mask", `url(#${id})`);
     svg.insertBefore(wrap, nodes[0]);
     wrap.appendChild(mask);
     for (const nd of nodes) wrap.appendChild(nd);
-    for (let i = 0; i < mi; i++) if (nodes.includes(placed[i].node)) placed[i].node = wrap;
-  });
+    for (const i of cutIdx) placed[i].node = wrap;
+  }
 }
 
 // --- Export ---
@@ -9109,7 +9278,7 @@ async function exportLayersZip(opts) {
   const exportable = blendRenderLayers(state).list.filter((l) => layerExportable(l, opts));
   const buckets = new Map(); // group id (or null) -> { folder, rings, others }, in stacking order
   for (const l of exportable) {
-    if (l.mask) continue; // a mask is not a picture of its own: it cuts the files of the layers below it
+    if (l.mask || groupChainOf(state, l).some((g) => g.mask)) continue; // a mask (layer or whole group) is not a picture of its own: it cuts the files of the layers below it
     const chain = opts.flatten ? [] : groupChainOf(state, l); // folders follow the group tree
     const key = chain.map((g) => g.id).join("/");
     if (!buckets.has(key)) buckets.set(key, { folder: chain.map((g) => sanitizeFilePart(g.name)).join("/"), rings: [], others: [] });
@@ -9124,13 +9293,28 @@ async function exportLayersZip(opts) {
 
   // The masks that cut a file: those above its layers in the same group (or an enclosing one).
   const pathKeys = (l) => l._path || groupChainOf(state, l).map((g) => "g" + g.id);
-  const maskLayersAll = exportable.filter((l) => layerIsActiveMask(state, l));
+  // Mask units: a mask layer (path = its own groups) or the members of a mask group, one unit per occurrence
+  // (path = the groups above that group). A unit is added to a file when the file's layers sit below it.
+  const maskUnits = [];
+  for (const l of exportable) if (layerIsActiveMask(state, l)) maskUnits.push({ layers: [l], parent: pathKeys(l), idx: exportable.indexOf(l) });
+  for (const gr of state.groups) {
+    if (!groupIsActiveMask(state, gr)) continue;
+    const key = "g" + gr.id;
+    const occ = new Map();
+    for (const l of exportable) {
+      const pk = pathKeys(l);
+      const at = pk.indexOf(key);
+      if (at < 0) continue;
+      const pre = pk.slice(0, at + 1).join("/");
+      if (!occ.has(pre)) occ.set(pre, { layers: [], parent: pk.slice(0, at), idx: exportable.indexOf(l) });
+      occ.get(pre).layers.push(l);
+    }
+    maskUnits.push(...occ.values());
+  }
   const withMasks = (members) => {
     const set = new Set(members);
-    for (const m of maskLayersAll) {
-      const mp = pathKeys(m);
-      const mi = exportable.indexOf(m);
-      if (members.some((l) => exportable.indexOf(l) < mi && mp.every((k, i) => pathKeys(l)[i] === k))) set.add(m);
+    for (const u of maskUnits) {
+      if (members.some((l) => exportable.indexOf(l) < u.idx && u.parent.every((k, i) => pathKeys(l)[i] === k))) u.layers.forEach((m) => set.add(m));
     }
     return exportable.filter((l) => set.has(l));
   };
@@ -10066,9 +10250,8 @@ bindGroupScale(smApi);
 function smUpdateLayerListMeta() {
   document.querySelectorAll("#smLayerList .layer-item").forEach((el) => {
     const layer = smState.layers.find((l) => l.id === Number(el.dataset.layerId));
-    const meta = el.querySelector(".layer-meta");
-    if (layer && meta) meta.textContent = smLayerTypeLabel(layer);
-    const label = el.querySelector(".layer-item-main > span");
+    if (layer) el.title = `${smLayerDisplayName(layer)} · ${smLayerTypeLabel(layer)}`;
+    const label = el.querySelector(".layer-name");
     if (layer && label && layer.type === "text") label.textContent = smLayerDisplayName(layer);
   });
 }
@@ -11796,6 +11979,7 @@ function setMode(mode) {
   document.getElementById("circleLayersPanel").style.display = mode === "circle" ? "" : "none";
   document.getElementById("straightLayersPanel").style.display = mode === "straight" ? "" : "none";
   document.getElementById("circleModePreview").style.display = mode === "circle" ? "" : "none";
+  document.getElementById("ringEditorInfo").style.display = mode === "circle" ? "" : "none";
   document.getElementById("straightModePreview").style.display = mode === "straight" ? "" : "none";
   if (mode === "straight") smRender();
   // "Fit design" only means something for the Ring editor's off-artboard artwork.

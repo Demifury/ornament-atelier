@@ -654,41 +654,71 @@ input[type="file"] {
 .layer-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   max-height: 280px;
   overflow-y: auto;
   margin-top: 10px;
 }
 
-.layer-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  font-size: 13px;
-}
+/* Layer list, design C: groups are cards (tinted header row + children inside, nested groups are cards in cards),
+   plain layers are borderless one-line rows. --c is the kind / type colour. */
+.layer-card.k-plain { --c: #7f93ad; }
+.layer-card.k-blend, .layer-card.k-around { --c: #e0915a; }
+.layer-card.k-repeat { --c: #6cc08b; }
+.layer-card.k-mask { --c: #d96c8a; }
+.layer-row.t-ring { --c: #c9a24a; }
+.layer-row.t-text { --c: #b07cc6; }
+.layer-row.t-shape, .layer-row.t-line, .layer-row.t-straight { --c: #4fa3a0; }
+.layer-row.t-asset { --c: #a39a8c; }
+.layer-row.t-guide { --c: #8a8a92; }
 
-.layer-item-main {
+.layer-card {
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--c) 45%, #1c1d21);
+  border-radius: 7px;
+  background: #111216;
+  overflow: hidden;
+}
+.layer-card .layer-card { margin: 2px 0; }
+.layer-card.has-selection { border-color: #2f5a99; background: #121722; }
+.layer-card-body { display: flex; flex-direction: column; gap: 1px; padding: 2px 4px 4px 10px; }
+
+.layer-item {
+  position: relative;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 24px;
+  padding: 0 2px 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
   min-width: 0;
 }
+.layer-group-item {
+  height: 28px;
+  padding: 0 4px 0 2px;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--c) 16%, #111216);
+}
+
+.layer-ico { flex: none; display: flex; color: var(--c); }
+.layer-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer-group-item .layer-name { font-weight: 600; }
+.layer-item .layer-meta { flex: none; font-size: 10.5px; color: #8a8a92; white-space: nowrap; }
+.layer-mask-mark { flex: none; display: flex; color: #d96c8a; }
+.layer-hidden .layer-name { color: #6a6a72; font-style: italic; }
+.layer-hidden .layer-ico { opacity: 0.35; }
 
 .layer-visibility-btn {
-  flex-shrink: 0;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Hitbox is bigger than the 14x14 icon inside it — negative margin keeps the row's
-     visual layout the same as a plain 20x20 button while the actual clickable area
-     (the button's own box) is noticeably larger and easier to hit. */
-  width: 28px;
-  height: 28px;
-  margin: -4px;
+  width: 24px;
+  height: 24px;
+  margin: 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -707,17 +737,25 @@ input[type="file"] {
 .layer-item:hover {
   background: #1a1b1f;
 }
+.layer-group-item:hover {
+  background: color-mix(in srgb, var(--c) 24%, #111216);
+}
 
 .layer-item.active {
   background: #142033;
-  border-color: #4f8cff;
+  outline: 1px solid #4f8cff;
+  outline-offset: -1px;
+}
+.layer-group-item.active {
+  background: color-mix(in srgb, var(--c) 16%, #142033);
 }
 
 /* Also-selected rows in a multi-selection: same blue family as the active row but
    dimmer, so it stays obvious which one the panel headings/type are being read from. */
-.layer-item.multi-selected {
+.layer-row.multi-selected {
   background: #101a29;
-  border-color: #2f5a99;
+  outline: 1px solid #2f5a99;
+  outline-offset: -1px;
 }
 
 .layer-name-input {
@@ -727,7 +765,7 @@ input[type="file"] {
   color: #e4e4e6;
   border: 1px solid #4f8cff;
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 1px 6px;
   font-size: 13px;
   font-family: inherit;
 }
@@ -736,28 +774,14 @@ input[type="file"] {
   outline: none;
 }
 
-.layer-item .layer-meta {
-  font-size: 11px;
-  color: #8a8a92;
-}
-
-/* Groups: the group row has a collapse arrow before its eye; members sit indented below. */
-.layer-grouped {
-  margin-left: 18px;
-}
-
-.layer-group-item .layer-item-main > span {
-  font-weight: 600;
-}
-
 .layer-collapse-btn {
-  flex-shrink: 0;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  width: 20px;
   height: 28px;
-  margin: -4px -2px -4px -4px;
+  margin: 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -1520,12 +1544,18 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 
 /* Layer list drag and drop: line before/after a row, highlight on a group row, red when refused. */
 .layer-item.dragging { opacity: 0.45; }
-.layer-item.drop-above { box-shadow: 0 -3px 0 0 #4f8cff; }
-.layer-item.drop-below { box-shadow: 0 3px 0 0 #4f8cff; }
-.layer-item.drop-into { background: #1b2f4d; border-color: #4f8cff; }
-.layer-item.drop-bad.drop-above { box-shadow: 0 -3px 0 0 #ff6b6b; }
-.layer-item.drop-bad.drop-below { box-shadow: 0 3px 0 0 #ff6b6b; }
-.layer-item.drop-bad.drop-into { background: #3a1c1c; border-color: #ff6b6b; }
+.layer-item.drop-above::before, .layer-item.drop-below::after { content: ""; position: absolute; left: 0; right: 0; height: 2px; background: #4f8cff; z-index: 2; pointer-events: none; }
+.layer-item.drop-above::before { top: -1px; }
+.layer-item.drop-below::after { bottom: -1px; }
+.layer-group-item.drop-above::before { top: 0; }
+.layer-group-item.drop-below::after { bottom: 0; }
+.layer-item.drop-bad.drop-above::before, .layer-item.drop-bad.drop-below::after { background: #ff6b6b; }
+.layer-row.drop-into { background: #1b2f4d; outline: 1px solid #4f8cff; outline-offset: -1px; }
+.layer-group-item.drop-into { background: #1d3358; }
+.layer-card:has(> .drop-into) { border: 1px dashed #4f8cff; box-shadow: 0 0 0 2px #4f8cff33; background: #142033; }
+.layer-group-item.drop-bad.drop-into { background: #3a1c1c; }
+.layer-card:has(> .drop-bad.drop-into) { border-color: #ff6b6b; box-shadow: 0 0 0 2px #ff6b6b33; background: #2a1717; }
+.layer-row.drop-bad.drop-into { background: #3a1c1c; outline-color: #ff6b6b; }
 .layer-drop-end { flex-shrink: 0; padding: 6px 8px; border: 1px dashed #3a3c46; border-radius: 6px; font-size: 11px; color: #8a8a92; text-align: center; }
 .layer-drop-end.drop-into { border-color: #4f8cff; background: #1b2f4d; color: #cfe0ff; }
 .layer-drop-end.drop-bad { border-color: #ff6b6b; background: #3a1c1c; }
@@ -1586,3 +1616,14 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .sf-toggles-4 .tt-ul span { text-decoration: underline; }
 .sf-toggles-4 .tt-st span { text-decoration: line-through; }
 .sf-toggles-4 .tt-small small { font-size: 0.7em; }
+
+/* The Ring editor's name and on-screen size live in the bottom toolbar, never over the artwork. */
+.ring-editor-info {
+  gap: 4px;
+  white-space: nowrap;
+}
+.ring-editor-name {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #d5d5da;
+}
