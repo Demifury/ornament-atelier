@@ -2167,33 +2167,60 @@ function buildRenameInput(api, item, kind, id, name) {
   });
 }
 
-// Colour family of a layer kind, shared by the toolbar, list dots and sidebar accents.
-function layerFamily(layer) {
-  if (layer.type === "motif") return "asset";
-  if (layer.type === "shape") return "shape";
-  if (layer.type === "text") return "type";
-  return "geom";
-}
-
-// Layer list icons (design C): kind of a group, type of a layer, 14 px line icons that take the row's colour.
-const listSvg = (inner, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
-const LIST_ICONS = {
-  plain: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  blend: '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/>',
-  around: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/>',
-  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
-  mask: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
-  ring: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>',
-  text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
-  shape: '<path d="M12 3l8 5v8l-8 5-8-5V8z"/>',
-  line: '<path d="M5 19L19 5"/>',
-  straight: '<path d="M3 12h18M3 8v8M21 8v8"/>',
-  asset: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/>',
-  guide: '<path d="M3 12h18" stroke-dasharray="3 3"/>',
+// ONE source of truth for layer-type and group-kind icons. The creator buttons above the layer list, the list rows,
+// the group kinds and the toolbar's group buttons all draw these (inner SVG markup on a 24 x 24 grid, stroked with the
+// current colour). A button names its icon with data-ico="..." (applyToolbarIcons below). The colours live in style.css
+// (--col-* on :root): geometry teal, asset gold, shape orange, text violet, blend blue, repeat pink, mask pink-magenta.
+const ICON_FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
+const ICON_ASSET = '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 17l5-5 4 4 3-3 4 4"/>';
+const ICON_SHAPE = '<path d="M12 4l8 15H4z"/>';
+const ICON_TEXT = '<path d="M5 6h14M12 6v13"/>';
+const LAYER_TYPE_ICONS = {
+  circle: {
+    ring: '<circle cx="12" cy="12" r="8"/>',
+    line: '<circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>',
+    straight: '<path d="M5 19L19 5M3 17l4 4M17 3l4 4"/>',
+    motif: ICON_ASSET,
+    shape: ICON_SHAPE,
+    text: ICON_TEXT,
+  },
+  straight: {
+    line: '<path d="M3 12h18" stroke-dasharray="3 3"/>',
+    guide: '<path d="M3 12h18M6 9v6M18 9v6"/>',
+    motif: ICON_ASSET,
+    shape: ICON_SHAPE,
+    text: ICON_TEXT,
+  },
 };
+const GROUP_KIND_ICONS = {
+  plain: ICON_FOLDER,
+  blend: '<circle cx="6" cy="12" r="4.2"/><circle cx="13.2" cy="12" r="2.8"/><circle cx="18.8" cy="12" r="1.6"/>',
+  around: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/>', // blend "around a point": no toolbar button of its own
+  repeat: '<circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="4.6" r="2.2"/><circle cx="18.4" cy="15.7" r="2.2"/><circle cx="5.6" cy="15.7" r="2.2"/>',
+  mask: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>', // the mask mark (no toolbar button: it is a checkbox)
+};
+const listSvg = (inner, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
+// Fills every <button data-ico="..."> (creator buttons, Group / Blend / Repeat) from the maps above.
+function applyToolbarIcons() {
+  document.querySelectorAll("[data-ico]").forEach((btn) => {
+    const key = btn.dataset.ico;
+    const set = LAYER_TYPE_ICONS[btn.closest("#straightLayersPanel") ? "straight" : "circle"];
+    const inner = set[key] || GROUP_KIND_ICONS[key === "group" ? "plain" : key];
+    const svg = btn.querySelector("svg");
+    if (inner && svg) svg.innerHTML = inner;
+  });
+}
+applyToolbarIcons();
+
+// The kind (colour class t-*) of a layer row; the icon comes from the mode's own set so a row shows exactly what its
+// creator button shows.
 function layerListKind(layer) {
-  return layer.type === "motif" ? "asset" : LIST_ICONS[layer.type] ? layer.type : "ring";
+  return layer.type === "motif" ? "asset" : layer.type;
+}
+function layerListIcon(api, layer) {
+  const set = LAYER_TYPE_ICONS[api.iconSet] || LAYER_TYPE_ICONS.circle;
+  return set[layer.type] || LAYER_TYPE_ICONS.circle.ring;
 }
 
 function groupListKind(group) {
@@ -2221,7 +2248,7 @@ function refreshGroupHeader(target, group, root) {
   const card = item.closest(".layer-card");
   if (card) card.className = card.className.replace(/\bk-\w+\b/g, "").trim() + " k-" + kind;
   const ico = item.querySelector(".layer-ico");
-  if (ico) ico.innerHTML = listSvg(LIST_ICONS[kind]);
+  if (ico) ico.innerHTML = listSvg(GROUP_KIND_ICONS[kind]);
   const meta = item.querySelector(".layer-meta");
   if (meta) meta.textContent = groupCardMeta(target, group);
 }
@@ -2238,7 +2265,7 @@ function buildLayerRow(api, layer, depth = 0) {
     buildRenameInput(api, item, "layer", layer.id, layer.name);
     return item;
   }
-  item.innerHTML = `<span class="layer-ico">${listSvg(LIST_ICONS[kind])}</span><span class="layer-name">${escapeHtml(api.displayName(layer))}</span>${layer.mask ? `<span class="layer-mask-mark" title="Mask">${listSvg(LIST_ICONS.mask, 12)}</span>` : ""}<button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button>`;
+  item.innerHTML = `<span class="layer-ico">${listSvg(layerListIcon(api, layer))}</span><span class="layer-name">${escapeHtml(api.displayName(layer))}</span>${layer.mask ? `<span class="layer-mask-mark" title="Mask">${listSvg(GROUP_KIND_ICONS.mask, 12)}</span>` : ""}<button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button>`;
   item.draggable = true; // drag to reorder or into a group (see attachListDnD)
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
@@ -2268,7 +2295,7 @@ function buildGroupRow(api, group, depth = 0) {
     return item;
   }
   const kind = groupListKind(group);
-  item.innerHTML = `<button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><span class="layer-ico">${listSvg(LIST_ICONS[kind])}</span><span class="layer-name">${escapeHtml(group.name)}</span><span class="layer-meta">${groupCardMeta(api.target, group)}</span><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>`;
+  item.innerHTML = `<button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><span class="layer-ico">${listSvg(GROUP_KIND_ICONS[kind])}</span><span class="layer-name">${escapeHtml(group.name)}</span><span class="layer-meta">${groupCardMeta(api.target, group)}</span><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>`;
   item.draggable = true;
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
@@ -2522,6 +2549,7 @@ function updateLayerListSelectionIn(api) {
 const circleApi = {
   target: state,
   listId: "layerList",
+  iconSet: "circle",
   editing: null, // { kind: "layer" | "group", id } while a row's name is being edited
   push: pushHistory,
   renderList: renderLayerList,
@@ -2556,7 +2584,6 @@ const BLEND_ANGLE_KEYS = new Set(["startAngle", "rotation", "arcStart", "angle"]
 const BLEND_ROUND_KEYS = new Set(["count", "gapCount"]);
 const BLEND_SKIP_KEYS = new Set(["id", "groupId", "naturalWidth", "naturalHeight", "textBoxW", "textBoxH"]);
 const BLEND_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
-const BLEND_MARK_HTML = `<span class="layer-blend-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="4.2"/><circle cx="13.2" cy="12" r="2.8"/><circle cx="18.8" cy="12" r="1.6"/></svg></span>`;
 let blendExpansionOff = false; // set by the separate-layers export, which draws the in-betweens itself
 const blendCache = new Map(); // "groupId:step" -> { sig, src, layer }: keeps a step's bend/rough caches between renders
 
@@ -2772,7 +2799,7 @@ function selectedWholeBlend() {
 
 // "" when the selection can be blended, else why not (shown as the button's tooltip).
 function blendDisabledReason(sel) {
-  if (currentMode !== "circle") return "Blend works in Ring mode";
+  if (currentMode !== "circle") return "Blend works in Circle mode";
   if (sel.length !== 2) return "Blend: select exactly 2 layers of the same type";
   if (sel[0].type !== sel[1].type) return "Blend needs 2 layers of the same type (these are " + layerTypeLabel(sel[0]) + " and " + layerTypeLabel(sel[1]) + ")";
   const g = selectedWholeGroup(state);
@@ -3007,7 +3034,6 @@ document.addEventListener("keydown", (e) => {
 // own orientation by the same angle (same rules as the group rotate knob).
 const REPEAT_MAX_COPIES = 360;
 const REPEAT_COPIES_PROXY = "__repeatCopies";
-const REPEAT_MARK_HTML = `<span class="layer-blend-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="4.6" r="2.2"/><circle cx="18.4" cy="15.7" r="2.2"/><circle cx="5.6" cy="15.7" r="2.2"/></svg></span>`;
 const REPEAT_MAX_ITEMS = 5000; // generated copies in one drawing; beyond it the rest are left out (the panel says so)
 let repeatCapped = false;
 const repeatCache = new Map(); // "groupId:k:srcId" -> { sig, src, layer }: keeps a copy's bend/text caches between renders
@@ -3173,7 +3199,7 @@ function repeatCopiesProxy() {
 
 // "" when the selection can be repeated, else why not (shown as the button's tooltip).
 function repeatDisabledReason(sel) {
-  if (currentMode !== "circle") return "Repeat works in Ring mode";
+  if (currentMode !== "circle") return "Repeat works in Circle mode";
   if (sel.length === 0) return "Select a layer, several layers or a group to repeat them around a point";
   const g = selectedWholeGroup(state);
   if (g && g.repeat) return "This group already repeats around a point";
@@ -3570,6 +3596,7 @@ function commitRename(id, newName) {
 
 function renderLayerList() {
   renderLayerListInto(circleApi);
+  if (typeof updateMaskOutlines === "function") updateMaskOutlines();
 }
 
 function toggleLayerVisible(layer) {
@@ -6319,8 +6346,10 @@ function buildLayerMaskEl(els) {
 }
 
 // Editor-only: a faint outline of the mask layer's painted area. data-layer-id so it picks like the layer.
-function buildMaskGhost(layerId, srcId, filterId) {
-  const g = maskSvgEl("g", { "class": "layer-hit editor-only", filter: `url(#${filterId})`, opacity: 0.85 });
+const MASK_COLOR = "#a8e04a"; // the same value as --col-mask in style.css
+function buildMaskGhost(layerId, srcId, filterId, key) {
+  const g = maskSvgEl("g", { "class": "layer-hit editor-only mask-ghost", filter: `url(#${filterId})` });
+  g.dataset.maskKey = key; // "l<layerId>" or "g<groupId>": which list row / selection lights it up
   if (layerId != null) g.dataset.layerId = layerId;
   g.appendChild(maskSvgEl("use", { href: `#${srcId}` }));
   return g;
@@ -6331,7 +6360,7 @@ function buildMaskEdgeFilter(filterId, radius) {
   const f = maskSvgEl("filter", { id: filterId, filterUnits: "userSpaceOnUse", x: -E, y: -E, width: 2 * E, height: 2 * E, "color-interpolation-filters": "sRGB" });
   f.appendChild(maskSvgEl("feMorphology", { in: "SourceAlpha", operator: "erode", radius, result: "e" }));
   f.appendChild(maskSvgEl("feComposite", { in: "SourceAlpha", in2: "e", operator: "out", result: "edge" }));
-  f.appendChild(maskSvgEl("feFlood", { "flood-color": "#f06ad2", "flood-opacity": 0.9, result: "c" }));
+  f.appendChild(maskSvgEl("feFlood", { "flood-color": MASK_COLOR, "flood-opacity": 1, result: "c" }));
   f.appendChild(maskSvgEl("feComposite", { in: "c", in2: "edge", operator: "in" }));
   return f;
 }
@@ -6346,7 +6375,7 @@ function applyLayerMasks(recs) {
   ghosts.setAttribute("class", "editor-only");
   const unit = (renderReads && renderReads.unit) || 4;
   const edgeId = `lmask-edge-${layerMaskSeq + 1}`;
-  ghosts.appendChild(maskSvgEl("defs", {})).appendChild(buildMaskEdgeFilter(edgeId, Math.max(0.5, 1.2 * unit)));
+  ghosts.appendChild(maskSvgEl("defs", {})).appendChild(buildMaskEdgeFilter(edgeId, Math.max(0.3, 0.55 * unit)));
   for (const { layer, group, parent, els } of recs) {
     const first = els[0];
     const maskLabel = group ? group.name : layer.name;
@@ -6367,11 +6396,11 @@ function applyLayerMasks(recs) {
     } else {
       parent.appendChild(mask); // nothing below: kept only so the ghost has something to draw
     }
-    if (!group) ghosts.appendChild(buildMaskGhost(layer.id, srcId, edgeId));
+    if (!group) ghosts.appendChild(buildMaskGhost(layer.id, srcId, edgeId, "l" + layer.id));
     else {
       // a group mask: one outline of the whole painted result (not pickable) plus an invisible, pickable
       // stand-in for every member so a click still reaches the layers
-      const outline = buildMaskGhost(null, srcId, edgeId);
+      const outline = buildMaskGhost(null, srcId, edgeId, "g" + group.id);
       outline.classList.remove("layer-hit");
       outline.setAttribute("pointer-events", "none");
       ghosts.appendChild(outline);
@@ -6387,6 +6416,48 @@ function applyLayerMasks(recs) {
   }
   return ghosts;
 }
+
+// Mask outlines are quiet hairlines (CSS: low opacity); one is drawn at full colour only while its layer or group is
+// selected or hovered in the list. "Show mask outlines" (toolbar) hides them all; remembered in localStorage.
+let maskHoverKey = null;
+function updateMaskOutlines() {
+  const svg = document.getElementById("canvas");
+  if (!svg) return;
+  const ghosts = svg.querySelectorAll(".mask-ghost");
+  if (!ghosts.length) return;
+  const sel = new Set(state.selectedLayerIds || []);
+  const hot = (key) => {
+    if (!key) return false;
+    if (key === maskHoverKey) return true;
+    if (key[0] === "l") return sel.has(Number(key.slice(1)));
+    return subtreeLayers(state, Number(key.slice(1))).some((m) => sel.has(m.id));
+  };
+  ghosts.forEach((g) => g.classList.toggle("hot", hot(g.dataset.maskKey)));
+}
+(function initMaskOutlineToggle() {
+  const KEY = "ornamentAtelier.showMaskOutlines";
+  const btn = document.getElementById("maskOutlineToggle");
+  let on = true;
+  try { if (localStorage.getItem(KEY) === "0") on = false; } catch (_) { /* storage blocked */ }
+  const apply = () => {
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    document.getElementById("canvas").classList.toggle("no-mask-outlines", !on);
+  };
+  apply();
+  btn.addEventListener("click", () => {
+    on = !on;
+    try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (_) { /* storage blocked */ }
+    apply();
+  });
+  const list = document.getElementById("layerList");
+  const hover = (e) => {
+    const row = e.target.closest && e.target.closest(".layer-item");
+    const key = row && list.contains(row) ? (row.dataset.groupId != null ? "g" + row.dataset.groupId : row.dataset.layerId != null ? "l" + row.dataset.layerId : null) : null;
+    if (key !== maskHoverKey) { maskHoverKey = key; updateMaskOutlines(); }
+  };
+  list.addEventListener("mouseover", hover);
+  list.addEventListener("mouseleave", () => { maskHoverKey = null; updateMaskOutlines(); });
+})();
 
 // Mirror twins reference the layer's rendered group instead of re-drawing it, so a twin
 // is guaranteed to be an exact reflection (flipped images, reversed spin) and the
@@ -6476,8 +6547,8 @@ function appendOriginHandles(svg) {
     h.dataset.originHandle = "pivot";
     h.setAttribute("transform", `translate(${pv.x} ${pv.y}) scale(${unit})`);
     h.innerHTML = `<circle r="14" fill="transparent" pointer-events="all" />
-      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
-      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+      <circle r="6" fill="none" stroke="${HANDLE_BLUE}" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="${HANDLE_BLUE}" stroke-width="2" />`;
     const firstHandle = svg.querySelector(".layer-handle");
     if (firstHandle) svg.insertBefore(h, firstHandle);
     else svg.appendChild(h);
@@ -6490,8 +6561,8 @@ function appendOriginHandles(svg) {
     h.dataset.originHandle = layer.id;
     h.setAttribute("transform", `translate(${CENTER + p.originX} ${CENTER + p.originY}) scale(${unit})`);
     h.innerHTML = `<circle r="14" fill="transparent" pointer-events="all" />
-      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
-      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+      <circle r="6" fill="none" stroke="${HANDLE_BLUE}" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="${HANDLE_BLUE}" stroke-width="2" />`;
     svg.appendChild(h);
   }
 }
@@ -7393,7 +7464,7 @@ function renderCircle(svg) {
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle", INFINITE_MASK_EXTENT);
   svg.appendChild(content);
   scheduleDesignBox(content); // measured later (getBBox forces a layout of the whole drawing)
-  if (maskGhosts) svg.appendChild(maskGhosts);
+  if (maskGhosts) { svg.appendChild(maskGhosts); updateMaskOutlines(); }
 
   // The Straight preview is a second full rebuild; while a gesture is running it is left as it
   // was and redone with the final full render (see endDraft).
@@ -9661,12 +9732,12 @@ document.getElementById("exportLayersBtn").addEventListener("click", exportLayer
   const block = document.getElementById("straightPreviewBlock");
   try { if (localStorage.getItem(KEY) === "0") straightPreviewOn = false; } catch (_) { /* storage blocked */ }
   const apply = () => {
-    box.checked = straightPreviewOn;
+    box.setAttribute("aria-pressed", straightPreviewOn ? "true" : "false");
     block.style.display = straightPreviewOn ? "" : "none";
   };
   apply();
-  box.addEventListener("change", () => {
-    straightPreviewOn = box.checked;
+  box.addEventListener("click", () => {
+    straightPreviewOn = !straightPreviewOn;
     try { localStorage.setItem(KEY, straightPreviewOn ? "1" : "0"); } catch (_) { /* storage blocked */ }
     apply();
     if (straightPreviewOn) render(); // rebuild the strip (it was skipped while hidden)
@@ -10051,6 +10122,7 @@ function smUpdateLayerListSelection() {
 const smApi = {
   target: smState,
   listId: "smLayerList",
+  iconSet: "straight",
   editing: null,
   push: smPushHistory,
   renderList: smRenderLayerList,
@@ -10486,8 +10558,8 @@ function smGroupAnchor(layers) {
 }
 
 const SM_CROSSHAIR_MARKUP = `<circle r="14" fill="transparent" pointer-events="all" />
-      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
-      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+      <circle r="6" fill="none" stroke="${HANDLE_BLUE}" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="${HANDLE_BLUE}" stroke-width="2" />`;
 const SM_BALL_MARKUP = (kind, id) => `
     <g data-handle="${kind}" data-handle-layer="${id}">
       <circle r="14" fill="transparent" pointer-events="all" />
@@ -11578,7 +11650,7 @@ function saveProject() {
   const data = buildProjectData();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   downloadBlob(blob, `ornament-${data.mode}.json`);
-  setProjectStatus(`Saved (${data.mode === "circle" ? "Ring" : "Straight"}).`);
+  setProjectStatus(`Saved (${data.mode === "circle" ? "Circle" : "Straight"}).`);
 }
 
 // Startup only — populates BOTH modes at once from one bundled preset, so switching
@@ -11641,7 +11713,7 @@ function applyProjectData(data) {
   if (!data.mode && data.circle) {
     applyDefaultProject(data);
     setMode("circle");
-    setProjectStatus("Loaded (older project format, saved both at once — showing Ring).");
+    setProjectStatus("Loaded (older project format, saved both at once — showing Circle).");
     return;
   }
   if (data.mode === "circle") {
@@ -11980,6 +12052,7 @@ function setMode(mode) {
   document.getElementById("straightLayersPanel").style.display = mode === "straight" ? "" : "none";
   document.getElementById("circleModePreview").style.display = mode === "circle" ? "" : "none";
   document.getElementById("ringEditorInfo").style.display = mode === "circle" ? "" : "none";
+  document.getElementById("viewToggles").style.display = mode === "circle" ? "" : "none";
   document.getElementById("straightModePreview").style.display = mode === "straight" ? "" : "none";
   if (mode === "straight") smRender();
   // "Fit design" only means something for the Ring editor's off-artboard artwork.
@@ -12249,7 +12322,9 @@ resetPreviewView();
         b.dataset.value = o.value;
         const full = o.textContent.trim();
         const short = full.split(" (")[0].trim();
-        b.textContent = short;
+        const iconSet = select.id === "smLayerTypeSelect" ? LAYER_TYPE_ICONS.straight : select.id === "layerTypeSelect" ? LAYER_TYPE_ICONS.circle : null;
+        if (iconSet && iconSet[o.value]) b.innerHTML = `${listSvg(iconSet[o.value], 16)}${escapeHtml(short)}`; // same icon and colour as the creator button
+        else b.textContent = short;
         if (short !== full) b.dataset.tip = full;
         b.setAttribute("aria-label", full);
         b.disabled = o.disabled;
@@ -12363,3 +12438,41 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(() => {});
   });
 }
+
+// --- Layer list height: drag the grip under the list (double-click resets); remembered per mode in this browser
+// (localStorage, best effort), not in projects. The list keeps scrolling inside when its content is taller. ---
+(function initLayerListGrips() {
+  const MIN_H = 120;
+  const DEFAULT_MAX = 280; // the stylesheet's max-height
+  const maxH = () => Math.max(MIN_H, window.innerHeight - 160);
+  const setup = (listId, key) => {
+    const list = document.getElementById(listId);
+    const grip = list && list.nextElementSibling;
+    if (!grip || !grip.classList.contains("layer-list-grip")) return;
+    const KEY = "ornamentAtelier.layerListHeight." + key;
+    const apply = (h) => { list.style.maxHeight = h ? Math.round(Math.min(maxH(), Math.max(MIN_H, h))) + "px" : ""; };
+    try { const v = Number(localStorage.getItem(KEY)); if (v > 0) apply(v); } catch (_) { /* storage blocked */ }
+    let drag = null;
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      drag = { y0: e.clientY, h0: parseFloat(getComputedStyle(list).maxHeight) || DEFAULT_MAX };
+      grip.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    grip.addEventListener("pointermove", (e) => { if (drag) apply(drag.h0 + e.clientY - drag.y0); });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      try { localStorage.setItem(KEY, String(parseFloat(list.style.maxHeight) || DEFAULT_MAX)); } catch (_) { /* storage blocked */ }
+    };
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+    grip.addEventListener("dblclick", () => {
+      drag = null;
+      apply(0);
+      try { localStorage.removeItem(KEY); } catch (_) { /* storage blocked */ }
+    });
+  };
+  setup("layerList", "circle");
+  setup("smLayerList", "straight");
+})();

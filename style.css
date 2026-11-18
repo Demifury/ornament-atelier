@@ -1,3 +1,19 @@
+/* Colour language, ONE definition (the creator buttons, panel accent stripes and layer list rows all read these):
+   geometry (Ring, Line, Straight, Guide) teal, Asset gold, Shape orange, Text violet; Blend blue, Repeat pink (also the
+   pivot), layer mask pink-magenta (also the mask edge drawn on the canvas); placement steel, export stone. */
+:root {
+  --col-geom: #4fa3a0;
+  --col-asset: #c9a24a;
+  --col-shape: #d0805a;
+  --col-type: #b07cc6;
+  --col-blend: #7a6cf2;
+  --col-repeat: #ff3fa4;
+  --col-mask: #a8e04a;
+  --col-place: #7f93ad;
+  --col-export: #a39a8c;
+  --col-effects: var(--col-export);
+}
+
 @font-face {
   font-family: "Caudex";
   src: url("fonts/Caudex-Regular.ttf") format("truetype");
@@ -662,15 +678,14 @@ input[type="file"] {
 
 /* Layer list, design C: groups are cards (tinted header row + children inside, nested groups are cards in cards),
    plain layers are borderless one-line rows. --c is the kind / type colour. */
-.layer-card.k-plain { --c: #7f93ad; }
-.layer-card.k-blend, .layer-card.k-around { --c: #e0915a; }
-.layer-card.k-repeat { --c: #6cc08b; }
-.layer-card.k-mask { --c: #d96c8a; }
-.layer-row.t-ring { --c: #c9a24a; }
-.layer-row.t-text { --c: #b07cc6; }
-.layer-row.t-shape, .layer-row.t-line, .layer-row.t-straight { --c: #4fa3a0; }
-.layer-row.t-asset { --c: #a39a8c; }
-.layer-row.t-guide { --c: #8a8a92; }
+.layer-card.k-plain { --c: var(--col-place); }
+.layer-card.k-blend, .layer-card.k-around { --c: var(--col-blend); }
+.layer-card.k-repeat { --c: var(--col-repeat); }
+.layer-card.k-mask { --c: var(--col-mask); }
+.layer-row.t-ring, .layer-row.t-line, .layer-row.t-straight, .layer-row.t-guide { --c: var(--col-geom); }
+.layer-row.t-asset { --c: var(--col-asset); }
+.layer-row.t-shape { --c: var(--col-shape); }
+.layer-row.t-text { --c: var(--col-type); }
 
 .layer-card {
   flex: none;
@@ -707,7 +722,7 @@ input[type="file"] {
 .layer-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .layer-group-item .layer-name { font-weight: 600; }
 .layer-item .layer-meta { flex: none; font-size: 10.5px; color: #8a8a92; white-space: nowrap; }
-.layer-mask-mark { flex: none; display: flex; color: #d96c8a; }
+.layer-mask-mark { flex: none; display: flex; color: var(--col-mask); }
 .layer-hidden .layer-name { color: #6a6a72; font-style: italic; }
 .layer-hidden .layer-ico { opacity: 0.35; }
 
@@ -1055,7 +1070,9 @@ kbd {
   bottom: 16px;
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 622px - 18px - 215px - 16px);
+  gap: 6px 10px;
   z-index: 5;
 }
 
@@ -1132,8 +1149,8 @@ kbd {
 /* --- Left sidebar readability ---------------------------------------------------------
    Bigger, brighter panel headings, more air between panels, and easier field labels. Each
    family of panels gets its own subtle accent (a left border and a tinted heading) so the
-   long column reads in groups: pattern settings (gold: Ring, Asset), geometry (teal: Line, Shape, Straight,
-   Guide), Type (violet) and the neutral Placement (steel) and Export (stone). Look only; nothing here changes what
+   long column reads in groups: pattern settings (gold: Asset), geometry (teal: Ring, Line, Straight,
+   Guide), Asset (gold), Shape (orange), Type (violet) and the neutral Placement (steel) and Export (stone). Look only; nothing here changes what
    a control does. Scoped to .sidebar so the layer panel on the right keeps its own style. */
 .sidebar .panel,
 .layers-sidebar .panel {
@@ -1144,11 +1161,11 @@ kbd {
   border-left: 3px solid var(--fam);
 }
 
-.sidebar .panel.fam-pattern, .layers-sidebar .panel.fam-pattern { --fam: #c9a24a; --fam-ink: #e6c987; }
-.sidebar .panel.fam-geom, .layers-sidebar .panel.fam-geom { --fam: #4fa3a0; --fam-ink: #94d3d0; }
-.sidebar .panel.fam-type, .layers-sidebar .panel.fam-type { --fam: #b07cc6; --fam-ink: #d4b2e4; }
-.sidebar .panel.fam-place, .layers-sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
-.sidebar .panel.fam-export, .layers-sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
+.sidebar .panel.fam-pattern, .layers-sidebar .panel.fam-pattern { --fam: var(--col-asset); --fam-ink: #e6c987; }
+.sidebar .panel.fam-geom, .layers-sidebar .panel.fam-geom { --fam: var(--col-geom); --fam-ink: #94d3d0; }
+.sidebar .panel.fam-type, .layers-sidebar .panel.fam-type { --fam: var(--col-type); --fam-ink: #d4b2e4; }
+.sidebar .panel.fam-place, .layers-sidebar .panel.fam-place { --fam: var(--col-place); --fam-ink: #b9c6d8; }
+.sidebar .panel.fam-export, .layers-sidebar .panel.fam-export { --fam: var(--col-export); --fam-ink: #cfc8bc; }
 
 .sidebar .panel h2,
 .layers-sidebar .panel h2 {
@@ -1190,9 +1207,9 @@ kbd {
 
 /* Layer toolbar: add buttons sorted into colour families, actions as icons. */
 .layers-sidebar .add-family { --fam: #3a3c46; margin-bottom: 8px; }
-.layers-sidebar .fam-pattern { --fam: #c9a24a; }
-.layers-sidebar .fam-geom { --fam: #4fa3a0; }
-.layers-sidebar .fam-type { --fam: #b07cc6; }
+.layers-sidebar .fam-pattern { --fam: var(--col-asset); }
+.layers-sidebar .fam-geom { --fam: var(--col-geom); }
+.layers-sidebar .fam-type { --fam: var(--col-type); }
 .add-family-label {
   display: block;
   font-size: 11px;
@@ -1235,18 +1252,6 @@ kbd {
   padding: 4px;
 }
 .icon-btn-danger { color: #e57373; }
-.layer-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 2px;
-  background: #6b7080;
-}
-.layer-dot.fam-pattern { background: #c9a24a; }
-.layer-dot.fam-geom { background: #4fa3a0; }
-.layer-dot.fam-type { background: #b07cc6; }
-.layer-dot.fam-group { border-radius: 2px; background: none; border: 1.5px solid #8b909a; }
 .add-btn, .icon-btn {
   min-width: 0;
   font-size: 12px;
@@ -1428,17 +1433,13 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .sidebar .hint.sf-hint, .layers-sidebar .hint.sf-hint { font-size: 11.5px; line-height: 1.35; color: #8a8a92; margin: 2px 0 10px; }
 .sf-grid > .hint.sf-hint { margin: 0; }
 .hint.sf-hint:empty { display: none; }
-.layers-sidebar .panel.fam-place { --fam: #7f93ad; --fam-ink: #b9c6d8; }
-.layers-sidebar .panel.fam-export { --fam: #a39a8c; --fam-ink: #cfc8bc; }
 .layers-sidebar .panel .sf-group { margin-top: 10px; }
 
 /* Families: Geometry (ring, line, straight, guide) teal; Asset gold; Shape coral; Text violet. */
-.sidebar .panel.fam-asset, .layers-sidebar .panel.fam-asset { --fam: #c9a24a; --fam-ink: #e6c987; }
-.sidebar .panel.fam-shape, .layers-sidebar .panel.fam-shape { --fam: #d0805a; --fam-ink: #eab096; }
-.layers-sidebar .fam-asset { --fam: #c9a24a; }
-.layers-sidebar .fam-shape { --fam: #d0805a; }
-.layer-dot.fam-asset { background: #c9a24a; }
-.layer-dot.fam-shape { background: #d0805a; }
+.sidebar .panel.fam-asset, .layers-sidebar .panel.fam-asset { --fam: var(--col-asset); --fam-ink: #e6c987; }
+.sidebar .panel.fam-shape, .layers-sidebar .panel.fam-shape { --fam: var(--col-shape); --fam-ink: #eab096; }
+.layers-sidebar .fam-asset { --fam: var(--col-asset); }
+.layers-sidebar .fam-shape { --fam: var(--col-shape); }
 .add-family-trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
 .add-family-trio .add-family { margin-bottom: 0; }
 .add-family-trio .add-btn { width: 100%; }
@@ -1475,11 +1476,13 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
-#layerTypeField .sf-opts button[data-value="ring"], #layerTypeField .sf-opts button[data-value="line"],
-#smLayerTypeField .sf-opts button[data-value="guide"], #smLayerTypeField .sf-opts button[data-value="line"] { --opt-fam: #4fa3a0; --opt-ink: #94d3d0; }
-#layerTypeField .sf-opts button[data-value="motif"], #smLayerTypeField .sf-opts button[data-value="motif"] { --opt-fam: #c9a24a; --opt-ink: #e6c987; }
-#layerTypeField .sf-opts button[data-value="shape"], #smLayerTypeField .sf-opts button[data-value="shape"] { --opt-fam: #d0805a; --opt-ink: #eab096; }
-#layerTypeField .sf-opts button[data-value="text"], #smLayerTypeField .sf-opts button[data-value="text"] { --opt-fam: #b07cc6; --opt-ink: #d4b2e4; }
+#layerTypeField .sf-opts button[data-value="ring"], #layerTypeField .sf-opts button[data-value="line"], #layerTypeField .sf-opts button[data-value="straight"],
+#smLayerTypeField .sf-opts button[data-value="guide"], #smLayerTypeField .sf-opts button[data-value="line"] { --opt-fam: var(--col-geom); --opt-ink: #94d3d0; }
+#layerTypeField .sf-opts button[data-value="motif"], #smLayerTypeField .sf-opts button[data-value="motif"] { --opt-fam: var(--col-asset); --opt-ink: #e6c987; }
+#layerTypeField .sf-opts button[data-value="shape"], #smLayerTypeField .sf-opts button[data-value="shape"] { --opt-fam: var(--col-shape); --opt-ink: #eab096; }
+#layerTypeField .sf-opts button[data-value="text"], #smLayerTypeField .sf-opts button[data-value="text"] { --opt-fam: var(--col-type); --opt-ink: #d4b2e4; }
+#layerTypeField .sf-opts button, #smLayerTypeField .sf-opts button { display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+#layerTypeField .sf-opts button svg, #smLayerTypeField .sf-opts button svg { stroke: var(--opt-fam); flex: none; }
 #layerTypeField .sf-opts button.on, #smLayerTypeField .sf-opts button.on {
   border-color: var(--opt-fam);
   color: var(--opt-ink);
@@ -1512,17 +1515,14 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .layer-actions .tip-wrap { flex: 1 1 10px; display: flex; min-width: 0; }
 .layer-actions .tip-wrap .icon-btn { flex: 1; }
 .tip-wrap .icon-btn:disabled { pointer-events: none; }
-.layer-blend-mark { flex: none; display: inline-flex; width: 12px; height: 12px; margin-right: 2px; color: #8b909a; }
-.layer-blend-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; }
 
 /* --- Repeat around a point --- */
 .repeat-pivot-handle { cursor: move; }
 
 /* --- Right sidebar accents: same family look as the left panels --- */
 .layers-sidebar .panel { margin-bottom: 20px; }
-.layers-sidebar .panel.fam-blend { --fam: #6f9fd8; --fam-ink: #a9c6ea; }
-.layers-sidebar .panel.fam-repeat { --fam: #ff3fa4; --fam-ink: #ff9fcf; }
-.layers-sidebar .panel.fam-effects { --fam: #a3a05c; --fam-ink: #cdca8e; }
+.layers-sidebar .panel.fam-repeat { --fam: var(--col-repeat); --fam-ink: #ff9fcf; }
+.layers-sidebar .panel.fam-effects { --fam: var(--col-effects); --fam-ink: #cfc8bc; }
 .sf-group.sf-solo > .sf-group-label { display: none; }
 .sf-group.sf-solo { margin-top: 0; }
 
@@ -1561,25 +1561,16 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .layer-drop-end.drop-bad { border-color: #ff6b6b; background: #3a1c1c; }
 .layer-drop-msg { margin: 6px 0 0; font-size: 11.5px; color: #ff9a9a; }
 
-/* The Repeat panel now lives in the left column. */
-.sidebar .panel.fam-repeat { --fam: #ff3fa4; --fam-ink: #ff9fcf; }
+/* The Blend and Repeat panels live in the left column. */
+.sidebar .panel.fam-blend { --fam: var(--col-blend); --fam-ink: #bdb6fa; }
+.sidebar .panel.fam-repeat { --fam: var(--col-repeat); --fam-ink: #ff9fcf; }
 .ring-fill { pointer-events: none; }
 
-/* Ring mode: "Show Straight preview" toggle above the strip. Sticky to the left so it stays reachable when the wide strip scrolls. */
-.straight-toggle-row {
-  position: sticky;
-  left: 12px;
-  align-self: flex-start;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 -14px 12px;
-  font-size: 12px;
-  color: #d5d5da;
-  z-index: 2;
-}
-.straight-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.straight-toggle-note { color: #aeaeb6; font-size: 11px; }
+/* View toggles in the bottom toolbar (Straight preview, Mask outlines): a pressed button is lit. */
+.view-toggles { gap: 6px; }
+.view-toggle { white-space: nowrap; color: #8b909a; }
+.view-toggle[aria-pressed="true"] { background: #2c3e63; border-color: #3a5084; color: #f2f2f3; }
+.view-toggle[aria-pressed="true"]:hover { background: #33477a; }
 
 /* Glyph picker under the font list of a text layer (symbol-only fonts) */
 .glyph-box { margin-top: 6px; }
@@ -1627,3 +1618,13 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
   letter-spacing: 0.06em;
   color: #d5d5da;
 }
+
+/* Drag grip under each layer list (the lower ornament divider): resizes the list's max-height. */
+.layer-list-grip { cursor: ns-resize; touch-action: none; }
+.layer-list-grip:hover { opacity: 1; }
+
+/* Editor-only mask outlines: hairline, low contrast; full colour only for the selected or hovered mask. */
+.mask-ghost { opacity: 0.3; }
+.mask-ghost.hot { opacity: 1; }
+#canvas.no-mask-outlines .mask-ghost { opacity: 0; }
+#addStraightBtn { flex: 1.7; font-size: 12px; gap: 4px; padding: 4px 4px; }

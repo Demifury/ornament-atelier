@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0e0f12" />
 <link rel="icon" type="image/png" href="images/icon-192.png" />
 <link rel="apple-touch-icon" href="images/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=77" />
+<link rel="stylesheet" href="style.css?v=83" />
 </head>
 <body>
 <div class="app">
@@ -398,6 +398,61 @@
 </div>
 </div></div>
       </section>
+      <section class="panel fam-blend" id="blendPanel" style="display:none">
+        <h2>Blend</h2>
+        <p class="hint sf-hint">Rings and shapes between the start and end layer, redrawn live as either one changes.</p>
+        <div class="sf-grid">
+<div class="sf sf-wide" id="blendStepsField" title="How many in-between layers">
+<div class="sf-head"><label for="blendStepsNum">Steps</label></div>
+<div class="sf-box"><input type="range" id="blendSteps" min="1" max="200" step="1" /><input type="text" inputmode="decimal" id="blendStepsNum" min="1" max="200" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" id="blendEasingField">
+<div class="sf-head"><label for="blendEasing">Distribution</label></div>
+<div class="sf-box"><select id="blendEasing">
+<option value="linear">Linear</option>
+<option value="easeIn">Ease in</option>
+<option value="easeOut">Ease out</option>
+<option value="easeInOut">Ease in-out</option>
+</select></div>
+</div>
+<div class="sf sf-wide" id="blendPathField" title="Straight: the steps move from the start layer's origin to the end layer's. Around a point: they swing about a pivot.">
+<div class="sf-head"><label for="blendPath">Path</label></div>
+<div class="sf-box"><select id="blendPath">
+<option value="straight">Straight</option>
+<option value="around">Around a point</option>
+</select></div>
+</div>
+</div>
+        <div id="blendAroundBox" hidden>
+        <p class="hint sf-hint">The start layer stays where it is; the steps and the end layer swing about the pink pivot (the end layer's own position is ignored, its look is used).</p>
+        <div class="sf-grid">
+<div class="sf sf-wide" title="How far round the pivot the blend goes. 360 = full circle: the end layer sits one step before the start">
+<div class="sf-head"><label for="blendTotalNum">Total angle</label></div>
+<div class="sf-box"><input type="range" id="blendTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="blendTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot X (offset from center)">
+<div class="sf-head"><label for="blendPivotXNum">Pivot X</label></div>
+<div class="sf-box"><input type="range" id="blendPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotXNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot Y (offset from center)">
+<div class="sf-head"><label for="blendPivotYNum">Pivot Y</label></div>
+<div class="sf-box"><input type="range" id="blendPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotYNum" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-btns">
+<button type="button" id="blendCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
+</div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Turn each step's own orientation with it (off: only its position moves)"><input type="checkbox" id="blendRotate" /><span>Rotate copies</span></label>
+<label class="sf-toggle" title="Morph start, end, then back to start, so a full circle has no jump where it meets the start"><input type="checkbox" id="blendClose" /><span>Close loop</span></label>
+</div>
+        </div>
+        <div class="sf-btns">
+<button type="button" id="blendSwapBtn" data-tip="Swap start and end layer">Swap start/end</button>
+<button type="button" id="blendExpandBtn" data-tip="Turn the in-between layers into real layers">Expand</button>
+<button type="button" id="blendReleaseBtn" data-tip="Remove the blend, keep start and end">Release</button>
+</div>
+      </section>
       <section class="panel fam-repeat" id="repeatPanel" style="display:none">
         <h2>Repeat around a point</h2>
         <p class="hint sf-hint">Copies of the group turned about the pink pivot, redrawn live as the group changes.</p>
@@ -448,8 +503,8 @@
       <div class="ornament-divider ornament-divider-export"></div>
       <section class="panel fam-export">
         <h2>Export — Images</h2>
-        <p class="hint sf-hint">Static pictures, full resolution. Ring: Exports a square centred on the ring centre, up to 4096 px. Straight: export full ring at max 12812px.</p>
-        <div class="sf-sub">Ring editor</div>
+        <p class="hint sf-hint">Static pictures, full resolution. Circle editor: exports a square centred on the ring centre, up to 4096 px. Straight: export full ring at max 12812px.</p>
+        <div class="sf-sub">Circle editor</div>
         <div class="sf-btns">
 <button id="exportPngBtn">PNG</button>
 <button id="exportSvgBtn">SVG</button>
@@ -463,7 +518,7 @@
       </section>
 
       <section class="panel fam-export">
-        <h2>Export Ring — Separate Layers</h2>
+        <h2>Export Circle editor — Separate Layers</h2>
         <p class="hint sf-hint">Every layer as its own file, in stacking order — to animate or recolour in another program. PNG: a ZIP of full-canvas images (plain rings flattened into one; each group becomes a folder). SVG: one layered file with a named layer per layer and a named group around each user group.</p>
         <div class="sf-group"><div class="sf-group-label">Options</div>
 <div class="sf-grid">
@@ -772,7 +827,7 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Export PNG</td></tr>
         <tr><td><kbd>Ctrl</kbd> / <kbd>Alt</kbd> + <kbd>Scroll</kbd></td><td>Zoom at the pointer (also pinch)</td></tr>
         <tr><td><kbd>Space</kbd> + drag</td><td>Pan the preview (or middle-mouse drag)</td></tr>
-        <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit centre / 100%</td></tr>
+        <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit centre (Straight: fit artboard) / 100%</td></tr>
         <tr><td><kbd>Delete</kbd></td><td>Remove selected layers</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>G</kbd></td><td>Group the selected layers</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td><td>Ungroup the selected layers</td></tr>
@@ -794,32 +849,32 @@
         <div class="add-family fam-geom">
           <span class="add-family-label">Geometry</span>
           <div class="add-family-row">
-            <button id="addRingBtn" class="add-btn" title="Add a ring layer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>Ring</button>
-            <button id="addLineBtn" class="add-btn" title="Add a line layer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/></svg>Line</button>
-            <button id="addStraightBtn" class="add-btn" title="Add a free straight line (axis, chord, ray)"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M3 17l4 4M17 3l4 4"/></svg>Straight</button>
+            <button id="addRingBtn" class="add-btn" title="Add a ring layer" data-ico="ring"><svg viewBox="0 0 24 24"></svg>Ring</button>
+            <button id="addLineBtn" class="add-btn" title="Add a line layer" data-ico="line"><svg viewBox="0 0 24 24"></svg>Line</button>
+            <button id="addStraightBtn" class="add-btn" title="Add a straight line layer (axis, chord, ray)" data-ico="straight"><svg viewBox="0 0 24 24"></svg>Straight line</button>
           </div>
         </div>
         <div class="add-family-trio">
           <div class="add-family fam-asset">
             <span class="add-family-label">Asset</span>
-            <button id="addMotifBtn" class="add-btn" title="Add an asset layer"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>Asset</button>
+            <button id="addMotifBtn" class="add-btn" title="Add an asset layer" data-ico="motif"><svg viewBox="0 0 24 24"></svg>Asset</button>
           </div>
           <div class="add-family fam-shape">
             <span class="add-family-label">Shape</span>
-            <button id="addShapeBtn" class="add-btn" title="Add a shape layer"><svg viewBox="0 0 24 24"><path d="M12 4l8 15H4z"/></svg>Shape</button>
+            <button id="addShapeBtn" class="add-btn" title="Add a shape layer" data-ico="shape"><svg viewBox="0 0 24 24"></svg>Shape</button>
           </div>
           <div class="add-family fam-type">
             <span class="add-family-label">Text</span>
-            <button id="addTextBtn" class="add-btn" title="Add a text layer"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>Text</button>
+            <button id="addTextBtn" class="add-btn" title="Add a text layer" data-ico="text"><svg viewBox="0 0 24 24"></svg>Text</button>
           </div>
         </div>
         <div class="layer-actions">
           <button id="duplicateLayerBtn" class="icon-btn" data-tip="Duplicate layer" aria-label="Duplicate layer"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
           <button id="renameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
-          <button id="groupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button id="groupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)" data-ico="group"><svg viewBox="0 0 24 24"></svg></button>
           <button id="ungroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
-          <span class="tip-wrap" id="blendBtnWrap" data-tip="Blend (Ctrl+Alt+B)"><button id="blendBtn" class="icon-btn" data-tip="Blend (Ctrl+Alt+B)" aria-label="Blend (Ctrl+Alt+B)"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="4.2"/><circle cx="13.2" cy="12" r="2.8"/><circle cx="18.8" cy="12" r="1.6"/></svg></button></span>
-          <span class="tip-wrap" id="repeatBtnWrap" data-tip="Repeat around a point"><button id="repeatBtn" class="icon-btn" data-tip="Repeat around a point" aria-label="Repeat around a point"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="4.6" r="2.2"/><circle cx="18.4" cy="15.7" r="2.2"/><circle cx="5.6" cy="15.7" r="2.2"/></svg></button></span>
+          <span class="tip-wrap" id="blendBtnWrap" data-tip="Blend (Ctrl+Alt+B)"><button id="blendBtn" class="icon-btn" data-tip="Blend (Ctrl+Alt+B)" aria-label="Blend (Ctrl+Alt+B)" data-ico="blend"><svg viewBox="0 0 24 24"></svg></button></span>
+          <span class="tip-wrap" id="repeatBtnWrap" data-tip="Repeat around a point"><button id="repeatBtn" class="icon-btn" data-tip="Repeat around a point" aria-label="Repeat around a point" data-ico="repeat"><svg viewBox="0 0 24 24"></svg></button></span>
           <button id="removeLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
         <div class="order-history-row">
@@ -832,7 +887,7 @@
         </div>
         <div class="ornament-divider ornament-divider-layers"></div>
         <div id="layerList" class="layer-list"></div>
-        <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip"></div>
+        <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip layer-list-grip" title="Drag to change the height of the layer list (double-click: reset)"></div>
         <div class="sf-group"><div class="sf-group-label">Selected layer</div>
 <div class="sf-grid">
 <div class="sf sf-wide" id="layerTypeField">
@@ -869,61 +924,6 @@
 <button id="clearLayersBtn" title="Remove every layer">Clear All Layers</button>
 </div>
       </section>
-      <section class="panel fam-blend" id="blendPanel" style="display:none">
-        <h2>Blend</h2>
-        <p class="hint sf-hint">Rings and shapes between the start and end layer, redrawn live as either one changes.</p>
-        <div class="sf-grid">
-<div class="sf sf-wide" id="blendStepsField" title="How many in-between layers">
-<div class="sf-head"><label for="blendStepsNum">Steps</label></div>
-<div class="sf-box"><input type="range" id="blendSteps" min="1" max="200" step="1" /><input type="text" inputmode="decimal" id="blendStepsNum" min="1" max="200" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf sf-wide" id="blendEasingField">
-<div class="sf-head"><label for="blendEasing">Distribution</label></div>
-<div class="sf-box"><select id="blendEasing">
-<option value="linear">Linear</option>
-<option value="easeIn">Ease in</option>
-<option value="easeOut">Ease out</option>
-<option value="easeInOut">Ease in-out</option>
-</select></div>
-</div>
-<div class="sf sf-wide" id="blendPathField" title="Straight: the steps move from the start layer's origin to the end layer's. Around a point: they swing about a pivot.">
-<div class="sf-head"><label for="blendPath">Path</label></div>
-<div class="sf-box"><select id="blendPath">
-<option value="straight">Straight</option>
-<option value="around">Around a point</option>
-</select></div>
-</div>
-</div>
-        <div id="blendAroundBox" hidden>
-        <p class="hint sf-hint">The start layer stays where it is; the steps and the end layer swing about the pink pivot (the end layer's own position is ignored, its look is used).</p>
-        <div class="sf-grid">
-<div class="sf sf-wide" title="How far round the pivot the blend goes. 360 = full circle: the end layer sits one step before the start">
-<div class="sf-head"><label for="blendTotalNum">Total angle</label></div>
-<div class="sf-box"><input type="range" id="blendTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="blendTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf" title="Pivot X (offset from center)">
-<div class="sf-head"><label for="blendPivotXNum">Pivot X</label></div>
-<div class="sf-box"><input type="range" id="blendPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotXNum" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf" title="Pivot Y (offset from center)">
-<div class="sf-head"><label for="blendPivotYNum">Pivot Y</label></div>
-<div class="sf-box"><input type="range" id="blendPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotYNum" step="1" class="num-input sf-num" /></div>
-</div>
-</div>
-        <div class="sf-btns">
-<button type="button" id="blendCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
-</div>
-        <div class="sf-toggles">
-<label class="sf-toggle" title="Turn each step's own orientation with it (off: only its position moves)"><input type="checkbox" id="blendRotate" /><span>Rotate copies</span></label>
-<label class="sf-toggle" title="Morph start, end, then back to start, so a full circle has no jump where it meets the start"><input type="checkbox" id="blendClose" /><span>Close loop</span></label>
-</div>
-        </div>
-        <div class="sf-btns">
-<button type="button" id="blendSwapBtn" data-tip="Swap start and end layer">Swap start/end</button>
-<button type="button" id="blendExpandBtn" data-tip="Turn the in-between layers into real layers">Expand</button>
-<button type="button" id="blendReleaseBtn" data-tip="Remove the blend, keep start and end">Release</button>
-</div>
-      </section>
       <section class="panel fam-effects" id="roughnessPanel">
         <h2>Roughness</h2>
         <p class="hint sf-hint">Sketchy brush texture on every ring, line &amp; shape outline.</p>
@@ -937,7 +937,7 @@
       </section>
       <section class="panel fam-effects">
         <h2>Mask</h2>
-        <p class="hint sf-hint">One erase-style texture mask over the whole Ring editor artboard.</p>
+        <p class="hint sf-hint">One erase-style texture mask over the whole Circle editor artboard.</p>
         <div class="sf-toggles">
 <label class="sf-toggle"><input type="checkbox" id="maskEnabled" /><span>Enabled</span></label>
 <label class="sf-toggle"><input type="checkbox" id="maskInvert" /><span>Invert</span></label>
@@ -978,28 +978,28 @@
         <div class="add-family fam-geom">
           <span class="add-family-label">Geometry</span>
           <div class="add-family-row">
-            <button id="smAddLineBtn" class="add-btn" title="Add a line layer"><svg viewBox="0 0 24 24"><path d="M3 12h18" stroke-dasharray="3 3"/></svg>Line</button>
-            <button id="smAddGuideBtn" class="add-btn" title="Add a guide line layer"><svg viewBox="0 0 24 24"><path d="M3 12h18M6 9v6M18 9v6"/></svg>Guide</button>
+            <button id="smAddLineBtn" class="add-btn" title="Add a line layer" data-ico="line"><svg viewBox="0 0 24 24"></svg>Line</button>
+            <button id="smAddGuideBtn" class="add-btn" title="Add a guide line layer" data-ico="guide"><svg viewBox="0 0 24 24"></svg>Guide</button>
           </div>
         </div>
         <div class="add-family-trio">
           <div class="add-family fam-asset">
             <span class="add-family-label">Asset</span>
-            <button id="smAddMotifBtn" class="add-btn" title="Add an asset layer"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 17l5-5 4 4 3-3 4 4"/></svg>Asset</button>
+            <button id="smAddMotifBtn" class="add-btn" title="Add an asset layer" data-ico="motif"><svg viewBox="0 0 24 24"></svg>Asset</button>
           </div>
           <div class="add-family fam-shape">
             <span class="add-family-label">Shape</span>
-            <button id="smAddShapeBtn" class="add-btn" title="Add a shape layer"><svg viewBox="0 0 24 24"><path d="M12 4l8 15H4z"/></svg>Shape</button>
+            <button id="smAddShapeBtn" class="add-btn" title="Add a shape layer" data-ico="shape"><svg viewBox="0 0 24 24"></svg>Shape</button>
           </div>
           <div class="add-family fam-type">
             <span class="add-family-label">Text</span>
-            <button id="smAddTextBtn" class="add-btn" title="Add a text layer"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>Text</button>
+            <button id="smAddTextBtn" class="add-btn" title="Add a text layer" data-ico="text"><svg viewBox="0 0 24 24"></svg>Text</button>
           </div>
         </div>
         <div class="layer-actions">
           <button id="smDuplicateLayerBtn" class="icon-btn" data-tip="Duplicate layer" aria-label="Duplicate layer"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
           <button id="smRenameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
-          <button id="smGroupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button id="smGroupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)" data-ico="group"><svg viewBox="0 0 24 24"></svg></button>
           <button id="smUngroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
           <button id="smRemoveLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
@@ -1013,7 +1013,7 @@
         </div>
         <div class="ornament-divider ornament-divider-layers"></div>
         <div id="smLayerList" class="layer-list"></div>
-        <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip"></div>
+        <div class="ornament-divider ornament-divider-layers ornament-divider-layers-flip layer-list-grip" title="Drag to change the height of the layer list (double-click: reset)"></div>
         <div class="sf-group"><div class="sf-group-label">Selected layer</div>
 <div class="sf-grid">
 <div class="sf sf-wide" id="smLayerTypeField">
@@ -1087,10 +1087,6 @@
 
   <main class="preview">
     <div id="circleModePreview">
-      <div class="straight-toggle-row" id="straightToggleRow">
-        <label class="straight-toggle"><input type="checkbox" id="straightPreviewToggle" checked /> Show Straight preview</label>
-        <span class="straight-toggle-note">Doesn't work with Repeat, Blend and layers moved off the centre.</span>
-      </div>
       <div class="artboard-block" id="straightPreviewBlock">
         <div class="artboard-label">
           <div>Straight preview (unrolled, view/export only) <span class="artboard-size" id="straightSizeLabel"></span></div>
@@ -1121,8 +1117,12 @@
     </div>
 
     <div class="viewport-tools" id="viewportTools">
-      <div class="zoom-control ring-editor-info" id="ringEditorInfo" title="The Ring editor has no edge; exports are a square centred on the ring centre, up to 4096 px">
-        <span class="ring-editor-name">Ring editor</span> <span class="artboard-size">infinite canvas</span> <span>· <span id="ringOnScreenSize">—</span> on screen</span>
+      <div class="zoom-control ring-editor-info" id="ringEditorInfo" title="The Circle editor has no edge; exports are a square centred on the ring centre, up to 4096 px">
+        <span class="ring-editor-name">Circle editor</span> <span class="artboard-size">infinite canvas</span> <span>· <span id="ringOnScreenSize">—</span> on screen</span>
+      </div>
+      <div class="zoom-control view-toggles" id="viewToggles">
+        <button type="button" class="zoom-btn view-toggle" id="straightPreviewToggle" aria-pressed="true" title="Show the unrolled Straight preview above the artboard. Doesn't work with Repeat, Blend and layers moved off the centre.">Straight preview</button>
+        <button type="button" class="zoom-btn view-toggle" id="maskOutlineToggle" aria-pressed="true" title="Show a faint outline around each mask layer (editor only, never exported). The outline of a selected or hovered mask is drawn stronger.">Mask outlines</button>
       </div>
       <div class="zoom-control" title="Magnification of the artboard. Ctrl + Scroll (or Alt + Scroll, or a trackpad pinch) zooms around the pointer; Space + drag or middle-mouse drag pans.">
         <span>Zoom</span>
@@ -1148,6 +1148,6 @@
   </div>
 </div>
 
-<script src="app.js?v=120"></script>
+<script src="app.js?v=125"></script>
 </body>
 </html>
