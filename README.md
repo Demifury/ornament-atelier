@@ -24,31 +24,33 @@ Both modes share the layer list, roughness and mask controls.
 
 ## Layer types
 
-- **Ring** – a circle or arc stroke, with gaps if you want them.
+- **Ring** – a circle or arc stroke, with gaps if you want them and an optional fill.
 - **Asset** – an uploaded bitmap motif, repeated around the ring and optionally bent to follow it.
 - **Shape** – built-in polygons and basic shapes with fill and stroke.
 - **Line** – short strokes repeated around the ring, like the ticks of a dial.
 - **Straight line** – a free line with its own angle, length and offset, solid, dashed or dotted; useful for axes and starbursts.
-- **Text** – a word or phrase set letter by letter along the ring, with alignment, letter spacing and optional fit-to-arc. Load a font file or pick an installed font; fonts are saved with the project.
+- **Text** – one or more lines set letter by letter along the ring or straight out from the centre like spokes, with alignment, fit-to-arc and character settings: leading, tracking, kerning, horizontal and vertical scale, baseline shift, letter rotation, all caps, small caps, underline and strikethrough. Pick a built-in font, load a font file or use an installed font (Chrome and Edge); fonts are saved with the project. Symbol fonts come with a glyph picker.
 
 ## Main tools
 
 - **Groups** – nest layers, hide or rename them, and move, scale or rotate a whole group at once; **Scale line widths** decides whether strokes get thinner and thicker with the group.
-- **Blend** (Circle mode) – pick two layers of the same type and generate smooth in-between steps, like a blend in a vector editor.
+- **Blend** (Circle mode) – pick two layers of the same type and generate smooth in-between steps, like a blend in a vector editor, either in a straight line or around a point, optionally closing the loop.
 - **Repeat around a point** (Circle mode) – copy a group around a pivot you place yourself, for rosettes and flowers of flowers.
 - **Roughness** – gives edges a hand-made, uneven look.
-- **Mask** – an uploaded texture that erases parts of the whole artwork, for a worn or printed look.
+- **Mask layers** – turn any layer into a mask that cuts out everything below it in its group, for example letters cut out of a thick ring.
+- **Texture mask** – an uploaded texture that erases parts of the whole artwork, for a worn or printed look.
 - **Animation** – per-layer speed and an animated export.
 - **Handles and badges** – drag a layer's origin, radius or rotation in the preview, and edit count or size from small badges next to it.
-- **Camera** – zoom, pan, fit the design or the artboard.
+- **Layer list** – drag layers into and out of groups, select a single layer inside a group by its row or by double-clicking it, and deselect with Esc.
+- **Camera** – the canvas has no edge; zoom, pan, fit the design or the centre.
 
 ## Export
 
-- PNG
+- PNG, a square centred on the ring centre, up to 4096 px
 - SVG, as one file or as a layered file with named groups
 - PNG ZIP, with one image per layer
 - Animation as numbered PNG frames in a ZIP (Straight mode), ready for a video editor
-- Project files, to save your work and reopen it later
+- Project files, to save your work and reopen it later; drop a project file onto the page to open it
 
 ## Shortcuts
 
@@ -60,6 +62,23 @@ Both modes share the layer list, roughness and mask controls.
 | Ctrl + E | Export PNG |
 | Ctrl + G / Ctrl + Shift + G | Group / ungroup |
 | Delete | Remove selected layers |
+| Esc / Ctrl + Shift + A | Deselect |
 | Ctrl or Alt + scroll | Zoom |
 | Space + drag | Pan |
-| F / 0 / 1 | Fit design / fit artboard / 100% |
+| F / 0 / 1 | Fit design / fit centre / 100% |
+
+## Fonts
+
+The built-in fonts are licensed under the SIL Open Font License 1.1; the licence texts are in `fonts/licenses/`.
+
+- [Caudex](https://fonts.google.com/specimen/Caudex) by Hjort Nidudsson
+- [Monoton](https://fonts.google.com/specimen/Monoton) by Vernon Adams
+- [Cinzel Decorative](https://fonts.google.com/specimen/Cinzel+Decorative) by Natanael Gama
+- [Macondo Swash Caps](https://fonts.google.com/specimen/Macondo+Swash+Caps) by John Vargas Beltrán
+- [Kolker Brush](https://fonts.google.com/specimen/Kolker+Brush) by The Kolker Brush Project Authors
+- [Pirata One](https://fonts.google.com/specimen/Pirata+One) by Rodrigo Fuenzalida, Nicolas Massi
+- [Almendra](https://fonts.google.com/specimen/Almendra) by Ana Sanfelippo
+- [Noto Sans Runic](https://fonts.google.com/noto/specimen/Noto+Sans+Runic) by The Noto Project Authors
+- [Noto Sans Mayan Numerals](https://fonts.google.com/noto/specimen/Noto+Sans+Mayan+Numerals) by The Noto Project Authors
+- [Noto Sans Egyptian Hieroglyphs](https://fonts.google.com/noto/specimen/Noto+Sans+Egyptian+Hieroglyphs) by The Noto Project Authors
+- [Noto Sans Symbols 2](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols+2) by The Noto Project Authors

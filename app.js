@@ -1,6 +1,7 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const CANVAS_SIZE = 4096;
 const CENTER = CANVAS_SIZE / 2;
+const INFINITE_MASK_EXTENT = 20000; // half-size of the square the global texture mask covers in the Ring editor
 
 // One erase-style mask per mode, affecting the whole artboard rather than any single
 // layer. Unlike a motif layer, rendering never touches this through a canvas — the SVG
@@ -49,6 +50,8 @@ function createRingLayer(name, radius) {
     visible: true,
     strokeWidth: 10,
     strokeColor: "#e0e0e0",
+    fillOn: false,
+    fillColor: "#e0e0e0",
     animSpeed: 0,
     ...placementDefaults(),
   };
@@ -193,10 +196,39 @@ const BUILTIN_FONT_ID = "caudex";
 const MAX_FONT_BYTES = 12 * 1024 * 1024; // a project embeds its fonts, so refuse monsters
 const fontRegistry = new Map(); // id -> { id, name, dataUrl, family, status, ready }
 
+// Whole-layer character settings (no per-letter styling). Defaults reproduce the plain look:
+// leading and baseline shift are % of the letter size, scales are %, rotation degrees.
+const TEXT_STYLE_DEFAULTS = {
+  leading: 120, kerning: "auto", scaleX: 100, scaleY: 100, baselineShift: 0, charRotation: 0,
+  allCaps: false, smallCaps: false, underline: false, strike: false,
+  textDirection: "around", textRead: "outward", // Ring mode: along the ring, or radial = a straight ray from the centre
+};
+const SMALL_CAPS_RATIO = 0.75;
+
+// The settings as numbers/flags with the defaults filled in (older layers lack the fields).
+function textStyle(layer) {
+  const n = (v, d) => (v === undefined || v === null || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
+  return {
+    lead: Math.max(0, n(layer.leading, 120)) / 100,
+    kernNone: layer.kerning === "none",
+    sx: Math.max(1, n(layer.scaleX, 100)) / 100,
+    sy: Math.max(1, n(layer.scaleY, 100)) / 100,
+    base: n(layer.baselineShift, 0) / 100,
+    rot: n(layer.charRotation, 0),
+    caps: !!layer.allCaps,
+    small: !!layer.smallCaps && !layer.allCaps,
+    ul: !!layer.underline,
+    st: !!layer.strike,
+  };
+}
+function textStyleKey(st) {
+  return [st.lead, st.kernNone ? 1 : 0, st.sx, st.sy, st.base, st.rot, st.caps ? 1 : 0, st.small ? 1 : 0, st.ul ? 1 : 0, st.st ? 1 : 0].join(",");
+}
+
 function textDefaults() {
   // textLayout 2 = "size" is the letter size. Layers saved before that (size was the
   // width of the whole text block) have no marker and are converted on load.
-  return { text: "ORNAMENT", fontId: BUILTIN_FONT_ID, textColor: "#e0e0e0", letterSpacing: 0, textAlign: "center", textLayout: 2 };
+  return { text: "ORNAMENT", fontId: BUILTIN_FONT_ID, textColor: "#e0e0e0", letterSpacing: 0, textAlign: "center", textLayout: 2, ...TEXT_STYLE_DEFAULTS };
 }
 
 // 53-bit string hash (cyrb53): content-addressed font ids mean the same font file is the
@@ -213,29 +245,111 @@ function hashString(str) {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
-function registerFont({ id, name, dataUrl = null, url = null }) {
+function registerFont({ id, name, dataUrl = null, url = null, lazy = false, glyphSets = null }) {
   const existing = fontRegistry.get(id);
   if (existing) return existing;
-  const entry = { id, name, dataUrl, family: `oa-font-${id}`, status: "loading", ready: null };
+  const entry = { id, name, dataUrl, family: `oa-font-${id}`, status: lazy ? "lazy" : "loading", ready: null, glyphSets, glyphs: null, bundled: lazy };
   fontRegistry.set(id, entry);
-  entry.ready = (async () => {
-    try {
-      const source = dataUrl ? await (await fetch(dataUrl)).arrayBuffer() : `url(${url})`;
-      const face = new FontFace(entry.family, source);
-      await face.load();
-      document.fonts.add(face);
-      entry.status = "ready";
-    } catch (err) {
-      entry.status = "error";
-      fontRegistry.delete(id); // unusable file: never offered, never saved
-    }
-    fontsChanged();
-    return entry;
-  })();
+  // Starts loading the file (once). Bundled fonts are "lazy": they show in the picker at once and their
+  // file is only downloaded when a layer first draws with them (resolveFont) or the glyph picker needs it.
+  entry.load = () => {
+    if (entry.ready) return entry.ready;
+    entry.status = "loading";
+    entry.ready = (async () => {
+      try {
+        let source;
+        if (dataUrl) source = await (await fetch(dataUrl)).arrayBuffer();
+        else if (glyphSets) {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("font file missing");
+          source = await res.arrayBuffer();
+          entry.glyphs = glyphsFromFont(source, glyphSets);
+        } else source = `url(${url})`;
+        const face = new FontFace(entry.family, source);
+        await face.load();
+        document.fonts.add(face);
+        entry.status = "ready";
+      } catch (err) {
+        entry.status = "error";
+        fontRegistry.delete(id); // unusable file: never offered, never saved
+      }
+      fontsChanged();
+      return entry;
+    })();
+    return entry.ready;
+  };
+  if (!lazy) entry.load();
   return entry;
 }
 
+// Symbol-only fonts: the characters of `sets` ([[from, to, max?], ...]) that the font's cmap really has,
+// for the glyph picker under the font list (up to GLYPH_PICKER_MAX in all).
+const GLYPH_PICKER_MAX = 120;
+function glyphsFromFont(buffer, sets) {
+  const has = fontCmapChecker(buffer);
+  const out = [];
+  for (const [from, to, max = Infinity] of sets) {
+    let taken = 0;
+    for (let cp = from; cp <= to && taken < max && out.length < GLYPH_PICKER_MAX; cp++) {
+      if (has(cp) && !out.includes(cp)) {
+        out.push(cp);
+        taken++;
+      }
+    }
+  }
+  return out;
+}
+
+// Minimal TrueType cmap reader (format 12 or 4): returns cp => boolean. Any failure answers "no glyphs".
+function fontCmapChecker(buffer) {
+  try {
+    const dv = new DataView(buffer);
+    const numTables = dv.getUint16(4);
+    let cmap = -1;
+    for (let i = 0; i < numTables; i++) {
+      const rec = 12 + i * 16;
+      if (dv.getUint32(rec) === 0x636d6170) cmap = dv.getUint32(rec + 8); // 'cmap'
+    }
+    if (cmap < 0) return () => false;
+    const subs = [];
+    for (let i = 0; i < dv.getUint16(cmap + 2); i++) {
+      const rec = cmap + 4 + i * 8;
+      const off = cmap + dv.getUint32(rec + 4);
+      subs.push({ format: dv.getUint16(off), off });
+    }
+    const ranges = [];
+    for (const s of subs.filter((x) => x.format === 12).concat(subs.filter((x) => x.format === 4))) {
+      if (s.format === 12) {
+        const n = dv.getUint32(s.off + 12);
+        for (let g = 0; g < n; g++) ranges.push([dv.getUint32(s.off + 16 + g * 12), dv.getUint32(s.off + 20 + g * 12)]);
+      } else {
+        const segX2 = dv.getUint16(s.off + 6);
+        for (let g = 0; g < segX2 / 2; g++) ranges.push([dv.getUint16(s.off + 16 + segX2 + g * 2), dv.getUint16(s.off + 14 + g * 2)]);
+      }
+    }
+    return (cp) => ranges.some(([a, b]) => cp >= a && cp <= b && a !== 0xffff);
+  } catch (e) {
+    return () => false;
+  }
+}
+
 registerFont({ id: BUILTIN_FONT_ID, name: "Caudex", url: "fonts/Caudex-Regular.ttf" });
+
+// Fonts bundled with the app (all SIL Open Font License 1.1, texts in fonts/licenses/). Listed in the font picker
+// of text layers in both modes; each file is fetched only when first used. `glyphSets` marks a symbol-only font.
+const BUNDLED_FONTS = [
+  { id: "bundled-monoton", name: "Monoton", file: "Monoton-Regular.ttf" },
+  { id: "bundled-cinzeldecorative", name: "Cinzel Decorative", file: "CinzelDecorative-Regular.ttf" },
+  { id: "bundled-macondoswashcaps", name: "Macondo Swash Caps", file: "MacondoSwashCaps-Regular.ttf" },
+  { id: "bundled-kolkerbrush", name: "Kolker Brush", file: "KolkerBrush-Regular.ttf" },
+  { id: "bundled-pirataone", name: "Pirata One", file: "PirataOne-Regular.ttf" },
+  { id: "bundled-almendra", name: "Almendra", file: "Almendra-Regular.ttf" },
+  { id: "bundled-notosansrunic", name: "Noto Sans Runic", file: "NotoSansRunic-Regular.ttf", glyphSets: [[0x16a0, 0x16f8]] },
+  { id: "bundled-notosansmayannumerals", name: "Noto Sans Mayan Numerals", file: "NotoSansMayanNumerals-Regular.ttf", glyphSets: [[0x1d2e0, 0x1d2f3]] },
+  { id: "bundled-notosansegyptianhieroglyphs", name: "Noto Sans Egyptian Hieroglyphs", file: "NotoSansEgyptianHieroglyphs-Regular.ttf", glyphSets: [[0x13150, 0x1317f, 48], [0x13000, 0x1342f, 72]] },
+  { id: "bundled-notosanssymbols2", name: "Noto Sans Symbols 2", file: "NotoSansSymbols2-Regular.ttf", glyphSets: [[0x1f650, 0x1f67f, 48], [0x2190, 0x219f, 8], [0x2605, 0x2606], [0x2726, 0x2735], [0x2b00, 0x2b2f, 12], [0x2600, 0x26ff, 40]] },
+];
+for (const f of BUNDLED_FONTS) registerFont({ id: f.id, name: f.name, url: `fonts/${f.file}`, lazy: true, glyphSets: f.glyphSets || null });
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -260,7 +374,10 @@ async function addFontFromBlob(name, blob) {
 // unknown (a project whose embedded font failed to load).
 function resolveFont(fontId) {
   const entry = fontRegistry.get(fontId);
-  if (entry) return entry.status === "ready" ? entry : null;
+  if (entry) {
+    if (entry.status === "lazy") entry.load(); // a bundled font drawn for the first time: fetch it now (the layer redraws when it arrives)
+    return entry.status === "ready" ? entry : null;
+  }
   const fallback = fontRegistry.get(BUILTIN_FONT_ID);
   return fallback && fallback.status === "ready" ? fallback : null;
 }
@@ -279,8 +396,47 @@ function fontsChanged() {
   }
 }
 
+// The hint + glyph grid under the font list: shown only while the layer's font is a symbol-only bundled font
+// (one registered with glyphSets). `prefix` is "text" (Ring mode) or "smText" (Straight mode).
+function updateGlyphBox(prefix, fontId) {
+  const box = document.getElementById(`${prefix}GlyphBox`);
+  const grid = document.getElementById(`${prefix}GlyphGrid`);
+  if (!box || !grid) return;
+  const entry = fontRegistry.get(fontId);
+  const symbolFont = !!(entry && entry.glyphSets);
+  box.hidden = !symbolFont;
+  if (!symbolFont) return;
+  if (entry.status === "lazy") entry.load(); // the grid needs the file's character table
+  const key = entry.id + ":" + (entry.glyphs ? entry.glyphs.length : "-");
+  if (grid.dataset.key === key) return;
+  grid.dataset.key = key;
+  grid.innerHTML = "";
+  grid.style.fontFamily = `"${entry.family}"`;
+  for (const cp of entry.glyphs || []) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = String.fromCodePoint(cp);
+    b.title = "U+" + cp.toString(16).toUpperCase();
+    grid.appendChild(b);
+  }
+}
+
+// A click on a glyph inserts it into the text field at the caret and goes through the field's normal input handling.
+document.querySelectorAll(".glyph-grid").forEach((grid) =>
+  grid.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const ta = document.getElementById(grid.dataset.target);
+    const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, start) + btn.textContent + ta.value.slice(end);
+    ta.selectionStart = ta.selectionEnd = start + btn.textContent.length;
+    ta.focus();
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  })
+);
+
 function populateFontSelects() {
-  const fonts = [...fontRegistry.values()].filter((f) => f.status === "ready");
+  const fonts = [...fontRegistry.values()].filter((f) => f.status === "ready" || f.status === "lazy" || (f.bundled && f.status === "loading"));
   fonts.sort((a, b) => (a.id === BUILTIN_FONT_ID ? -1 : b.id === BUILTIN_FONT_ID ? 1 : a.name.localeCompare(b.name)));
   for (const id of ["textFont", "smTextFont"]) {
     const select = document.getElementById(id);
@@ -348,41 +504,71 @@ function textSizeBucket(layer) {
 
 function textRasterKey(layer) {
   const font = resolveFont(layer.fontId);
-  return [layer.text ?? "", font ? font.id : "", layer.textColor, layer.letterSpacing || 0, layer.textAlign || "center", textSizeBucket(layer)].join("\u0001");
+  return [layer.text ?? "", font ? font.id : "", layer.textColor, layer.letterSpacing || 0, layer.textAlign || "center", textSizeBucket(layer), textStyleKey(textStyle(layer))].join("\u0001");
 }
 
 // Lays the (multi-line) text out as one block at TEXT_REF, in TEXT_REF px. Independent
 // of the letter size, so it also tells how wide a legacy layer's block was.
 function layoutTextBlock(layer, font) {
-  const lines = String(layer.text ?? "").split(/\r?\n/);
+  const st = textStyle(layer);
+  const lines = String(layer.text ?? "").split(/\r?\n/).map((l) => (st.caps ? l.toUpperCase() : l));
   if (lines.every((l) => l.trim() === "")) return null;
   const spacing = (((layer.letterSpacing || 0) / 100) * TEXT_REF);
   const align = layer.textAlign || "center";
   const fontCss = `${TEXT_REF}px "${font.family}"`;
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = fontCss;
+  if ("fontKerning" in probe) probe.fontKerning = st.kernNone ? "none" : "auto";
   const native = "letterSpacing" in probe;
   if (native) probe.letterSpacing = spacing + "px";
+  // Small caps and turned letters are drawn one letter at a time (no pair kerning there).
+  const perChar = st.small || st.rot !== 0;
+  const shift = st.base * TEXT_REF; // baseline shift, up = positive
+  const ruleDesc = (st.ul ? 0.16 : 0) * TEXT_REF * st.sy;
 
   const measure = (line) => {
-    if (!line) return { adv: 0, l: 0, r: 0, asc: 0, desc: 0 };
-    if (native) {
+    if (!line) return { adv: 0, l: 0, r: 0, asc: 0, desc: 0, items: null };
+    let m;
+    if (perChar) {
+      let x = 0, l = 0, r = 0, asc = 0, desc = 0;
+      const items = [];
+      [...line].forEach((ch0, i) => {
+        const low = st.small && ch0 !== ch0.toUpperCase();
+        const ch = low ? ch0.toUpperCase() : ch0;
+        const fpx = low ? TEXT_REF * SMALL_CAPS_RATIO : TEXT_REF;
+        probe.font = `${fpx}px "${font.family}"`;
+        if (native) probe.letterSpacing = "0px";
+        const t = probe.measureText(ch);
+        if (i === 0) l = t.actualBoundingBoxLeft;
+        r = x + t.actualBoundingBoxRight;
+        asc = Math.max(asc, t.actualBoundingBoxAscent);
+        desc = Math.max(desc, t.actualBoundingBoxDescent);
+        items.push({ ch, x, fpx, w: t.width });
+        x += t.width + spacing;
+      });
+      probe.font = fontCss;
+      if (native) probe.letterSpacing = spacing + "px";
+      m = { adv: x - spacing, l, r, asc, desc, items };
+    } else if (native) {
       const t = probe.measureText(line);
-      return { adv: t.width - spacing, l: t.actualBoundingBoxLeft, r: t.actualBoundingBoxRight, asc: t.actualBoundingBoxAscent, desc: t.actualBoundingBoxDescent };
+      m = { adv: t.width - spacing, l: t.actualBoundingBoxLeft, r: t.actualBoundingBoxRight, asc: t.actualBoundingBoxAscent, desc: t.actualBoundingBoxDescent, items: null };
+    } else {
+      let x = 0, l = 0, r = 0, asc = 0, desc = 0;
+      [...line].forEach((ch, i) => {
+        const t = probe.measureText(ch);
+        if (i === 0) l = t.actualBoundingBoxLeft;
+        r = x + t.actualBoundingBoxRight;
+        asc = Math.max(asc, t.actualBoundingBoxAscent);
+        desc = Math.max(desc, t.actualBoundingBoxDescent);
+        x += t.width + spacing;
+      });
+      m = { adv: x - spacing, l, r, asc, desc, items: null };
     }
-    let x = 0, l = 0, r = 0, asc = 0, desc = 0;
-    [...line].forEach((ch, i) => {
-      const t = probe.measureText(ch);
-      if (i === 0) l = t.actualBoundingBoxLeft;
-      r = x + t.actualBoundingBoxRight;
-      asc = Math.max(asc, t.actualBoundingBoxAscent);
-      desc = Math.max(desc, t.actualBoundingBoxDescent);
-      x += t.width + spacing;
-    });
-    return { adv: x - spacing, l, r, asc, desc };
+    // scales, baseline shift and the underline's room (default values change nothing)
+    return { adv: m.adv * st.sx, l: m.l * st.sx, r: m.r * st.sx, asc: m.asc * st.sy + shift, desc: Math.max(m.desc * st.sy - shift, ruleDesc), items: m.items };
   };
 
-  const LH = TEXT_REF * 1.2;
+  const LH = TEXT_REF * st.lead;
   const info = lines.map(measure);
   const maxAdv = Math.max(...info.map((i) => i.adv));
   const xs = info.map((i) => (align === "left" ? 0 : align === "right" ? maxAdv - i.adv : (maxAdv - i.adv) / 2));
@@ -395,9 +581,9 @@ function layoutTextBlock(layer, font) {
   const top = -(lines[0] ? info[0].asc : TEXT_REF * 0.7);
   const last = info.length - 1;
   const bottom = last * LH + (lines[last] ? info[last].desc : 0);
-  const pad = TEXT_REF * 0.04;
+  const pad = TEXT_REF * (0.04 + (st.rot !== 0 ? 0.3 : 0));
   return {
-    lines, xs, native, spacing, fontCss, LH, minX, pad, top,
+    lines, xs, native, spacing, fontCss, LH, minX, pad, top, st, info, shift,
     boxW: Math.max(1, maxX - minX + 2 * pad),
     boxH: Math.max(1, bottom - top + 2 * pad),
   };
@@ -406,7 +592,7 @@ function layoutTextBlock(layer, font) {
 function rasterizeText(layer, key, font) {
   const lay = layoutTextBlock(layer, font);
   if (!lay) return { key, dataUrl: null, canvas: null, w: 0, h: 0, boxW: 0, boxH: 0 };
-  const { lines, xs, native, spacing, LH } = lay;
+  const { lines, xs, native, spacing, LH, st, info, shift } = lay;
   // bitmap px per TEXT_REF px: 2 px per canvas unit at the bucketed letter size
   let scale = (2 * textSizeBucket(layer)) / TEXT_REF;
   scale = Math.min(scale, TEXT_RASTER_MAX_PX / lay.boxW, TEXT_RASTER_MAX_PX / lay.boxH);
@@ -417,21 +603,45 @@ function rasterizeText(layer, key, font) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(scale, 0, 0, scale, -(lay.minX - lay.pad) * scale, -(lay.top - lay.pad) * scale);
   ctx.font = lay.fontCss;
+  if ("fontKerning" in ctx) ctx.fontKerning = st.kernNone ? "none" : "auto";
   if (native) ctx.letterSpacing = spacing + "px";
   ctx.fillStyle = layer.textColor || "#e0e0e0";
   ctx.textBaseline = "alphabetic";
   ctx.textAlign = "left";
+  const family = lay.fontCss.replace(/^\d+px /, "");
+  const thick = Math.max(1, 0.06 * TEXT_REF * st.sy);
   lines.forEach((line, k) => {
     if (!line) return;
-    if (native) {
-      ctx.fillText(line, xs[k], k * LH);
+    const by = k * LH - shift; // baseline of this line
+    ctx.save();
+    ctx.translate(xs[k], by);
+    ctx.scale(st.sx, st.sy);
+    const items = info[k].items;
+    if (items) {
+      for (const it of items) {
+        ctx.font = `${it.fpx}px ${family}`;
+        if (native) ctx.letterSpacing = "0px";
+        ctx.save();
+        if (st.rot !== 0) {
+          ctx.translate(it.x + it.w / 2, -it.fpx * 0.35);
+          ctx.rotate((st.rot * Math.PI) / 180);
+          ctx.translate(-(it.x + it.w / 2), it.fpx * 0.35);
+        }
+        ctx.fillText(it.ch, it.x, 0);
+        ctx.restore();
+      }
+    } else if (native) {
+      ctx.fillText(line, 0, 0);
     } else {
-      let x = xs[k];
+      let x = 0;
       for (const ch of line) {
-        ctx.fillText(ch, x, k * LH);
+        ctx.fillText(ch, x, 0);
         x += ctx.measureText(ch).width + spacing;
       }
     }
+    ctx.restore();
+    if (st.ul) ctx.fillRect(xs[k], by + 0.08 * TEXT_REF * st.sy, info[k].adv, thick);
+    if (st.st) ctx.fillRect(xs[k], by - 0.3 * TEXT_REF * st.sy - thick / 2, info[k].adv, thick);
   });
   return { key, dataUrl: canvas.toDataURL("image/png"), canvas, w: canvas.width, h: canvas.height, boxW: lay.boxW, boxH: lay.boxH };
 }
@@ -572,20 +782,39 @@ function splitClusters(str) {
 // position is the width of the text up to and including it minus its own width, so the
 // pair adjustments with the letter before it are included. Letter spacing is added by
 // the caller (i * spacing), which keeps this measure independent of it.
-function measureRun(font, line) {
-  const key = font.id + "\u0001" + line;
+function measureRun(font, line, kernNone = false, small = false) {
+  const key = font.id + "\u0001" + line + "\u0001" + (kernNone ? 1 : 0) + (small ? 1 : 0);
   const hit = runMeasureCache.get(key);
   if (hit) return hit;
   const ctx = getMeasureContext();
   ctx.font = `${GLYPH_MEASURE_SIZE}px "${font.family}"`;
   if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
-  let prefix = "";
-  const clusters = splitClusters(line).map((ch) => {
-    prefix += ch;
-    const w = ctx.measureText(ch).width;
-    return { ch, pen: (ctx.measureText(prefix).width - w) / GLYPH_MEASURE_SIZE, w: w / GLYPH_MEASURE_SIZE };
-  });
-  const run = { clusters, total: ctx.measureText(line).width / GLYPH_MEASURE_SIZE };
+  if ("fontKerning" in ctx) ctx.fontKerning = kernNone ? "none" : "auto";
+  let run;
+  if (small) {
+    // small caps: lower-case letters are drawn as capitals at SMALL_CAPS_RATIO of the size;
+    // letters are measured one by one (no pair kerning)
+    let pen = 0;
+    const clusters = splitClusters(line).map((ch0) => {
+      const low = ch0 !== ch0.toUpperCase();
+      const ch = low ? ch0.toUpperCase() : ch0;
+      const k = low ? SMALL_CAPS_RATIO : 1;
+      const w = (ctx.measureText(ch).width / GLYPH_MEASURE_SIZE) * k;
+      const c = { ch, pen, w, k };
+      pen += w;
+      return c;
+    });
+    run = { clusters, total: pen };
+  } else {
+    let prefix = "";
+    const clusters = splitClusters(line).map((ch) => {
+      prefix += ch;
+      const w = ctx.measureText(ch).width;
+      return { ch, pen: (ctx.measureText(prefix).width - w) / GLYPH_MEASURE_SIZE, w: w / GLYPH_MEASURE_SIZE, k: 1 };
+    });
+    run = { clusters, total: ctx.measureText(line).width / GLYPH_MEASURE_SIZE };
+  }
+  if ("fontKerning" in ctx) ctx.fontKerning = "auto";
   if (runMeasureCache.size > 200) runMeasureCache.clear();
   runMeasureCache.set(key, run);
   return run;
@@ -622,16 +851,21 @@ const TEXT_LINE_HEIGHT = 1.2; // rows of multi-line circle text, in letter sizes
 
 // Length of the text (the longest line, at the layer's own radius) against the length
 // of the visible ring: what the Text panel's hint shows.
+function textIsRadial(layer) {
+  return layer.textDirection === "radial";
+}
+
 function ringTextStats(layer) {
   const font = resolveFont(layer.fontId);
   if (!font) return null;
   const S = Math.max(1, layer.size);
   const sp = ((layer.letterSpacing || 0) / 100) * S;
+  const st = textStyle(layer);
   let len = 0;
-  for (const line of String(layer.text ?? "").split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const run = measureRun(font, line);
-    len = Math.max(len, run.total * S + (run.clusters.length - 1) * sp);
+  for (const line0 of String(layer.text ?? "").split(/\r?\n/)) {
+    if (!line0.trim()) continue;
+    const run = measureRun(font, st.caps ? line0.toUpperCase() : line0, st.kernNone, st.small);
+    len = Math.max(len, run.total * S * st.sx + (run.clusters.length - 1) * sp);
   }
   const arc = visibleArc(layer);
   const deg = arc.pieces.reduce((sum, [a, b]) => sum + (b - a), 0);
@@ -649,11 +883,34 @@ function updateTextFitHint(layer) {
     el.textContent = "";
     return;
   }
+  if (textIsRadial(layer)) {
+    el.textContent = `Fit to arc does not apply to radial text. Text length ${Math.round(st.len / Math.max(1, Math.floor(layer.count) || 1)).toLocaleString("en-US")} units along the ray.`;
+    return;
+  }
   const where = st.full ? "the ring" : "the arc";
   const pct = st.ring > 0 ? Math.round((st.len / st.ring) * 100) : 0;
   const n = (v) => Math.round(v).toLocaleString("en-US");
   el.textContent = `Text length ${n(st.len)} of ${n(st.ring)} units around ${where} (${pct}%).` +
     (pct > 100 && !layer.fitArc ? " Longer than " + where + ": the letters run on and overlap." : "");
+}
+
+// The stretches of the visible arc (as [from, to] angle pairs, hopping over gaps) covered
+// by the run between visible-arc parameters t0 and t1; past either end it just continues.
+function visibleSpans(pieces, t0, t1) {
+  const spans = [];
+  if (t0 < 0) spans.push([pieces[0][0] + t0, pieces[0][0] + Math.min(0, t1)]);
+  let off = 0;
+  for (const [a, b] of pieces) {
+    const len = b - a;
+    const lo = Math.max(t0, off), hi = Math.min(t1, off + len);
+    if (hi > lo) spans.push([a + lo - off, a + hi - off]);
+    off += len;
+  }
+  if (t1 > off) {
+    const lastEnd = pieces[pieces.length - 1][1];
+    spans.push([lastEnd + Math.max(t0, off) - off, lastEnd + t1 - off]);
+  }
+  return spans;
 }
 
 // The glyph positions of a Circle text layer, before the animation spin is added.
@@ -669,18 +926,21 @@ function ringTextLayout(layer) {
   if (!font) return null;
   const S = Math.max(1, layer.size);
   const sp = ((layer.letterSpacing || 0) / 100) * S;
+  const st = textStyle(layer);
   const align = layer.textAlign || "center";
   const arc = visibleArc(layer);
   const totalDeg = arc.pieces.reduce((sum, [a, b]) => sum + (b - a), 0);
   const count = Math.max(1, Math.floor(layer.count) || 1);
   const slotDeg = totalDeg / count;
   const glyphs = [];
-  String(layer.text ?? "").split(/\r?\n/).forEach((line, row) => {
-    const rowR = layer.radius - row * S * TEXT_LINE_HEIGHT;
-    if (!line.trim() || rowR <= 0) return;
-    const run = measureRun(font, line);
+  const rules = []; // one entry per drawn line of text (for underline / strikethrough)
+  String(layer.text ?? "").split(/\r?\n/).forEach((line0, row) => {
+    const rowR = layer.radius - row * S * st.lead; // leading: each line one step further in
+    if (!line0.trim() || rowR <= 0) return;
+    const line = st.caps ? line0.toUpperCase() : line0;
+    const run = measureRun(font, line, st.kernNone, st.small);
     const n = run.clusters.length;
-    const runLen = run.total * S + (n - 1) * sp;
+    const runLen = run.total * S * st.sx + (n - 1) * sp;
     const slotLen = ((slotDeg * Math.PI) / 180) * rowR;
     let extra = 0;
     if (layer.fitArc && n > 1) {
@@ -696,14 +956,82 @@ function ringTextLayout(layer) {
       // circle) or the middle of the slot (cut arc), so it stays where the arc is.
       const pivot = arc.full ? anchor : slotStart + slotDeg / 2;
       run.clusters.forEach((cl, i) => {
-        const centre = from + cl.pen * S + i * (sp + extra) + (cl.w * S) / 2; // length from the anchor
+        const centre = from + cl.pen * S * st.sx + i * (sp + extra) + (cl.w * S * st.sx) / 2; // length from the anchor
         let t = anchor + ((centre / rowR) * 180) / Math.PI;
         if (layer.flipHorizontal) t = 2 * pivot - t;
-        glyphs.push({ ch: cl.ch, angle: angleAtVisibleParam(arc.pieces, t), row, rowR, copy: c, adv: cl.w * S });
+        glyphs.push({ ch: cl.ch, angle: angleAtVisibleParam(arc.pieces, t), row, rowR, copy: c, adv: cl.w * S, k: cl.k });
       });
+      let t0 = anchor + ((from / rowR) * 180) / Math.PI;
+      let t1 = t0 + ((fitted / rowR) * 180) / Math.PI;
+      if (layer.flipHorizontal) [t0, t1] = [2 * pivot - t1, 2 * pivot - t0];
+      rules.push({ row, rowR, copy: c, spans: visibleSpans(arc.pieces, t0, t1) });
     }
   });
-  return { font, glyphs, capHalf: (capRatioOf(font) * S) / 2 };
+  return { font, glyphs, rules, st, capHalf: (capRatioOf(font) * S) / 2 };
+}
+
+// Radial text: the same run laid along a straight ray from the layer's centre. `u` is the
+// distance along the reading direction from the start point (at the layer Radius on the
+// ray), `w` the sideways row offset (lines stack to the reader's "down" side). One copy
+// per angle of layerAngles (Count, Start angle, arc cut and gaps all apply).
+function radialTextLayout(layer) {
+  const font = resolveFont(layer.fontId);
+  if (!font) return null;
+  const S = Math.max(1, layer.size);
+  const sp = ((layer.letterSpacing || 0) / 100) * S;
+  const st = textStyle(layer);
+  const align = layer.textAlign || "center";
+  const angles = layerAngles(layer);
+  const glyphs = [];
+  const rules = [];
+  String(layer.text ?? "").split(/\r?\n/).forEach((line0, row) => {
+    if (!line0.trim()) return;
+    const w = row * S * st.lead;
+    const line = st.caps ? line0.toUpperCase() : line0;
+    const run = measureRun(font, line, st.kernNone, st.small);
+    const n = run.clusters.length;
+    const runLen = run.total * S * st.sx + (n - 1) * sp;
+    const from = align === "left" ? 0 : align === "right" ? -runLen : -runLen / 2;
+    const sgn = layer.flipHorizontal ? -1 : 1; // Flip horizontally mirrors the run about the anchor
+    angles.forEach((ang, c) => {
+      run.clusters.forEach((cl, i) => {
+        const centre = from + cl.pen * S * st.sx + i * sp + (cl.w * S * st.sx) / 2;
+        glyphs.push({ ch: cl.ch, u: sgn * centre, w, row, copy: c, adv: cl.w * S, k: cl.k });
+      });
+      const a = sgn * from, b = sgn * (from + runLen);
+      rules.push({ row, w, copy: c, u0: Math.min(a, b), u1: Math.max(a, b) });
+    });
+  });
+  return { font, glyphs, rules, st, capHalf: (capRatioOf(font) * S) / 2, angles };
+}
+
+// Where a radial text glyph / rule point sits: the start point on the ray at the layer radius,
+// then u along the reading direction and w to the reader's down side (before the origin shift).
+function radialFrame(layer, baseAngle, spin) {
+  const th = ((baseAngle + spin) * Math.PI) / 180;
+  const inward = layer.textRead === "inward";
+  const rho = th - Math.PI / 2 + (inward ? Math.PI : 0);
+  const ex = Math.cos(rho), ey = Math.sin(rho);
+  const px = CENTER + layer.radius * Math.sin(th), py = CENTER - layer.radius * Math.cos(th);
+  return { px, py, ex, ey, rotDeg: (rho * 180) / Math.PI, at: (u, w) => [px + ex * u - ey * w, py + ey * u + ex * w] };
+}
+
+function drawRadialText(g, layer) {
+  const layout = radialTextLayout(layer);
+  if (!layout) return;
+  const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
+  const frames = layout.angles.map((a) => radialFrame(layer, a, spin));
+  appendTextGlyphs(g, layer, layout, "tg", (gl) => {
+    const f = frames[gl.copy];
+    const [x, y] = f.at(gl.u, gl.w);
+    return { x, y, rotation: f.rotDeg + layer.rotation };
+  });
+  appendTextRules(g, layer, layout, (rule, off) => {
+    const f = frames[rule.copy];
+    const [x0, y0] = f.at(rule.u0, rule.w - off);
+    const [x1, y1] = f.at(rule.u1, rule.w - off);
+    return `M ${fmt(x0)} ${fmt(y0)} L ${fmt(x1)} ${fmt(y1)} `;
+  });
 }
 
 // --- Glyph bitmaps ---
@@ -778,17 +1106,20 @@ const fmt = (n) => Math.round(n * 1000) / 1000;
 function appendTextGlyphs(g, layer, layout, idPrefix, place) {
   const S = Math.max(1, layer.size);
   const colour = layer.textColor || "#e0e0e0";
+  const st = layout.st;
   const defs = document.createElementNS(SVG_NS, "defs");
   const ids = new Map();
   const items = [];
   for (const gl of layout.glyphs) {
-    const rec = getGlyph(layout.font, gl.ch, S, colour);
+    const Sg = S * (gl.k || 1); // small caps draw their capitals smaller
+    const rec = getGlyph(layout.font, gl.ch, Sg, colour);
     if (!rec) continue;
-    let id = ids.get(rec.key);
+    const idKey = rec.key + "\u0001" + fmt(Sg);
+    let id = ids.get(idKey);
     if (!id) {
       id = `${idPrefix}-${layer.id}-${ids.size}`;
-      ids.set(rec.key, id);
-      const u = S / rec.F;
+      ids.set(idKey, id);
+      const u = Sg / rec.F;
       const img = document.createElementNS(SVG_NS, "image");
       img.setAttribute("id", id);
       img.setAttribute("href", rec.url);
@@ -806,10 +1137,14 @@ function appendTextGlyphs(g, layer, layout, idPrefix, place) {
     const sx = layer.flipHorizontal ? -1 : 1;
     const sy = flippedV ? -1 : 1;
     const scalePart = sx !== 1 || sy !== 1 ? ` scale(${sx},${sy})` : "";
+    // baseline shift (up/outward, before the flips), the letter's own turn and its width / height scale
+    const shiftPart = st.base ? ` translate(0 ${fmt(-st.base * S)})` : "";
+    const turnPart = st.rot ? ` rotate(${fmt(st.rot)})` : "";
+    const stretchPart = st.sx !== 1 || st.sy !== 1 ? ` scale(${fmt(st.sx)},${fmt(st.sy)})` : "";
     const itemG = document.createElementNS(SVG_NS, "g");
     itemG.setAttribute(
       "transform",
-      `translate(${fmt(p.x)} ${fmt(p.y)}) rotate(${fmt(p.rotation)})${scalePart} translate(${fmt(-gl.adv / 2)} ${fmt(layout.capHalf)})`
+      `translate(${fmt(p.x)} ${fmt(p.y)}) rotate(${fmt(p.rotation)})${shiftPart}${scalePart}${turnPart}${stretchPart} translate(${fmt(-gl.adv / 2)} ${fmt(layout.capHalf)})`
     );
     const use = document.createElementNS(SVG_NS, "use");
     use.setAttribute("href", `#${id}`);
@@ -821,8 +1156,37 @@ function appendTextGlyphs(g, layer, layout, idPrefix, place) {
   for (const el of items) g.appendChild(el);
 }
 
+// Underline / strikethrough: ONE path per layer (a sub-path per line and repeat, split where
+// the arc has gaps). `offsets` are measured outward from the line's centre; the stroke is the
+// text colour, its width follows the letter size.
+function textRuleOffsets(layer, layout) {
+  const S = Math.max(1, layer.size);
+  const st = layout.st;
+  const baseline = st.base * S - layout.capHalf * st.sy;
+  const list = [];
+  if (st.ul) list.push(baseline - 0.12 * S * st.sy);
+  if (st.st) list.push(baseline + 0.28 * S * st.sy);
+  return { list, width: Math.max(1, 0.06 * S * st.sy) };
+}
+
+function appendTextRules(g, layer, layout, segment) {
+  const { list, width } = textRuleOffsets(layer, layout);
+  if (!list.length) return;
+  let d = "";
+  for (const rule of layout.rules) for (const off of list) d += segment(rule, off);
+  if (!d) return;
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("class", "text-rule");
+  path.setAttribute("d", d.trim());
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", layer.textColor || "#e0e0e0");
+  path.setAttribute("stroke-width", fmt(width));
+  g.appendChild(path);
+}
+
 function drawRingText(g, layer) {
   convertLegacyTextSize(layer);
+  if (textIsRadial(layer)) return drawRadialText(g, layer);
   const layout = ringTextLayout(layer);
   if (!layout) return;
   // Same continuous degrees/second spin as distributeAngles: it shifts the POSITION.
@@ -836,12 +1200,28 @@ function drawRingText(g, layer) {
       rotation: (layer.followRing ? angle : 0) + layer.rotation,
     };
   });
+  appendTextRules(g, layer, layout, (rule, off) => {
+    const r = rule.rowR + off;
+    if (!(r > 0)) return "";
+    let d = "";
+    const pt = (ang) => {
+      const a = (((ang + spin) - 90) * Math.PI) / 180;
+      return `${fmt(CENTER + r * Math.cos(a))} ${fmt(CENTER + r * Math.sin(a))}`;
+    };
+    for (const [a0, a1] of rule.spans) {
+      const parts = Math.max(1, Math.ceil(Math.abs(a1 - a0) / 90));
+      d += `M ${pt(a0)} `;
+      for (let i = 1; i <= parts; i++) d += `A ${fmt(r)} ${fmt(r)} 0 0 1 ${pt(a0 + ((a1 - a0) * i) / parts)} `;
+    }
+    return d;
+  });
 }
 
 // The same run on the unrolled strip: arc length along the glyph's own row becomes x,
 // the row's radius becomes y (like distributeStraight, letters stay upright there).
 function drawRingTextStrip(g, layer, maxR, padY, centerX) {
   convertLegacyTextSize(layer);
+  if (textIsRadial(layer)) return; // radial text has no unrolled form: not shown in the preview
   const layout = ringTextLayout(layer);
   if (!layout) return;
   const spin = (layer.animSpeed || 0) * getAnimElapsedSeconds();
@@ -849,6 +1229,17 @@ function drawRingTextStrip(g, layer, maxR, padY, centerX) {
     let norm = (((gl.angle + spin) % 360) + 360) % 360;
     if (norm > 180) norm -= 360;
     return { x: centerX + ((norm * Math.PI) / 180) * gl.rowR, y: radiusToStraightY(gl.rowR, maxR, padY), rotation: layer.rotation };
+  });
+  appendTextRules(g, layer, layout, (rule, off) => {
+    const y = radiusToStraightY(rule.rowR, maxR, padY) - off;
+    let d = "";
+    for (const [a0, a1] of rule.spans) {
+      let norm = ((((a0 + spin) % 360) + 360) % 360);
+      if (norm > 180) norm -= 360;
+      const x0 = centerX + ((norm * Math.PI) / 180) * rule.rowR;
+      d += `M ${fmt(x0)} ${fmt(y)} L ${fmt(x0 + (((a1 - a0) * Math.PI) / 180) * rule.rowR)} ${fmt(y)} `;
+    }
+    return d;
   });
 }
 
@@ -868,8 +1259,8 @@ const MIXED_VALUE_TEXT = "–";
 // apply function. Kept as one table rather than threaded through ~70 bindControl calls so
 // the whole mapping stays visible and greppable in one place.
 const CONTROL_PROPERTY = {
-  layerOpacity: "opacity", layerAnimSpeed: "animSpeed",
-  ringRadius: "radius", ringStrokeWidth: "strokeWidth", ringStrokeColor: "strokeColor",
+  layerOpacity: "opacity", layerAnimSpeed: "animSpeed", layerMask: "mask",
+  ringRadius: "radius", ringStrokeWidth: "strokeWidth", ringStrokeColor: "strokeColor", ringFillOn: "fillOn", ringFillColor: "fillColor",
   motifRadius: "radius", motifSize: "size", motifCount: "count", motifStartAngle: "startAngle",
   motifRotation: "rotation", motifBend: "bend", motifFlip: "flip",
   motifFlipHorizontal: "flipHorizontal", motifAlternateFlip: "alternateFlip", motifFollowRing: "followRing",
@@ -881,7 +1272,9 @@ const CONTROL_PROPERTY = {
   shapeStrokeWidth: "strokeWidth", shapeStrokeColor: "strokeColor",
   shapeCount: "count", shapeStartAngle: "startAngle",
   shapeFlip: "flip", shapeFlipHorizontal: "flipHorizontal", shapeAlternateFlip: "alternateFlip", shapeFlipOffset: "flipOffset",
-  textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign", textFitArc: "fitArc",
+  textFont: "fontId", textColor: "textColor", textLetterSpacing: "letterSpacing", textAlign: "textAlign", textFitArc: "fitArc", textDirection: "textDirection", textRead: "textRead",
+  textLeading: "leading", textKerning: "kerning", textScaleX: "scaleX", textScaleY: "scaleY", textBaseline: "baselineShift", textCharRotation: "charRotation",
+  textAllCaps: "allCaps", textSmallCaps: "smallCaps", textUnderline: "underline", textStrike: "strike",
   straightAngle: "angle", straightLength: "length", straightOffset: "offset", straightStrokeWidth: "strokeWidth",
   straightStrokeColor: "strokeColor", straightStyle: "lineStyle", straightDashLength: "dashLength",
   straightDashGap: "dashGap", straightCount: "count",
@@ -889,6 +1282,8 @@ const CONTROL_PROPERTY = {
   placeArcStart: "arcStart", placeArcSweep: "arcSweep", placeGapCount: "gapCount", placeGapSize: "gapSize",
 
   smTextFont: "fontId", smTextColor: "textColor", smTextLetterSpacing: "letterSpacing", smTextAlign: "textAlign",
+  smTextLeading: "leading", smTextKerning: "kerning", smTextScaleX: "scaleX", smTextScaleY: "scaleY", smTextBaseline: "baselineShift", smTextCharRotation: "charRotation",
+  smTextAllCaps: "allCaps", smTextSmallCaps: "smallCaps", smTextUnderline: "underline", smTextStrike: "strike",
   smLayerOpacity: "opacity", smLayerAnimSpeed: "animSpeed",
   smGuidePosition: "position", smGuideStrokeWidth: "strokeWidth", smGuideStrokeColor: "strokeColor",
   smMotifPosition: "position", smMotifSize: "size", smMotifCount: "count", smMotifStartOffset: "startOffset",
@@ -922,6 +1317,7 @@ function resolveSelection(target, id, opts) {
   const layer = target.layers.find((l) => l.id === id);
   if (!layer) return;
   getSelectedLayersFrom(target);
+  target.selGroup = null; // a layer pick is never "the group" (see markGroupSelection)
 
   if (opts.toggle) {
     const ids = new Set(target.selectedLayerIds);
@@ -990,6 +1386,7 @@ function convertLayerType(layer, newType) {
   }
   carryMotifLook(layer, fresh);
   if (layer.opacity != null) fresh.opacity = layer.opacity;
+  if (layer.mask) fresh.mask = true;
   return fresh;
 }
 
@@ -1459,6 +1856,7 @@ function sanitizeGroups(raw, allowBlend = false) {
         endId: g.blend.endId,
         steps: Math.min(BLEND_MAX_STEPS, Math.max(1, Math.round(Number(g.blend.steps) || 1))),
         easing: BLEND_EASINGS[g.blend.easing] ? g.blend.easing : "linear",
+        ...blendAroundFields(g.blend),
       };
     }
     if (allowBlend && g.repeat && typeof g.repeat === "object") group.repeat = sanitizeRepeat(g.repeat);
@@ -1479,10 +1877,24 @@ function resolveGroupSelection(target, gid, opts) {
     else ids.forEach((id) => cur.add(id));
     target.selectedLayerIds = [...cur];
     target.activeLayerId = cur.has(top) ? top : target.selectedLayerIds[target.selectedLayerIds.length - 1];
+    markGroupSelection(target, gid);
     return;
   }
   target.selectedLayerIds = ids;
   target.activeLayerId = top;
+  markGroupSelection(target, gid);
+}
+
+// A group of ONE layer selects the same layer as that layer's own row does. A row click on the group
+// remembers (target.selGroup) that the GROUP was meant, so it gets the group handle; selecting the
+// layer's own row gives the layer's own handles. The note is only valid while the selection is unchanged.
+function markGroupSelection(target, gid) {
+  target.selGroup = { gid, key: (target.selectedLayerIds || []).join(",") };
+}
+
+function singleGroupSelected(target, g) {
+  const s = target.selGroup;
+  return !!s && s.gid === g.id && s.key === (target.selectedLayerIds || []).join(",");
 }
 
 function selectGroupIn(api, gid, opts = {}) {
@@ -1500,7 +1912,10 @@ function selectedWholeGroup(target) {
   const sel = new Set(selected.map((l) => l.id));
   for (const g of groupChainOf(target, selected[0]).reverse()) {
     const members = subtreeLayers(target, g.id);
-    if (members.length === selected.length && members.every((m) => sel.has(m.id))) return g;
+    if (members.length === selected.length && members.every((m) => sel.has(m.id))) {
+      if (selected.length === 1 && !singleGroupSelected(target, g)) continue; // the layer's own row, not the group's
+      return g;
+    }
   }
   return null;
 }
@@ -1646,6 +2061,7 @@ function groupSelection(api, afterGroup) {
   normalizeGroups(t);
   collapsedGroups.delete(gid);
   if (afterGroup) afterGroup(t.groups.find((g) => g.id === gid));
+  if (selected.length === 1) markGroupSelection(t, gid); // a group of one stays selected as the group
   api.renderList();
   api.refresh();
   api.redraw();
@@ -1769,6 +2185,7 @@ function buildLayerRow(api, layer, depth = 0) {
   }
   const visible = layer.visible !== false;
   item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-visibility-btn" title="${visible ? "Hide layer" : "Show layer"}" aria-label="${visible ? "Hide layer" : "Show layer"}">${eyeIconSvg(visible)}</button><i class="layer-dot fam-${layerFamily(layer)}" aria-hidden="true"></i><span>${escapeHtml(api.displayName(layer))}</span></div><span class="layer-meta">${api.typeLabel(layer)}</span>`;
+  item.draggable = true; // drag to reorder or into a group (see attachListDnD)
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1796,6 +2213,7 @@ function buildGroupRow(api, group, depth = 0) {
   const collapsed = collapsedGroups.has(group.id);
   const visible = group.visible !== false;
   item.innerHTML = `<div class="layer-item-main"><button type="button" class="layer-collapse-btn" title="${collapsed ? "Expand group" : "Collapse group"}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${!collapsed}">${collapseIconSvg(collapsed)}</button><button type="button" class="layer-visibility-btn" title="${visible ? "Hide group" : "Show group"}" aria-label="${visible ? "Hide group" : "Show group"}">${eyeIconSvg(visible)}</button>${group.blend ? BLEND_MARK_HTML : group.repeat ? REPEAT_MARK_HTML : '<i class="layer-dot fam-group" aria-hidden="true"></i>'}<span>${escapeHtml(group.name)}</span></div><span class="layer-meta">${group.blend || group.repeat ? groupMetaText(group) : `group · ${count}`}</span>`;
+  item.draggable = true;
   item.querySelector(".layer-visibility-btn").classList.toggle("is-hidden", !visible);
   item.querySelector(".layer-visibility-btn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1830,7 +2248,191 @@ function renderLayerListInto(api) {
     }
   };
   emit(buildLayerTree(t), 0);
+  attachListDnD(api, list);
   api.updateSelection();
+}
+
+// --- Drag and drop in the layer list (both modes) ---
+// Drag a layer or group row: onto a group row's middle (or just under an open group's row) to put it INSIDE
+// that group, on a row's upper or lower edge to put it before or after that row (in that row's group), or
+// on the strip that shows under the list while dragging to take it out to the top level, behind everything.
+// The whole drop is ONE undo step. A Blend group must stay exactly 2 layers and a group can't go inside
+// itself: those drops are refused with a short message (red mark while hovering).
+let dragRowState = null; // { api, kind: "layer" | "group", id } while a row is being dragged
+
+function layerTreeLocate(nodes, parentId, match) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (match(n)) return { nodes, i, parentId, node: n };
+    if (n.group) {
+      const r = layerTreeLocate(n.children, n.group.id, match);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+// The result of dropping `drag` at `loc` ({ side: "above" | "below" | "into" | "end", rowKind, rowId }):
+// { error } (refused, error may be "" for nothing to say), { noop: true }, or the new arrangement.
+function planListDrop(api, drag, loc) {
+  const t = api.target;
+  const roots = buildLayerTree(t);
+  const isDragged = drag.kind === "layer" ? (n) => !!n.layer && n.layer.id === drag.id : (n) => !!n.group && n.group.id === drag.id;
+  const src = layerTreeLocate(roots, null, isDragged);
+  if (!src) return { error: "" };
+  let dst;
+  if (loc.side === "end") dst = { nodes: roots, idx: 0, parentId: null };
+  else {
+    const ref = layerTreeLocate(roots, null, loc.rowKind === "group" ? (n) => !!n.group && n.group.id === loc.rowId : (n) => !!n.layer && n.layer.id === loc.rowId);
+    if (!ref) return { error: "" };
+    if (loc.side === "into") dst = { nodes: ref.node.children, idx: ref.node.children.length, parentId: ref.node.group.id };
+    else dst = { nodes: ref.nodes, idx: ref.i + (loc.side === "above" ? 1 : 0), parentId: ref.parentId };
+  }
+  const node = src.node;
+  // refusals
+  if (drag.kind === "group" && dst.parentId != null && groupSubtreeIds(t, drag.id).has(dst.parentId)) return { error: "A group can't be moved into itself." };
+  const into = dst.parentId != null ? groupById(t, dst.parentId) : null;
+  if (into && into.blend) {
+    if (drag.kind === "group") return { error: "A blend group holds exactly 2 layers, so a group can't go in it." };
+    if (node.layer.groupId !== into.id) return { error: "A blend group must stay exactly 2 layers." };
+  }
+  if (drag.kind === "layer") {
+    const from = groupOf(t, node.layer);
+    if (from && from.blend && dst.parentId !== from.id) return { error: "A blend group must stay exactly 2 layers, so a layer can't leave it." };
+  }
+  src.nodes.splice(src.i, 1);
+  if (dst.nodes === src.nodes && src.i < dst.idx) dst.idx--;
+  dst.nodes.splice(dst.idx, 0, node);
+  const order = flattenLayerTree(roots);
+  const oldParent = (node.layer ? node.layer.groupId : node.group.parentId) ?? null;
+  if (oldParent === dst.parentId && order.every((l, i) => l === t.layers[i])) return { noop: true };
+  return { order, node, parentId: dst.parentId };
+}
+
+function applyListDrop(api, drag, plan) {
+  const t = api.target;
+  api.push(); // one undo step for the whole drop
+  if (plan.node.layer) {
+    if (plan.parentId == null) delete plan.node.layer.groupId;
+    else plan.node.layer.groupId = plan.parentId;
+  } else plan.node.group.parentId = plan.parentId;
+  t.layers = plan.order;
+  if (plan.parentId != null) collapsedGroups.delete(plan.parentId);
+  normalizeGroups(t);
+  if (drag.kind === "layer") {
+    t.selectedLayerIds = [drag.id];
+    t.activeLayerId = drag.id;
+    t.selGroup = null;
+  } else resolveGroupSelection(t, drag.id, {});
+  api.renderList();
+  api.refresh();
+  api.redraw();
+}
+
+function listDropLoc(list, e) {
+  if (e.target.closest && e.target.closest(".layer-drop-end")) return { side: "end" };
+  const rows = [...list.querySelectorAll(".layer-item")];
+  if (!rows.length) return { side: "end" };
+  let row = null;
+  let best = Infinity;
+  for (const r of rows) {
+    const b = r.getBoundingClientRect();
+    const d = e.clientY < b.top ? b.top - e.clientY : e.clientY > b.bottom ? e.clientY - b.bottom : 0;
+    if (d < best) {
+      best = d;
+      row = r;
+    }
+  }
+  const b = row.getBoundingClientRect();
+  const f = (e.clientY - b.top) / Math.max(1, b.height);
+  if (row.dataset.groupId != null) {
+    const rowId = Number(row.dataset.groupId);
+    if (f < 0.25) return { side: "above", rowKind: "group", rowId };
+    if (f > 0.75 && collapsedGroups.has(rowId)) return { side: "below", rowKind: "group", rowId };
+    return { side: "into", rowKind: "group", rowId };
+  }
+  return { side: f < 0.5 ? "above" : "below", rowKind: "layer", rowId: Number(row.dataset.layerId) };
+}
+
+function clearDropMarks(list) {
+  list.querySelectorAll(".drop-above,.drop-below,.drop-into,.drop-bad").forEach((el) => el.classList.remove("drop-above", "drop-below", "drop-into", "drop-bad"));
+}
+
+function showDropMark(list, loc, bad) {
+  clearDropMarks(list);
+  const el = loc.side === "end" ? list.querySelector(".layer-drop-end") : list.querySelector(loc.rowKind === "group" ? `[data-group-id="${loc.rowId}"]` : `[data-layer-id="${loc.rowId}"]`);
+  if (!el) return;
+  el.classList.add(loc.side === "above" ? "drop-above" : loc.side === "below" ? "drop-below" : "drop-into");
+  if (bad) el.classList.add("drop-bad");
+}
+
+function showDropMessage(list, text) {
+  let el = document.getElementById("layerDropMsg-" + list.id);
+  if (!el) {
+    el = document.createElement("p");
+    el.id = "layerDropMsg-" + list.id;
+    el.className = "layer-drop-msg";
+    list.insertAdjacentElement("afterend", el);
+  }
+  el.textContent = text;
+  el.hidden = !text;
+  clearTimeout(el._t);
+  if (text) el._t = setTimeout(() => (el.hidden = true), 4000);
+}
+
+function attachListDnD(api, list) {
+  if (list._dnd) return;
+  list._dnd = true;
+  const end = () => {
+    clearDropMarks(list);
+    list.querySelectorAll(".layer-drop-end").forEach((el) => el.remove());
+    list.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+    dragRowState = null;
+  };
+  list.addEventListener("dragstart", (e) => {
+    const row = e.target.closest && e.target.closest(".layer-item");
+    if (!row || !list.contains(row)) return;
+    const isGroup = row.dataset.groupId != null;
+    dragRowState = { api, kind: isGroup ? "group" : "layer", id: Number(isGroup ? row.dataset.groupId : row.dataset.layerId) };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", `${dragRowState.kind}:${dragRowState.id}`); } catch (_) { /* some embedded browsers refuse */ }
+    }
+    showDropMessage(list, "");
+    row.classList.add("dragging");
+    const zone = document.createElement("div");
+    zone.className = "layer-drop-end";
+    zone.textContent = "Drop here: top level, behind everything";
+    list.appendChild(zone);
+  });
+  list.addEventListener("dragover", (e) => {
+    const drag = dragRowState;
+    if (!drag || drag.api !== api) return;
+    const loc = listDropLoc(list, e);
+    const plan = planListDrop(api, drag, loc);
+    e.preventDefault(); // a drop is allowed anywhere over the list; refused ones just say so
+    if (e.dataTransfer) e.dataTransfer.dropEffect = plan.error != null ? "none" : "move";
+    if (plan.noop) clearDropMarks(list);
+    else showDropMark(list, loc, plan.error != null);
+  });
+  list.addEventListener("dragleave", (e) => {
+    if (!list.contains(e.relatedTarget)) clearDropMarks(list);
+  });
+  list.addEventListener("drop", (e) => {
+    const drag = dragRowState;
+    if (!drag || drag.api !== api) return;
+    e.preventDefault();
+    const loc = listDropLoc(list, e);
+    const plan = planListDrop(api, drag, loc);
+    end();
+    if (plan.error != null) {
+      showDropMessage(list, plan.error);
+      return;
+    }
+    if (plan.noop) return;
+    applyListDrop(api, drag, plan);
+  });
+  list.addEventListener("dragend", end);
 }
 
 function updateLayerListSelectionIn(api) {
@@ -1891,9 +2493,31 @@ const BLEND_MARK_HTML = `<span class="layer-blend-mark" aria-hidden="true"><svg 
 let blendExpansionOff = false; // set by the separate-layers export, which draws the in-betweens itself
 const blendCache = new Map(); // "groupId:step" -> { sig, src, layer }: keeps a step's bend/rough caches between renders
 
+// The "Around a point" settings of a blend (path "straight" carries the defaults, nothing is drawn from them).
+function blendAroundFields(raw) {
+  const num = (v, lo, hi, d) => (v !== null && v !== "" && v !== undefined && Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
+  return {
+    path: raw && raw.path === "around" ? "around" : "straight",
+    pivotX: num(raw && raw.pivotX, -Infinity, Infinity, 0),
+    pivotY: num(raw && raw.pivotY, -Infinity, Infinity, 0),
+    totalAngle: num(raw && raw.totalAngle, -360, 360, 360),
+    rotateCopies: !raw || raw.rotateCopies !== false,
+    closeLoop: !!(raw && raw.closeLoop === true),
+  };
+}
+
+function blendIsAround(g) {
+  return !!(g && g.blend && g.blend.path === "around");
+}
+
+// The object holding a group's pivot (pivotX / pivotY): its Repeat, else an "Around a point" blend.
+function pivotOf(g) {
+  return g.repeat || (blendIsAround(g) ? g.blend : null);
+}
+
 function blendMetaText(group) {
   const n = group.blend.steps;
-  return `blend · ${n} step${n === 1 ? "" : "s"}`;
+  return `blend · ${n} step${n === 1 ? "" : "s"}${blendIsAround(group) ? " · around" : ""}`;
 }
 
 function blendMembersOk(target, g) {
@@ -1944,12 +2568,73 @@ function blendMixLayer(start, end, t) {
 }
 
 // The in-between layers of one blend group, step 1 (next to the start) to step N (next to the end).
+// Around a point: item q (0 = start, 1..N+1 = steps and end, the end at index e) sits at turn `ang`
+// about the pivot and is mixed start -> end with weight `w`. Total |360| is a full circle of N+2
+// evenly spaced layers (the end one step before the start); any other total is an arc with a layer at
+// each end. Close loop: the weight goes 0 -> 1 at the end layer -> 0 back at the start, and the end
+// layer takes the middle place (steps fill the other places in order); the turn is then even and the
+// easing shapes the weight only.
+function blendAroundPlan(g) {
+  const b = g.blend;
+  const N = b.steps, M = N + 2;
+  const full = Math.abs(b.totalAngle) === 360;
+  const ease = BLEND_EASINGS[b.easing] || BLEND_EASINGS.linear;
+  const loop = b.closeLoop;
+  const Q = loop ? (full ? M : M - 1) : M - 1;
+  const e = loop ? Math.max(1, Math.round(Q / 2)) : M - 1;
+  const at = (q) => {
+    if (loop) {
+      const lin = q <= e ? q / e : (Q - q) / (Q - e);
+      return { w: ease(Math.max(0, lin)), ang: (q / Q) * b.totalAngle };
+    }
+    const s = ease(q / (M - 1));
+    return { w: s, ang: s * b.totalAngle * (full ? (M - 1) / M : 1) };
+  };
+  const steps = [];
+  for (let i = 1; i <= N; i++) steps.push(at(loop && i >= e ? i + 1 : i));
+  return { steps, end: at(e) };
+}
+
+// A layer's origin turned about the pivot by `deg`, plus its own turn when rotateCopies is on.
+function blendTurnLayer(layer, b, deg) {
+  return repeatTurnLayer(layer, b, deg);
+}
+
+// The end layer of an "Around a point" blend, drawn where the blend puts it (same id as the real one).
+function blendPlacedEnd(g, start, end) {
+  const plan = blendAroundPlan(g);
+  const mixed = { ...end }; // the end layer's own look; only its place (and, with Rotate copies, its turn) changes
+  const sp = placementOf(start);
+  mixed.originX = sp.originX;
+  mixed.originY = sp.originY;
+  const placed = blendTurnLayer(mixed, g.blend, plan.end.ang);
+  return blendMemo(`${g.id}:end`, placed);
+}
+
+function blendMemo(key, layer) {
+  const { imageEl, imageDataUrl, bendCache, bendCacheFlipped, artBrush, ...rest } = layer; // artBrush: an old per-layer field, ignored
+  const sig = JSON.stringify(rest);
+  const hit = blendCache.get(key);
+  if (hit && hit.sig === sig && hit.src === imageDataUrl && hit.layer.imageEl === imageEl) return hit.layer;
+  if (blendCache.size > 3000) blendCache.clear();
+  blendCache.set(key, { sig, src: imageDataUrl, layer });
+  return layer;
+}
+
 function blendSteps(g, start, end) {
   const { steps, easing } = g.blend;
   const ease = BLEND_EASINGS[easing] || BLEND_EASINGS.linear;
+  const around = blendIsAround(g);
+  const plan = around ? blendAroundPlan(g) : null;
+  const sp = around ? placementOf(start) : null;
   const out = [];
   for (let i = 1; i <= steps; i++) {
-    const mixed = blendMixLayer(start, end, ease(i / (steps + 1)));
+    let mixed = blendMixLayer(start, end, around ? plan.steps[i - 1].w : ease(i / (steps + 1)));
+    if (around) {
+      mixed.originX = sp.originX;
+      mixed.originY = sp.originY;
+      mixed = blendTurnLayer(mixed, g.blend, plan.steps[i - 1].ang);
+    }
     mixed.id = -(g.id * 1000 + i);
     mixed.groupId = g.id;
     mixed.name = `Blend step ${i}`;
@@ -1957,17 +2642,7 @@ function blendSteps(g, start, end) {
     mixed._blendStep = i;
     mixed._blendGroup = g.id;
     mixed._blendStart = start.id;
-    const { imageEl, imageDataUrl, bendCache, bendCacheFlipped, artBrush, ...rest } = mixed; // artBrush: an old per-layer field, ignored
-    const sig = JSON.stringify(rest);
-    const key = `${g.id}:${i}`;
-    const hit = blendCache.get(key);
-    if (hit && hit.sig === sig && hit.src === imageDataUrl && hit.layer.imageEl === imageEl) {
-      out.push(hit.layer);
-      continue;
-    }
-    if (blendCache.size > 3000) blendCache.clear();
-    blendCache.set(key, { sig, src: imageDataUrl, layer: mixed });
-    out.push(mixed);
+    out.push(blendMemo(`${g.id}:${i}`, mixed));
   }
   return out;
 }
@@ -1978,6 +2653,7 @@ function blendRenderLayers(target) {
   if (blendExpansionOff || !target.groups.some((g) => g.blend || g.repeat)) return { list: target.layers, synth: [], copies: [] };
   const plans = new Map(); // id of the lower of start/end -> in-betweens in stacking order
   const synth = [];
+  const placedEnds = new Map();
   for (const g of target.groups) {
     if (!g.blend || !blendMembersOk(target, g)) continue;
     const start = target.layers.find((l) => l.id === g.blend.startId);
@@ -1987,10 +2663,11 @@ function blendRenderLayers(target) {
     const startLower = target.layers.indexOf(start) < target.layers.indexOf(end);
     plans.set((startLower ? start : end).id, startLower ? steps : steps.slice().reverse());
     synth.push(...steps);
+    if (blendIsAround(g)) placedEnds.set(end.id, blendPlacedEnd(g, start, end)); // the end layer is drawn where the blend puts it
   }
   const list = [];
   for (const l of target.layers) {
-    list.push(l);
+    list.push(placedEnds.get(l.id) || l);
     const p = plans.get(l.id);
     if (p) list.push(...p);
   }
@@ -2039,7 +2716,7 @@ function blendDisabledReason(sel) {
 function createBlendFromSelection() {
   const sel = getSelectedLayersFrom(state);
   if (blendDisabledReason(sel)) return;
-  const blend = { startId: sel[0].id, endId: sel[1].id, steps: 5, easing: "linear" };
+  const blend = { startId: sel[0].id, endId: sel[1].id, steps: 5, easing: "linear", ...blendAroundFields(null) };
   const whole = selectedWholeGroup(state);
   if (whole && state.layers.filter((l) => l.groupId === whole.id).length === 2) {
     pushHistory();
@@ -2106,6 +2783,15 @@ function expandBlend() {
   });
   const lower = startLower ? start : end;
   state.layers.splice(state.layers.indexOf(lower) + 1, 0, ...real);
+  if (blendIsAround(g)) {
+    // the end layer stays where the blend drew it
+    const pe = blendPlacedEnd(g, start, end);
+    const rk = rotateKeyOf(end);
+    end.originX = pe.originX;
+    end.originY = pe.originY;
+    if (pe[rk] !== undefined) end[rk] = pe[rk];
+    if (pe.rotation !== undefined) end.rotation = pe.rotation;
+  }
   delete g.blend;
   normalizeGroups(state);
   const ids = state.layers.filter((l) => l.groupId === g.id).map((l) => l.id);
@@ -2133,7 +2819,72 @@ function refreshBlendUI() {
   if (!g) return;
   setFieldValue("blendSteps", g.blend.steps);
   document.getElementById("blendEasing").value = g.blend.easing;
+  document.getElementById("blendPath").value = g.blend.path || "straight";
+  document.getElementById("blendAroundBox").hidden = !blendIsAround(g);
+  for (const [id, f] of Object.entries(BLEND_FIELDS)) setFieldValue(id, g.blend[f.key]);
+  document.getElementById("blendRotate").checked = g.blend.rotateCopies !== false;
+  document.getElementById("blendClose").checked = !!g.blend.closeLoop;
 }
+
+const BLEND_FIELDS = {
+  blendTotal: { key: "totalAngle", min: -360, max: 360 },
+  blendPivotX: { key: "pivotX", min: -Infinity, max: Infinity },
+  blendPivotY: { key: "pivotY", min: -Infinity, max: Infinity },
+};
+let blendFieldGestureOpen = false;
+function onBlendFieldInput(id, src) {
+  const g = selectedBlendGroup();
+  if (!g) return;
+  const f = BLEND_FIELDS[id];
+  const raw = src.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return;
+  const v = Math.round(Math.min(f.max, Math.max(f.min, Number(raw))) * 100) / 100;
+  document.getElementById(id).value = v;
+  if (v === g.blend[f.key]) return;
+  if (!blendFieldGestureOpen) {
+    blendFieldGestureOpen = true;
+    pushHistory();
+  }
+  g.blend[f.key] = v;
+  requestRender();
+}
+for (const id of Object.keys(BLEND_FIELDS)) {
+  for (const el of [document.getElementById(id), document.getElementById(id + "Num")]) {
+    el.addEventListener("input", () => onBlendFieldInput(id, el));
+    el.addEventListener("change", () => {
+      blendFieldGestureOpen = false;
+      refreshBlendUI();
+    });
+  }
+}
+document.getElementById("blendPath").addEventListener("change", (e) => {
+  const g = selectedBlendGroup();
+  const v = e.target.value === "around" ? "around" : "straight";
+  if (!g || (g.blend.path || "straight") === v) return;
+  pushHistory();
+  g.blend.path = v;
+  renderLayerList();
+  refreshControls();
+  render();
+});
+for (const [id, key] of [["blendRotate", "rotateCopies"], ["blendClose", "closeLoop"]]) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    const g = selectedBlendGroup();
+    if (!g) return;
+    pushHistory();
+    g.blend[key] = e.target.checked;
+    render();
+  });
+}
+document.getElementById("blendCentreBtn").addEventListener("click", () => {
+  const g = selectedBlendGroup();
+  if (!g || (g.blend.pivotX === 0 && g.blend.pivotY === 0)) return;
+  pushHistory();
+  g.blend.pivotX = 0;
+  g.blend.pivotY = 0;
+  refreshControls();
+  render();
+});
 
 let blendStepsGestureOpen = false;
 function onBlendStepsInput(src) {
@@ -2205,8 +2956,8 @@ function sanitizeRepeat(raw) {
   const d = repeatDefaults();
   const num = (v, lo, hi, dflt) => (v !== null && v !== "" && Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : dflt);
   return {
-    pivotX: num(raw.pivotX, -8192, 8192, d.pivotX),
-    pivotY: num(raw.pivotY, -8192, 8192, d.pivotY),
+    pivotX: num(raw.pivotX, -Infinity, Infinity, d.pivotX),
+    pivotY: num(raw.pivotY, -Infinity, Infinity, d.pivotY),
     copies: Math.round(num(raw.copies, 1, REPEAT_MAX_COPIES, d.copies)),
     totalAngle: num(raw.totalAngle, -360, 360, d.totalAngle),
     startAngle: num(raw.startAngle, -360, 360, d.startAngle),
@@ -2331,6 +3082,23 @@ function selectedWholeRepeat() {
   return g && g.repeat ? g : null;
 }
 
+// Like selectedRepeatGroup / selectedWholeRepeat, but a group counts when it has any pivot
+// (a Repeat, or an "Around a point" blend): what the pink pivot handle and the group ball follow.
+function selectedWholePivot() {
+  const g = selectedWholeGroup(state);
+  return g && pivotOf(g) ? g : null;
+}
+function selectedPivotGroup() {
+  const whole = selectedWholePivot();
+  if (whole) return whole;
+  for (const l of [getActiveLayer(), ...getSelectedLayersFrom(state)]) {
+    if (!l || l.groupId == null) continue;
+    const g = groupChainOf(state, l).reverse().find((x) => pivotOf(x));
+    if (g) return g;
+  }
+  return null;
+}
+
 function repeatCopiesProxy() {
   const g = selectedWholeRepeat();
   return g ? { id: REPEAT_COPIES_PROXY, type: REPEAT_COPIES_PROXY, copies: g.repeat.copies, group: g } : null;
@@ -2339,16 +3107,26 @@ function repeatCopiesProxy() {
 // "" when the selection can be repeated, else why not (shown as the button's tooltip).
 function repeatDisabledReason(sel) {
   if (currentMode !== "circle") return "Repeat works in Ring mode";
+  if (sel.length === 0) return "Select a layer, several layers or a group to repeat them around a point";
   const g = selectedWholeGroup(state);
   if (g && g.repeat) return "This group already repeats around a point";
-  if (!g && sel.length < 2) return "Select a group or several layers to repeat them around a point";
+  const own = !g && sel.length === 1 ? groupOf(state, sel[0]) : null;
+  if (own && own.repeat && subtreeLayers(state, own.id).length === 1) return "This layer's group already repeats around a point";
   return "";
 }
 
 function createRepeatFromSelection() {
   const sel = getSelectedLayersFrom(state);
   if (repeatDisabledReason(sel)) return;
-  const whole = selectedWholeGroup(state);
+  let whole = selectedWholeGroup(state);
+  if (!whole && sel.length === 1) {
+    // one layer that is the only member of its own plain group: that group repeats (no group inside a group)
+    const own = groupOf(state, sel[0]);
+    if (own && !own.blend && subtreeLayers(state, own.id).length === 1) {
+      whole = own;
+      markGroupSelection(state, own.id);
+    }
+  }
   if (whole) {
     pushHistory();
     whole.repeat = repeatDefaults();
@@ -2438,8 +3216,8 @@ const REPEAT_FIELDS = {
   repeatCopies: { key: "copies", min: 1, max: REPEAT_MAX_COPIES, int: true },
   repeatTotal: { key: "totalAngle", min: -360, max: 360 },
   repeatStart: { key: "startAngle", min: -360, max: 360 },
-  repeatPivotX: { key: "pivotX", min: -8192, max: 8192 },
-  repeatPivotY: { key: "pivotY", min: -8192, max: 8192 },
+  repeatPivotX: { key: "pivotX", min: -Infinity, max: Infinity },
+  repeatPivotY: { key: "pivotY", min: -Infinity, max: Infinity },
 };
 const REPEAT_SCALE_FIELD = "repeatScale"; // Scale (% about the pivot): its own handler, shares the badge's code
 
@@ -2552,7 +3330,7 @@ function applyPivotScale(g, raw, source) {
       for (const prop of scalePropsFor("circle", l.type)) if (typeof l[prop] === "number") props[prop] = l[prop];
       base.set(l.id, { x: p.originX, y: p.originY, props });
     }
-    const reps = state.groups.filter((x) => x !== g && x.repeat && subIds.has(x.id)).map((x) => ({ g: x, x: x.repeat.pivotX, y: x.repeat.pivotY }));
+    const reps = state.groups.filter((x) => x !== g && pivotOf(x) && subIds.has(x.id)).map((x) => ({ g: x, x: pivotOf(x).pivotX, y: pivotOf(x).pivotY }));
     gs = pivotScaleGesture = { gid: g.id, old, px: g.repeat.pivotX, py: g.repeat.pivotY, base, reps, historyLen: historyStack.length };
   }
   const ratio = newScale / gs.old;
@@ -2565,8 +3343,8 @@ function applyPivotScale(g, raw, source) {
     for (const [prop, v] of Object.entries(b.props)) l[prop] = scaledValue(prop, v * ratio, l);
   }
   for (const r of gs.reps) {
-    r.g.repeat.pivotX = r4(gs.px + (r.x - gs.px) * ratio);
-    r.g.repeat.pivotY = r4(gs.py + (r.y - gs.py) * ratio);
+    pivotOf(r.g).pivotX = r4(gs.px + (r.x - gs.px) * ratio);
+    pivotOf(r.g).pivotY = r4(gs.py + (r.y - gs.py) * ratio);
   }
   g.repeat.pivotScale = newScale;
   if (source) {
@@ -2636,18 +3414,23 @@ const REPEAT_PINK = "#ff3fa4";
 let repeatPivotDrag = null;
 
 function appendRepeatPivotHandle(svg) {
-  const g = selectedRepeatGroup();
+  const g = selectedPivotGroup();
   if (!g) return;
-  appendPivotBadges(svg, g);
+  const pv = pivotOf(g);
+  // Only the WHOLE group selected gets the live pivot (ball, badges). With one member (or a few) selected the
+  // pivot is a plain marker that never takes a click, so the layer's own handles stay reachable.
+  const live = selectedWholePivot() === g;
+  if (live && g.repeat) appendPivotBadges(svg, g);
   const h = document.createElementNS(SVG_NS, "g");
-  h.setAttribute("class", "editor-only repeat-pivot-handle");
+  h.setAttribute("class", "editor-only repeat-pivot-handle" + (live ? "" : " repeat-pivot-passive"));
+  if (!live) h.setAttribute("pointer-events", "none");
   h.dataset.repeatPivot = g.id;
-  h.setAttribute("transform", `translate(${CENTER + g.repeat.pivotX} ${CENTER + g.repeat.pivotY}) scale(${svgUnitsPerPx(svg)})`);
+  h.setAttribute("transform", `translate(${CENTER + pv.pivotX} ${CENTER + pv.pivotY}) scale(${svgUnitsPerPx(svg)})`);
   const asBall = handleRepeatGroup() === g;
   h.dataset.repeatBall = asBall ? "1" : "0";
   const tip = asBall
-    ? "Repeat group handle (on the pivot): drag to move the whole group with its pivot (Shift: one axis). Alt+drag moves only the pivot. The knob turns the group about the pivot."
-    : "Repeat pivot: drag to move (Shift: one axis)";
+    ? (g.repeat ? "Repeat" : "Blend") + " group handle (on the pivot): drag to move the whole group with its pivot (Shift: one axis). Alt+drag moves only the pivot. The knob turns the group about the pivot."
+    : (g.repeat ? "Repeat" : "Blend") + " pivot: drag to move (Shift: one axis)";
   h.innerHTML = `<title>${tip}</title>
     <circle r="16" fill="transparent" pointer-events="all" />
     <circle r="8" fill="rgba(255,63,164,0.18)" stroke="${REPEAT_PINK}" stroke-width="2.5" />
@@ -2658,16 +3441,16 @@ function appendRepeatPivotHandle(svg) {
 
 function beginRepeatPivotDrag(e, gid) {
   const g = state.groups.find((x) => x.id === gid);
-  if (!g || !g.repeat) return;
+  if (!g || !pivotOf(g)) return;
   const svg = document.getElementById("canvas");
-  repeatPivotDrag = { pointerId: e.pointerId, gid, start: clientToSvgPoint(svg, e.clientX, e.clientY), x0: g.repeat.pivotX, y0: g.repeat.pivotY, moved: false };
+  repeatPivotDrag = { pointerId: e.pointerId, gid, start: clientToSvgPoint(svg, e.clientX, e.clientY), x0: pivotOf(g).pivotX, y0: pivotOf(g).pivotY, moved: false };
   try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
 }
 
 function moveRepeatPivotDrag(e) {
   const d = repeatPivotDrag;
   const g = state.groups.find((x) => x.id === d.gid);
-  if (!g || !g.repeat) return;
+  if (!g || !pivotOf(g)) return;
   const svg = document.getElementById("canvas");
   const pt = clientToSvgPoint(svg, e.clientX, e.clientY);
   let dx = pt.x - d.start.x;
@@ -2681,12 +3464,12 @@ function moveRepeatPivotDrag(e) {
   if (Math.abs(d.y0 + dy) < snapUnits) dy = -d.y0;
   const nx = Math.round(d.x0 + dx), ny = Math.round(d.y0 + dy);
   if (!d.moved) {
-    if (nx === g.repeat.pivotX && ny === g.repeat.pivotY) return;
+    if (nx === pivotOf(g).pivotX && ny === pivotOf(g).pivotY) return;
     d.moved = true;
     pushHistory();
   }
-  g.repeat.pivotX = nx;
-  g.repeat.pivotY = ny;
+  pivotOf(g).pivotX = nx;
+  pivotOf(g).pivotY = ny;
   refreshControls();
   requestRender(true);
 }
@@ -2776,7 +3559,7 @@ function lockRatioIconSvg(locked) {
 // Shared by the full list rebuild and the lighter-weight per-edit update below, so the
 // two can't drift apart.
 function layerMetaText(layer) {
-  return layerTypeLabel(layer);
+  return layerTypeLabel(layer) + (layer.mask ? " · mask" : "");
 }
 
 // Keeps the layer list's meta text in sync after a control edit, without rebuilding the
@@ -2826,6 +3609,8 @@ function refreshControls() {
   refreshRepeatUI();
   document.getElementById("layerOpacityField").classList.toggle("disabled", !active);
   setFieldValue("layerOpacity", active ? (active.opacity != null ? active.opacity : 100) : 100);
+  document.getElementById("layerMaskField").classList.toggle("disabled", !active);
+  document.getElementById("layerMask").checked = !!active && getSelectedLayers().every((l) => l.mask);
 
   // Layer type: only Motif/Line/Shape can change into one another (see
   // CONVERTIBLE_TYPES) — Ring has no equivalent among them, so it's excluded here too.
@@ -2901,6 +3686,8 @@ function refreshControls() {
     setFieldValue("ringRadius", active.radius);
     setFieldValue("ringStrokeWidth", active.strokeWidth);
     document.getElementById("ringStrokeColor").value = active.strokeColor;
+    document.getElementById("ringFillOn").checked = !!active.fillOn;
+    document.getElementById("ringFillColor").value = active.fillColor || "#e0e0e0";
   } else if (active.type === "motif" || isText) {
     const hasImage = !!active.imageDataUrl && !isText;
     document.getElementById("motifUploadField").style.display = isText ? "none" : "";
@@ -2911,10 +3698,33 @@ function refreshControls() {
       const ta = document.getElementById("textContent");
       if (ta.value !== active.text) ta.value = active.text;
       document.getElementById("textFont").value = active.fontId;
+      updateGlyphBox("text", active.fontId);
       document.getElementById("textColor").value = active.textColor;
       setFieldValue("textLetterSpacing", active.letterSpacing || 0);
       document.getElementById("textAlign").value = active.textAlign || "center";
+      setFieldValue("textLeading", active.leading ?? 120);
+      document.getElementById("textKerning").value = active.kerning || "auto";
+      setFieldValue("textScaleX", active.scaleX ?? 100);
+      setFieldValue("textScaleY", active.scaleY ?? 100);
+      setFieldValue("textBaseline", active.baselineShift ?? 0);
+      setFieldValue("textCharRotation", active.charRotation ?? 0);
+      document.getElementById("textAllCaps").checked = !!active.allCaps;
+      document.getElementById("textSmallCaps").checked = !!active.smallCaps;
+      document.getElementById("textUnderline").checked = !!active.underline;
+      document.getElementById("textStrike").checked = !!active.strike;
       document.getElementById("textFitArc").checked = !!active.fitArc;
+      {
+        const radial = textIsRadial(active);
+        document.getElementById("textDirection").value = radial ? "radial" : "around";
+        document.getElementById("textRead").value = active.textRead === "inward" ? "inward" : "outward";
+        document.getElementById("textReadField").style.display = radial ? "" : "none";
+        document.getElementById("textFitRow").style.display = radial ? "none" : "";
+        const opts = document.getElementById("textAlign").options;
+        const labels = radial
+          ? ["Start (starts at the radius)", "Centre (centred on the radius)", "End (ends at the radius)"]
+          : ["Left (starts at the start angle)", "Centre (centred on it)", "Right (ends at it)"];
+        for (let i = 0; i < 3 && i < opts.length; i++) opts[i].textContent = labels[i];
+      }
       updateTextFitHint(active);
     }
     // For text the size field is the letter size (and its range is different).
@@ -3026,7 +3836,7 @@ function shapeLockedRatio(layer) {
 // layer, so it never counts as missing).
 function lacksField(id, layer) {
   const prop = CONTROL_PROPERTY[id];
-  return !!prop && prop !== "opacity" && !(prop in layer);
+  return !!prop && prop !== "opacity" && prop !== "mask" && !(prop in layer);
 }
 
 function bindControl(id, apply) {
@@ -3085,16 +3895,26 @@ function bindControl(id, apply) {
 // Opacity — unlike every other control here, applies to whichever layer is active
 // regardless of its type, since it's rendered directly on the shared <g> wrapper.
 bindControl("layerOpacity", (l, el) => (l.opacity = Number(el.value)));
+bindControl("layerMask", (l, el) => {
+  if (el.checked) l.mask = true;
+  else delete l.mask;
+});
 bindControl("layerAnimSpeed", (l, el) => {
   l.animSpeed = Number(el.value);
   ensureAnimationRunning();
 });
 
-bindControl("ringRadius", (l, el) => (l.radius = Number(el.value)));
+bindControl("ringRadius", (l, el) => (l.radius = Math.max(0, Number(el.value))));
 bindControl("ringStrokeWidth", (l, el) => (l.strokeWidth = Number(el.value)));
 bindControl("ringStrokeColor", (l, el) => (l.strokeColor = el.value));
+bindControl("ringFillOn", (l, el) => (l.fillOn = el.checked));
+bindControl("ringFillColor", (l, el) => {
+  l.fillColor = el.value;
+  l.fillOn = true; // picking a colour turns the fill on
+  document.getElementById("ringFillOn").checked = true;
+});
 
-bindControl("motifRadius", (l, el) => (l.radius = Number(el.value)));
+bindControl("motifRadius", (l, el) => (l.radius = Math.max(0, Number(el.value))));
 bindControl("motifSize", (l, el) => (l.size = Number(el.value)));
 bindControl("motifCount", (l, el) => (l.count = Number(el.value)));
 bindControl("motifStartAngle", (l, el) => (l.startAngle = Number(el.value)));
@@ -3105,7 +3925,7 @@ bindControl("motifFlipHorizontal", (l, el) => (l.flipHorizontal = el.checked));
 bindControl("motifAlternateFlip", (l, el) => (l.alternateFlip = el.checked));
 bindControl("motifFollowRing", (l, el) => (l.followRing = el.checked));
 
-bindControl("lineRadius", (l, el) => (l.radius = Number(el.value)));
+bindControl("lineRadius", (l, el) => (l.radius = Math.max(0, Number(el.value))));
 bindControl("lineLength", (l, el) => (l.length = Number(el.value)));
 bindControl("lineStrokeWidth", (l, el) => (l.strokeWidth = Number(el.value)));
 bindControl("lineStrokeColor", (l, el) => (l.strokeColor = el.value));
@@ -3139,7 +3959,7 @@ bindControl("shapeKind", (l, el) => {
   l.shapeKind = kind;
 });
 bindControl("shapeBend", (l, el) => (l.bend = Number(el.value)));
-bindControl("shapeRadius", (l, el) => (l.radius = Number(el.value)));
+bindControl("shapeRadius", (l, el) => (l.radius = Math.max(0, Number(el.value))));
 bindControl("shapeSize", (l, el) => {
   const newSize = Number(el.value);
   if (l.lockRatio !== false) l.sizeY = Math.round(newSize * shapeLockedRatio(l));
@@ -3182,7 +4002,19 @@ bindControl("textFont", (l, el) => {
 bindControl("textColor", (l, el) => (l.textColor = el.value));
 bindControl("textLetterSpacing", (l, el) => (l.letterSpacing = Number(el.value)));
 bindControl("textAlign", (l, el) => (l.textAlign = el.value));
+bindControl("textLeading", (l, el) => (l.leading = Number(el.value)));
+bindControl("textKerning", (l, el) => (l.kerning = el.value));
+bindControl("textScaleX", (l, el) => (l.scaleX = Number(el.value)));
+bindControl("textScaleY", (l, el) => (l.scaleY = Number(el.value)));
+bindControl("textBaseline", (l, el) => (l.baselineShift = Number(el.value)));
+bindControl("textCharRotation", (l, el) => (l.charRotation = Number(el.value)));
+bindControl("textAllCaps", (l, el) => (l.allCaps = el.checked));
+bindControl("textSmallCaps", (l, el) => (l.smallCaps = el.checked));
+bindControl("textUnderline", (l, el) => (l.underline = el.checked));
+bindControl("textStrike", (l, el) => (l.strike = el.checked));
 bindControl("textFitArc", (l, el) => (l.fitArc = el.checked));
+bindControl("textDirection", (l, el) => (l.textDirection = el.value === "radial" ? "radial" : "around"));
+bindControl("textRead", (l, el) => (l.textRead = el.value === "inward" ? "inward" : "outward"));
 // bindControl closes an undo gesture on 'change', which for a textarea only fires on
 // blur — so a whole typing session would be ONE undo step. Close it after a pause too:
 // one undo entry per burst of typing.
@@ -3587,7 +4419,8 @@ function layerHalfExtent(layer) {
   if (layer.type === "text") {
     // circle text: a letter plus the extra rows further in
     const rows = String(layer.text ?? "").split(/\r?\n/).length;
-    return layer.size * (0.75 + (rows - 1) * TEXT_LINE_HEIGHT);
+    const st = textStyle(layer);
+    return layer.size * (0.75 * Math.max(1, st.sy) + Math.abs(st.base) + (rows - 1) * st.lead);
   }
   if (layer.type === "shape") {
     const sizeY = layer.sizeY != null ? layer.sizeY : layer.size;
@@ -4711,8 +5544,29 @@ function getRoughPiecePasses(layer, slot, keyBase, pieces, samplePiece, roughnes
   }));
 }
 
+// Ring fill: a clean (never rough) disc under the outline. A full-sweep ring fills the whole disc, gaps or
+// not; a cut ring (arc sweep < 360) fills the pie slice of its arc (centre to the two ends of the visible
+// span, inner gaps not carved out). Marked .ring-fill so picking and the marquee ignore it.
+function ringFillElements(layer, pieces) {
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    el.setAttribute("class", "ring-fill");
+    return el;
+  };
+  const p = placementOf(layer);
+  const base = { fill: layer.fillColor || "#e0e0e0", stroke: "none" };
+  if (!pieces || p.arcSweep >= 360) return [mk("circle", { cx: CENTER, cy: CENTER, r: layer.radius, ...base })];
+  const a0 = pieces[0][0];
+  const a1 = pieces[pieces.length - 1][1];
+  const [x0, y0] = arcPoint(layer.radius, a0);
+  const [x1, y1] = arcPoint(layer.radius, a1);
+  return [mk("path", { d: `M ${CENTER} ${CENTER} L ${x0} ${y0} A ${layer.radius} ${layer.radius} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1} Z`, ...base })];
+}
+
 function drawRing(g, layer, roughness) {
   const arc = visibleArc(layer);
+  if (layer.fillOn && arc.full) for (const el of ringFillElements(layer, null)) g.appendChild(el);
   if (brushActive(layer)) {
     if (drawBrushRing(g, layer, arc)) return;
     roughness = 0; // plain stroke stands in for the brush (draft, or the custom image is still decoding)
@@ -4754,6 +5608,7 @@ function drawRingArcs(g, layer, pieces, roughness) {
   const turn = document.createElementNS(SVG_NS, "g");
   if (spin) turn.setAttribute("transform", `rotate(${spin} ${CENTER} ${CENTER})`);
   g.appendChild(turn);
+  if (layer.fillOn) for (const el of ringFillElements(layer, pieces)) turn.appendChild(el);
   if (roughness > 0) {
     const passes = getRoughPiecePasses(
       layer, "ringArc", String(layer.radius), pieces,
@@ -5276,7 +6131,7 @@ function drawShape(g, layer, items, roughness, roughScale = ROUGH_SCALE) {
 // Invert has no direct SVG primitive, so it's done by literally inverting the texture's
 // RGB (a standard feColorMatrix) before it hits the mask, rather than inverting alpha
 // arithmetic after the fact — same visual result, simpler to express.
-function buildMaskDefs(mask, viewW, viewH, idPrefix) {
+function buildMaskDefs(mask, viewW, viewH, idPrefix, extent = 0) {
   const defs = document.createElementNS(SVG_NS, "defs");
   const patId = `${idPrefix}MaskPattern`;
   const maskId = `${idPrefix}Mask`;
@@ -5308,13 +6163,21 @@ function buildMaskDefs(mask, viewW, viewH, idPrefix) {
   const maskEl = document.createElementNS(SVG_NS, "mask");
   maskEl.setAttribute("id", maskId);
   maskEl.setAttribute("maskUnits", "userSpaceOnUse");
-  maskEl.setAttribute("x", 0);
-  maskEl.setAttribute("y", 0);
-  maskEl.setAttribute("width", viewW);
-  maskEl.setAttribute("height", viewH);
+  // extent > 0 (the infinite Ring canvas): the texture tiles over a square of that half-size around the
+  // artboard centre instead of only the artboard.
+  const mx = extent ? viewW / 2 - extent : 0;
+  const my = extent ? viewH / 2 - extent : 0;
+  const mw = extent ? 2 * extent : viewW;
+  const mh = extent ? 2 * extent : viewH;
+  maskEl.setAttribute("x", mx);
+  maskEl.setAttribute("y", my);
+  maskEl.setAttribute("width", mw);
+  maskEl.setAttribute("height", mh);
   const rect = document.createElementNS(SVG_NS, "rect");
-  rect.setAttribute("width", viewW);
-  rect.setAttribute("height", viewH);
+  rect.setAttribute("x", mx);
+  rect.setAttribute("y", my);
+  rect.setAttribute("width", mw);
+  rect.setAttribute("height", mh);
   rect.setAttribute("fill", `url(#${patId})`);
   maskEl.appendChild(rect);
   defs.appendChild(maskEl);
@@ -5325,11 +6188,103 @@ function buildMaskDefs(mask, viewW, viewH, idPrefix) {
 // Applies (or leaves untouched) the whole-artboard mask on `content`, the <g> a render()
 // puts all of a mode's actual artwork into. Skipped whenever disabled/no texture so the
 // unmasked, common case doesn't pay for a <defs> it doesn't need.
-function applyGlobalMask(content, mask, viewW, viewH, idPrefix) {
+function applyGlobalMask(content, mask, viewW, viewH, idPrefix, extent = 0) {
   if (!mask.enabled || !mask.imageDataUrl) return;
-  const { defs, maskId } = buildMaskDefs(mask, viewW, viewH, idPrefix);
+  const { defs, maskId } = buildMaskDefs(mask, viewW, viewH, idPrefix, extent);
   content.appendChild(defs);
   content.setAttribute("mask", `url(#${maskId})`);
+}
+
+// --- Layer masks ---
+// A layer with `mask` on is not drawn. Where it would paint (fill and stroke, alpha included) it erases
+// every layer BELOW it in the same parent (a user group's wrapper, a Repeat copy's wrapper, or the whole
+// drawing at top level); layers above it are untouched and several masks stack. Done with an SVG <mask>
+// (white = keep) on a wrapper <g> around the layers below, the mask layer's own <g> moved into the <mask>
+// and turned black by a colour-matrix filter that keeps its alpha. A hidden mask layer does nothing.
+// In the editor an outline of the mask layer is drawn on top (a "ghost", editor-only) so it can be seen
+// and clicked.
+const LAYER_MASK_EXTENT = 100000;
+let layerMaskSeq = 0;
+
+function layerIsActiveMask(target, layer) {
+  return !!layer.mask && layer.visible !== false && !groupHidden(target, layer);
+}
+
+function maskSvgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+// The <mask> for `els` (the mask layer's rendered <g>s). Returns the mask, its id and the id of the group
+// holding the coloured originals (the editor ghost draws from it).
+function buildLayerMaskEl(els) {
+  const n = ++layerMaskSeq;
+  const id = `lmask-${n}`;
+  const E = LAYER_MASK_EXTENT;
+  const region = { x: -E, y: -E, width: 2 * E, height: 2 * E };
+  const mask = maskSvgEl("mask", { id, maskUnits: "userSpaceOnUse", ...region });
+  mask.appendChild(maskSvgEl("rect", { ...region, fill: "#fff" }));
+  const filter = maskSvgEl("filter", { id: `${id}-k`, filterUnits: "userSpaceOnUse", ...region, "color-interpolation-filters": "sRGB" });
+  filter.appendChild(maskSvgEl("feColorMatrix", { type: "matrix", values: "0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" }));
+  mask.appendChild(filter);
+  const black = maskSvgEl("g", { filter: `url(#${id}-k)` });
+  const src = maskSvgEl("g", { id: `${id}-src` });
+  for (const el of els) src.appendChild(el);
+  black.appendChild(src);
+  mask.appendChild(black);
+  return { mask, id, srcId: `${id}-src` };
+}
+
+// Editor-only: a faint outline of the mask layer's painted area. data-layer-id so it picks like the layer.
+function buildMaskGhost(layerId, srcId, filterId) {
+  const g = maskSvgEl("g", { "class": "layer-hit editor-only", filter: `url(#${filterId})`, opacity: 0.85 });
+  g.dataset.layerId = layerId;
+  g.appendChild(maskSvgEl("use", { href: `#${srcId}` }));
+  return g;
+}
+
+function buildMaskEdgeFilter(filterId, radius) {
+  const E = LAYER_MASK_EXTENT;
+  const f = maskSvgEl("filter", { id: filterId, filterUnits: "userSpaceOnUse", x: -E, y: -E, width: 2 * E, height: 2 * E, "color-interpolation-filters": "sRGB" });
+  f.appendChild(maskSvgEl("feMorphology", { in: "SourceAlpha", operator: "erode", radius, result: "e" }));
+  f.appendChild(maskSvgEl("feComposite", { in: "SourceAlpha", in2: "e", operator: "out", result: "edge" }));
+  f.appendChild(maskSvgEl("feFlood", { "flood-color": "#f06ad2", "flood-opacity": 0.9, result: "c" }));
+  f.appendChild(maskSvgEl("feComposite", { in: "c", in2: "edge", operator: "in" }));
+  return f;
+}
+
+// Ring editor: `recs` = [{ layer, parent, els }] in drawing order. Each mask layer's elements leave `parent`;
+// everything before them in `parent` is wrapped in a <g mask>. Returns the ghosts (or null with no masks).
+function applyLayerMasks(recs) {
+  if (recs.length === 0) return null;
+  const ghosts = document.createElementNS(SVG_NS, "g");
+  ghosts.setAttribute("class", "editor-only");
+  const unit = (renderReads && renderReads.unit) || 4;
+  const edgeId = `lmask-edge-${layerMaskSeq + 1}`;
+  ghosts.appendChild(maskSvgEl("defs", {})).appendChild(buildMaskEdgeFilter(edgeId, Math.max(0.5, 1.2 * unit)));
+  for (const { layer, parent, els } of recs) {
+    const first = els[0];
+    const below = [];
+    for (const nd of Array.from(parent.childNodes)) {
+      if (nd === first) break;
+      below.push(nd);
+    }
+    const { mask, id, srcId } = buildLayerMaskEl(els); // moves els into the mask
+    if (below.length > 0) {
+      const wrap = document.createElementNS(SVG_NS, "g");
+      wrap.setAttribute("mask", `url(#${id})`);
+      wrap.dataset.maskWrap = "1";
+      wrap.dataset.maskName = `Mask: ${layer.name}`;
+      parent.insertBefore(wrap, below[0]);
+      wrap.appendChild(mask);
+      for (const nd of below) wrap.appendChild(nd);
+    } else {
+      parent.appendChild(mask); // nothing below: kept only so the ghost has something to draw
+    }
+    ghosts.appendChild(buildMaskGhost(layer.id, srcId, edgeId));
+  }
+  return ghosts;
 }
 
 // Mirror twins reference the layer's rendered group instead of re-drawing it, so a twin
@@ -5369,7 +6324,7 @@ function anchorRepeatGroups(layers) {
   const sel = new Set(layers.map((l) => l.id));
   const whole = new Set();
   for (const g of state.groups) {
-    if (!g.repeat) continue;
+    if (!pivotOf(g)) continue;
     const ls = subtreeLayers(state, g.id);
     if (ls.length && ls.every((l) => sel.has(l.id))) whole.add(g.id);
   }
@@ -5387,7 +6342,7 @@ function selectionPoints(layers) {
   const reps = anchorRepeatGroups(layers);
   const covered = new Set();
   for (const g of reps) for (const l of subtreeLayers(state, g.id)) covered.add(l.id);
-  const pts = reps.map((g) => ({ x: CENTER + g.repeat.pivotX, y: CENTER + g.repeat.pivotY }));
+  const pts = reps.map((g) => ({ x: CENTER + pivotOf(g).pivotX, y: CENTER + pivotOf(g).pivotY }));
   for (const l of layers) {
     if (covered.has(l.id)) continue;
     const p = placementOf(l);
@@ -5529,19 +6484,19 @@ function handleRepeatGroup(layers) {
   if (currentMode !== "circle") return null;
   layers = layers || getSelectedLayers();
   if (!groupTransformActive(layers)) return null;
-  return selectedWholeRepeat();
+  return selectedWholePivot();
 }
 
-// Repeat groups nested inside g (not g itself), with their pivots at the moment of the call.
+// Groups with a pivot nested inside g (not g itself), with their pivots at the moment of the call.
 function nestedRepeatPivots(g) {
   const ids = groupSubtreeIds(state, g.id);
-  return state.groups.filter((x) => x !== g && x.repeat && ids.has(x.id)).map((x) => ({ g: x, x: x.repeat.pivotX, y: x.repeat.pivotY }));
+  return state.groups.filter((x) => x !== g && pivotOf(x) && ids.has(x.id)).map((x) => ({ g: x, x: pivotOf(x).pivotX, y: pivotOf(x).pivotY }));
 }
 
 function groupAnchor(layers) {
   const rg = handleRepeatGroup(layers);
   if (rg) {
-    const pv = { x: CENTER + rg.repeat.pivotX, y: CENTER + rg.repeat.pivotY };
+    const pv = { x: CENTER + pivotOf(rg).pivotX, y: CENTER + pivotOf(rg).pivotY };
     const pts = layers.map(layerAnchor).filter(Boolean);
     let ang = 0;
     if (pts.length) {
@@ -5554,7 +6509,7 @@ function groupAnchor(layers) {
   const pv = selectionPivot(layers);
   const { reps, covered } = selectionPoints(layers);
   const pts = layers.filter((l) => !covered.has(l.id)).map(layerAnchor).filter(Boolean);
-  for (const g of reps) pts.push({ x: CENTER + g.repeat.pivotX, y: CENTER + g.repeat.pivotY, ang: 0 });
+  for (const g of reps) pts.push({ x: CENTER + pivotOf(g).pivotX, y: CENTER + pivotOf(g).pivotY, ang: 0 });
   if (pts.length === 0) return { x: pv.x, y: pv.y, ang: 0, pivot: pv };
   const x = pts.reduce((s, q) => s + q.x, 0) / pts.length;
   const y = pts.reduce((s, q) => s + q.y, 0) / pts.length;
@@ -5638,8 +6593,33 @@ const SIZE_FIELD = {
   straight: { key: "length", min: 10, max: 6000 },
 };
 
+// Badges, their typing box and the wheel serve both artboards: the Ring editor (#canvas) and the
+// Straight tile (#tileCanvas). Straight mode has no blend, repeat or pivot, so only count and size
+// (or the group Scale %) exist there.
+function badgeInSm() {
+  return currentMode !== "circle";
+}
+function badgeSvgId() {
+  return badgeInSm() ? "tileCanvas" : "canvas";
+}
+function badgeSelected() {
+  return badgeInSm() ? smGetSelectedLayers() : getSelectedLayers();
+}
+function badgeApi() {
+  return badgeInSm() ? smApi : circleApi;
+}
+function badgePush() {
+  if (badgeInSm()) smPushHistory();
+  else pushHistory();
+}
+function badgeRefresh() {
+  if (badgeInSm()) smRefreshControls();
+  else refreshControls();
+}
+
 // { key, min, max } for this badge on this layer, or null if the layer type lacks the field.
 function badgeField(layer, kind) {
+  if (badgeInSm()) return smBadgeField(layer, kind);
   if (layer.type === REPEAT_COPIES_PROXY) return kind === "pcount" ? { key: "copies", min: 1, max: REPEAT_MAX_COPIES } : null;
   if (layer.type === PIVOT_SCALE_PROXY) return kind === "pscale" ? { key: "scale", min: 1, max: 1000 } : null;
   if (kind === "pcount" || kind === "pscale") return null;
@@ -5666,10 +6646,11 @@ function blendStepsProxy() {
 }
 
 function groupScaleProxy() {
-  if (!groupTransformActive(getSelectedLayers())) return null;
-  const info = groupScaleInfo(circleApi);
+  const api = badgeApi();
+  if (!(badgeInSm() ? smGroupActive(badgeSelected()) : groupTransformActive(getSelectedLayers()))) return null;
+  const info = groupScaleInfo(api);
   if (!info) return null;
-  return { id: GROUP_SCALE_PROXY, type: GROUP_SCALE_PROXY, scale: groupScaleValue(circleApi, info) };
+  return { id: GROUP_SCALE_PROXY, type: GROUP_SCALE_PROXY, scale: groupScaleValue(api, info) };
 }
 
 function badgeLayers(kind) {
@@ -5678,18 +6659,18 @@ function badgeLayers(kind) {
     if (proxy) return [proxy];
   }
   if (kind === "pcount") {
-    const rproxy = repeatCopiesProxy();
+    const rproxy = badgeInSm() ? null : repeatCopiesProxy();
     return rproxy ? [rproxy] : [];
   }
   if (kind === "pscale") {
-    const sproxy = pivotScaleProxy();
+    const sproxy = badgeInSm() ? null : pivotScaleProxy();
     return sproxy ? [sproxy] : [];
   }
   if (kind === "count") {
-    const proxy = blendStepsProxy();
+    const proxy = badgeInSm() ? null : blendStepsProxy();
     if (proxy) return [proxy];
   }
-  return getSelectedLayers().filter((l) => badgeField(l, kind));
+  return badgeSelected().filter((l) => badgeField(l, kind));
 }
 
 // What the badge shows, or null when no selected layer has the field (the badge is hidden).
@@ -5780,18 +6761,20 @@ function applyBadgeValue(kind, compute, burst) {
     const field = badgeField(proxy, kind);
     const value = Math.min(field.max, Math.max(field.min, Math.round(compute(proxy, field))));
     if (value === Math.round(proxy.scale)) return;
-    const num = document.getElementById(circleApi.scale.id + "Num");
+    const api = badgeApi();
+    const num = document.getElementById(api.scale.id + "Num");
     num.value = String(value);
-    applyGroupScale(circleApi, num); // opens its own undo step when a new gesture starts
+    if (badgeInSm()) noteGesture(); // the Straight scale redraws at once: make it a draft while scrubbing
+    applyGroupScale(api, num); // opens its own undo step when a new gesture starts
     if (burst === true) {
       clearTimeout(badgeBurstTimer);
-      badgeBurstTimer = setTimeout(() => (circleApi.scale.gesture = null), BADGE_BURST_MS);
+      badgeBurstTimer = setTimeout(() => (api.scale.gesture = null), BADGE_BURST_MS);
     } else if (burst !== "drag") {
-      circleApi.scale.gesture = null;
+      api.scale.gesture = null;
     }
     return;
   }
-  const pivotProxy = kind === "pscale" ? pivotScaleProxy() : null;
+  const pivotProxy = kind === "pscale" && !badgeInSm() ? pivotScaleProxy() : null;
   if (pivotProxy) {
     const field = badgeField(pivotProxy, kind);
     const value = Math.min(field.max, Math.max(field.min, Math.round(compute(pivotProxy, field))));
@@ -5805,7 +6788,7 @@ function applyBadgeValue(kind, compute, burst) {
     }
     return;
   }
-  const repeatProxy = kind === "pcount" ? repeatCopiesProxy() : null;
+  const repeatProxy = kind === "pcount" && !badgeInSm() ? repeatCopiesProxy() : null;
   if (repeatProxy) {
     const field = badgeField(repeatProxy, kind);
     const value = Math.min(field.max, Math.max(field.min, Math.round(compute(repeatProxy, field))));
@@ -5830,7 +6813,7 @@ function applyBadgeValue(kind, compute, burst) {
     requestRender(!!burst);
     return;
   }
-  const blendProxy = kind === "count" ? blendStepsProxy() : null;
+  const blendProxy = kind === "count" && !badgeInSm() ? blendStepsProxy() : null;
   if (blendProxy) {
     const field = badgeField(blendProxy, kind);
     const value = Math.min(field.max, Math.max(field.min, Math.round(compute(blendProxy, field))));
@@ -5865,18 +6848,18 @@ function applyBadgeValue(kind, compute, burst) {
   if (burst === "drag") {
     if (badgeDrag && !badgeDrag.pushed) {
       badgeDrag.pushed = true;
-      pushHistory();
+      badgePush();
     }
   } else if (burst) {
     if (!badgeBurstOpen) {
       badgeBurstOpen = true;
       badgeBurstRatios = new Map();
-      pushHistory();
+      badgePush();
     }
     clearTimeout(badgeBurstTimer);
     badgeBurstTimer = setTimeout(() => (badgeBurstOpen = false), BADGE_BURST_MS);
   } else {
-    pushHistory();
+    badgePush();
   }
   for (const { l, field, value } of changes) {
     // A locked shape keeps its width:height ratio, like the sidebar's size slider.
@@ -5890,7 +6873,7 @@ function applyBadgeValue(kind, compute, burst) {
     }
     l[field.key] = value;
   }
-  refreshControls();
+  badgeRefresh();
   requestRender(!!burst);
 }
 
@@ -5903,12 +6886,12 @@ const COUNT_PX_PER_STEP = 6;
 let badgeDrag = null; // { kind, pointerId, x0, y0, base: Map(layer id -> value), moved, pushed }
 
 function beginBadgeDrag(e, kind) {
-  const svg = document.getElementById("canvas");
+  const svg = document.getElementById(badgeSvgId());
   const base = new Map();
   for (const l of badgeLayers(kind)) base.set(l.id, l[badgeField(l, kind).key]);
-  badgeDrag = { kind, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, base, moved: false, pushed: false };
+  badgeDrag = { kind, svg, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, base, moved: false, pushed: false };
   badgeBurstRatios = new Map();
-  svg.setPointerCapture(e.pointerId);
+  try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
 }
 
 function moveBadgeDrag(e) {
@@ -5917,7 +6900,7 @@ function moveBadgeDrag(e) {
   if (!d.moved) {
     if (Math.hypot(dx, e.clientY - d.y0) < BADGE_SLOP_PX) return;
     d.moved = true;
-    document.getElementById("canvas").classList.add("badge-scrubbing");
+    d.svg.classList.add("badge-scrubbing");
   }
   const coarse = e.shiftKey;
   applyBadgeValue(d.kind, (l, field) => {
@@ -5933,9 +6916,10 @@ function moveBadgeDrag(e) {
 function endBadgeDrag(e) {
   const d = badgeDrag;
   if (!d) return;
-  const svg = document.getElementById("canvas");
+  const svg = d.svg;
   badgeDrag = null;
   circleApi.scale.gesture = null; // a group-scale scrub ends with the drag
+  smApi.scale.gesture = null;
   pivotScaleGesture = null;
   if (svg.hasPointerCapture(d.pointerId)) svg.releasePointerCapture(d.pointerId);
   svg.classList.remove("badge-scrubbing");
@@ -5946,7 +6930,7 @@ let badgeEditor = null; // { kind, input } while a value is being typed
 
 function positionBadgeEditor() {
   if (!badgeEditor) return;
-  const badge = document.querySelector(`#canvas [data-badge="${badgeEditor.kind}"]`);
+  const badge = document.querySelector(`#${badgeEditor.svgId} [data-badge="${badgeEditor.kind}"]`);
   if (!badge) return;
   const r = badge.getBoundingClientRect();
   badgeEditor.input.style.left = `${r.left + r.width / 2 - 30}px`;
@@ -5975,7 +6959,7 @@ function openBadgeEditor(kind) {
   input.setAttribute("aria-label", kind === "count" ? "Clone count" : kind === "pcount" ? "Repeat copies" : kind === "pscale" ? "Scale about the pivot (%)" : "Size");
   input.value = disp.mixed ? "" : String(disp.value);
   document.body.appendChild(input);
-  badgeEditor = { kind, input };
+  badgeEditor = { kind, input, svgId: badgeSvgId() };
   positionBadgeEditor();
   input.addEventListener("keydown", (e) => {
     e.stopPropagation(); // typing must not reach the app's shortcuts
@@ -5995,7 +6979,7 @@ function openBadgeEditor(kind) {
 // Scroll over a badge: +1 per notch, +10 with Shift (a browser may report the shifted wheel
 // as horizontal). Handled here and stopped, so it neither scrolls the preview nor zooms;
 // Ctrl/Alt + scroll still zoom as everywhere.
-document.getElementById("canvas").addEventListener(
+for (const wheelSvgId of ["canvas", "tileCanvas"]) document.getElementById(wheelSvgId).addEventListener(
   "wheel",
   (e) => {
     const badge = e.target.closest && e.target.closest("[data-badge]");
@@ -6027,31 +7011,20 @@ function rescaleHandles() {
     if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${unit})`);
   });
   svg.querySelectorAll(".value-badge").forEach((b) => placeBadge(b, unit));
+  if (currentMode !== "circle") {
+    // the Straight tile's handles and badges follow the zoom the same way
+    const tile = document.getElementById("tileCanvas");
+    const tu = svgUnitsPerPx(tile);
+    tile.querySelectorAll(".layer-handle").forEach((h) => {
+      h.setAttribute("transform", `translate(${h.dataset.hx} ${h.dataset.hy}) rotate(${h.dataset.hrot}) scale(${tu})`);
+    });
+    tile.querySelectorAll(".origin-handle").forEach((h) => {
+      const m = /translate\(([^)]*)\)/.exec(h.getAttribute("transform"));
+      if (m) h.setAttribute("transform", `translate(${m[1]}) scale(${tu})`);
+    });
+    tile.querySelectorAll(".value-badge").forEach((b) => placeBadge(b, tu));
+  }
   positionBadgeEditor();
-}
-
-// Artwork outside the artboard stays visible in the editor but is not exported. So that
-// it is clear what the export covers, the area outside the artboard (as far as there is
-// artwork) is shaded and the artboard edge drawn. Editor-only: exports strip it.
-function buildArtboardShade() {
-  const b = designBox;
-  if (!b) return null;
-  const x0 = Math.min(0, b.x), y0 = Math.min(0, b.y);
-  const x1 = Math.max(CANVAS_SIZE, b.x + b.width), y1 = Math.max(CANVAS_SIZE, b.y + b.height);
-  if (x0 === 0 && y0 === 0 && x1 === CANVAS_SIZE && y1 === CANVAS_SIZE) return null;
-  const g = document.createElementNS(SVG_NS, "g");
-  g.setAttribute("class", "editor-only");
-  g.setAttribute("pointer-events", "none");
-  g.innerHTML = `<path fill-rule="evenodd" fill="rgba(11,12,14,0.6)" d="M ${x0} ${y0} H ${x1} V ${y1} H ${x0} Z M 0 0 V ${CANVAS_SIZE} H ${CANVAS_SIZE} V 0 Z" />
-    <rect x="0" y="0" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="none" stroke="#8fb8f0" stroke-opacity="0.8" stroke-width="1.5" vector-effect="non-scaling-stroke" />`;
-  return g;
-}
-
-// Drawn with the design box of the PREVIOUS measure; flushDesignBox swaps it when the box changed.
-let shadeEl = null;
-function appendArtboardShade(svg) {
-  shadeEl = buildArtboardShade();
-  if (shadeEl) svg.appendChild(shadeEl);
 }
 
 // --- Draft mode and render coalescing ---
@@ -6064,6 +7037,7 @@ function appendArtboardShade(svg) {
 const DRAFT_END_MS = 150;
 let drafting = false;
 let straightStale = false; // the Straight preview was skipped by a draft render
+let straightPreviewOn = true; // the "Show Straight preview" toggle (Ring mode); remembered in localStorage, not in projects
 let draftTimer = null;
 let pointerIsDown = false;
 let renderQueued = false;
@@ -6155,6 +7129,7 @@ function renderCircle(svg) {
   // guide appended after it below (masking those would just be confusing).
   const content = document.createElementNS(SVG_NS, "g");
   const groupCursor = { id: null, el: null };
+  const maskRecs = []; // visible mask layers (see "Layer masks")
 
   for (const layer of blendRendered.list) {
     const layerG = document.createElementNS(SVG_NS, "g");
@@ -6274,18 +7249,22 @@ function renderCircle(svg) {
       }
     }
 
+    const firstIdx = parent.childNodes.length;
     parent.appendChild(layerG);
     appendMirrorTwins(parent, layerG, layer, place.mirror);
+    if (layer.mask && layerIsActiveMask(state, layer)) maskRecs.push({ layer, parent, els: Array.from(parent.childNodes).slice(firstIdx) });
   }
 
-  applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle");
+  const maskGhosts = applyLayerMasks(maskRecs);
+  applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle", INFINITE_MASK_EXTENT);
   svg.appendChild(content);
   scheduleDesignBox(content); // measured later (getBBox forces a layout of the whole drawing)
-  appendArtboardShade(svg);
+  if (maskGhosts) svg.appendChild(maskGhosts);
 
   // The Straight preview is a second full rebuild; while a gesture is running it is left as it
   // was and redone with the final full render (see endDraft).
-  if (drafting) straightStale = true;
+  if (!straightPreviewOn) straightStale = false; // preview hidden: not rendered at all (its export button renders on demand)
+  else if (drafting) straightStale = true;
   else {
     renderStraight(blendRendered.list);
     straightStale = false;
@@ -6372,33 +7351,66 @@ function renderCircle(svg) {
 // cycler via this factory, purely so a coincidental id clash between the two modes'
 // otherwise-independent id counters can never make one mode's click cycling jump
 // because of something clicked in the other.
-function makeLayerClickCycler() {
+function makeLayerClickCycler(getTarget) {
   let lastKey = "";
   let lastIndex = -1;
-  // `topOnly` (a Ctrl/Shift click, which adds to the selection) always takes the front layer
-  // instead of stepping down the stack.
-  return (clientX, clientY, topOnly = false) => {
+  let lastTime = -1e9;
+  let lastX = 0;
+  let lastY = 0;
+  // The stack of ids under the pointer, topmost first. `drill` = the single layers (a Repeat copy or a
+  // Blend in-between resolves to the layer it was made from); otherwise a layer that sits in a group
+  // stands for the TOP-LEVEL group it belongs to ("g<id>"), Illustrator style.
+  const stack = (clientX, clientY, drill) => {
+    const target = getTarget();
     const ids = [];
     for (const el of document.elementsFromPoint(clientX, clientY)) {
       const g = el.closest("g[data-layer-id]");
       if (!g) continue;
-      // an in-between of a blend picks the blend's start layer
-      const id = g.dataset.repeatGroup != null ? `g${g.dataset.repeatGroup}` : g.dataset.blendStart != null ? Number(g.dataset.blendStart) : Number(g.dataset.layerId);
+      let id = g.dataset.repeatSrc != null ? Number(g.dataset.repeatSrc) : g.dataset.blendStart != null ? Number(g.dataset.blendStart) : Number(g.dataset.layerId);
+      if (!drill) {
+        const layer = target.layers.find((l) => l.id === id);
+        const top = layer ? groupChainOf(target, layer)[0] : null;
+        if (top) id = `g${top.id}`;
+      }
       if (!ids.includes(id)) ids.push(id);
     }
+    return ids;
+  };
+  // `topOnly` (a Ctrl/Shift click, which adds to the selection) takes the front single layer instead of
+  // stepping down the stack. A second press within 350 ms and 6 px of the last one is a DOUBLE click (the
+  // browser's own dblclick event is lost because selecting rebuilds the drawing): it drills down to the
+  // front single layer under the pointer. The press time is also kept per pick, so a slow second click cycles.
+  const pick = (clientX, clientY, topOnly = false) => {
+    const now = performance.now();
+    if (!topOnly && now - lastTime < 350 && Math.hypot(clientX - lastX, clientY - lastY) < 6) {
+      const one = stack(clientX, clientY, true);
+      lastTime = -1e9;
+      if (one.length) return one[0];
+    }
+    const ids = stack(clientX, clientY, topOnly);
     if (ids.length === 0) {
       lastKey = "";
       lastIndex = -1;
       return null;
     }
     const key = ids.join(",");
-    lastIndex = key === lastKey && !topOnly ? (lastIndex + 1) % ids.length : 0;
+    if (key === lastKey && !topOnly) lastIndex = (lastIndex + 1) % ids.length;
+    else lastIndex = 0;
     lastKey = key;
+    lastTime = now;
+    lastX = clientX;
+    lastY = clientY;
     return ids[lastIndex];
   };
+  // Double click: the front single layer under the pointer (null on empty space).
+  pick.drill = (clientX, clientY) => {
+    const ids = stack(clientX, clientY, true);
+    return ids.length ? ids[0] : null;
+  };
+  return pick;
 }
 
-const pickCircleClickLayer = makeLayerClickCycler();
+const pickCircleClickLayer = makeLayerClickCycler(() => state);
 
 // --- Origin drag ---
 // render() throws away and rebuilds every SVG child on each animation frame, including the
@@ -6446,8 +7458,8 @@ function moveOriginDrag(e) {
   }
   for (const r of drag.reps || []) {
     // a whole repeat group in the selection moves rigidly: members (above) and its pivot
-    r.g.repeat.pivotX = r.x + dx;
-    r.g.repeat.pivotY = r.y + dy;
+    pivotOf(r.g).pivotX = r.x + dx;
+    pivotOf(r.g).pivotY = r.y + dy;
   }
   refreshControls();
   requestRender(true);
@@ -6512,11 +7524,11 @@ function beginHandleDrag(e, kind, layerId) {
   const groupMode = kind === "grouprotate" || kind === "groupradius" || base.size > 1;
   let pivot = origin;
   if (base.size > 1) pivot = selectionPivot(getSelectedLayers());
-  let reps = base.size > 1 ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: g.repeat.pivotX, y: g.repeat.pivotY })) : [];
+  let reps = base.size > 1 ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: pivotOf(g).pivotX, y: pivotOf(g).pivotY })) : [];
   // A whole repeat group turns about its own pivot (which stays put); pivots nested inside swing.
   const repeatG = kind === "grouprotate" ? handleRepeatGroup() : null;
   if (repeatG) {
-    pivot = { x: CENTER + repeatG.repeat.pivotX, y: CENTER + repeatG.repeat.pivotY };
+    pivot = { x: CENTER + pivotOf(repeatG).pivotX, y: CENTER + pivotOf(repeatG).pivotY };
     reps = nestedRepeatPivots(repeatG);
   }
   // The group radius ball measures from the pivot, like its rotate knob turns about it.
@@ -6597,8 +7609,8 @@ function moveHandleDrag(e) {
     for (const r of d.reps || []) {
       // a whole repeat group in the selection turns as one point: its pivot swings with the rest
       const rx = CENTER + r.x - d.pivot.x, ry = CENTER + r.y - d.pivot.y;
-      r.g.repeat.pivotX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
-      r.g.repeat.pivotY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
+      pivotOf(r.g).pivotX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
+      pivotOf(r.g).pivotY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
     }
     readout = d.kind === "grouprotate" ? `${delta > 0 ? "+" : ""}${delta}°` : `${lead[rotateKeyOf(lead)]}°`;
   } else {
@@ -6689,7 +7701,7 @@ document.getElementById("canvas").addEventListener("pointercancel", (e) => {
 
 document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  const pivotHandle = e.target.closest("[data-repeat-pivot]");
+  const pivotHandle = e.target.closest("[data-repeat-pivot]:not(.repeat-pivot-passive)");
   if (pivotHandle) {
     closeBadgeEditor(true);
     const rg = pivotHandle.dataset.repeatBall === "1" && !e.altKey ? handleRepeatGroup() : null;
@@ -6701,8 +7713,8 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
         const p = placementOf(layer);
         origins.set(layer.id, { x: p.originX, y: p.originY });
       }
-      const reps = [{ g: rg, x: rg.repeat.pivotX, y: rg.repeat.pivotY }, ...nestedRepeatPivots(rg)];
-      const pivot = { x: CENTER + rg.repeat.pivotX, y: CENTER + rg.repeat.pivotY };
+      const reps = [{ g: rg, x: pivotOf(rg).pivotX, y: pivotOf(rg).pivotY }, ...nestedRepeatPivots(rg)];
+      const pivot = { x: CENTER + pivotOf(rg).pivotX, y: CENTER + pivotOf(rg).pivotY };
       originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
       try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
     } else {
@@ -6726,7 +7738,7 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
       origins.set(layer.id, { x: p.originX, y: p.originY });
     }
     const pivot = e.target.closest("[data-origin-handle]").dataset.originHandle === "pivot" ? selectionPivot(getSelectedLayers()) : null;
-    const reps = pivot ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: g.repeat.pivotX, y: g.repeat.pivotY })) : [];
+    const reps = pivot ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: pivotOf(g).pivotX, y: pivotOf(g).pivotY })) : [];
     originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
     svg.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -6740,10 +7752,18 @@ document.getElementById("canvas").addEventListener("pointerdown", (e) => {
   }
   // Ctrl/Cmd or Shift adds or removes the layer under the pointer, like the layer list.
   const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+  // A plain click picks the TOP-LEVEL group a layer sits in ("g<id>": a repeat copy counts as its source
+  // member); Ctrl/Shift+click toggles the single layer, a double click drills down to one layer.
   const id = pickCircleClickLayer(e.clientX, e.clientY, multi);
-  if (typeof id === "string") selectGroupIn(circleApi, Number(id.slice(1)), { toggle: multi }); // a repeat copy picks its group's members
+  if (typeof id === "string") selectGroupIn(circleApi, Number(id.slice(1)), { toggle: multi });
   else if (id != null) selectLayer(id, { toggle: multi });
   else beginMarquee(e, "circle");
+});
+
+document.getElementById("canvas").addEventListener("dblclick", (e) => {
+  if (e.target.closest("[data-badge],[data-handle],[data-origin-handle],[data-repeat-pivot]")) return;
+  const id = pickCircleClickLayer.drill(e.clientX, e.clientY);
+  if (id != null) selectLayer(id);
 });
 
 // --- Rubber-band (marquee) selection, Ring editor and Straight tile ---
@@ -6805,7 +7825,7 @@ function layerMeetsRect(svg, layer, r) {
   const place = placementOf(layer);
   for (const lg of svg.querySelectorAll(`g[data-layer-id="${layer.id}"]`)) {
     for (const el of lg.querySelectorAll("circle,path,line,ellipse,rect,polygon,polyline,image,use,text")) {
-      if (el.closest("defs,clipPath,mask,pattern,symbol,marker,.editor-only")) continue;
+      if (el.closest("defs,clipPath,mask,pattern,symbol,marker,.editor-only,.ring-fill")) continue;
       const ctm = el.getScreenCTM();
       if (!ctm) continue;
       const s = Math.hypot(ctm.a, ctm.b);
@@ -6843,10 +7863,46 @@ function layerMeetsRect(svg, layer, r) {
   return false;
 }
 
+// Clears the selection of one mode (the one on screen by default): no active layer, no handles, panels in
+// their nothing-selected state. Not an undo step (a selection never is).
+function deselectAll(mode = currentMode) {
+  const circle = mode !== "straight";
+  const t = circle ? state : smState;
+  if (t.activeLayerId == null && !(Array.isArray(t.selectedLayerIds) && t.selectedLayerIds.length)) return;
+  closeBadgeEditor(false);
+  t.activeLayerId = null;
+  t.selectedLayerIds = [];
+  t.selGroup = null;
+  if (circle) {
+    updateLayerListSelection();
+    refreshControls();
+    render();
+  } else {
+    smUpdateLayerListSelection();
+    smRefreshControls();
+    smRender();
+  }
+}
+
+// Escape and Ctrl+Shift+A deselect (not while typing in a field, and a mid-drag marquee keeps its own Esc).
+document.addEventListener("keydown", (e) => {
+  const esc = e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  const csa = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key.toLowerCase() === "a" || e.code === "KeyA");
+  if (!esc && !csa) return;
+  if (isTextEditingTarget(document.activeElement) || marquee || dragRowState) return;
+  if (esc && (document.querySelector(".badge-editor") || (localFonts.dialog && !localFonts.dialog.hidden))) return;
+  if (csa) e.preventDefault();
+  deselectAll();
+});
+
 function finishMarquee(m, cancelled) {
   const moved = m.active;
   endMarquee();
-  if (cancelled || !moved) return;
+  if (cancelled) return;
+  if (!moved) {
+    if (!m.add) deselectAll(m.mode); // a plain click on empty space deselects
+    return;
+  }
   const rect = { l: Math.min(m.x0, m.x1), t: Math.min(m.y0, m.y1), r: Math.max(m.x0, m.x1), b: Math.max(m.y0, m.y1) };
   const circle = m.mode === "circle";
   const t = circle ? state : smState;
@@ -6878,6 +7934,7 @@ function finishMarquee(m, cancelled) {
   const ids = m.add ? [...new Set([...getSelectedLayersFrom(t).map((l) => l.id), ...hit])] : hit;
   t.selectedLayerIds = ids;
   t.activeLayerId = hit[hit.length - 1];
+  t.selGroup = null;
   if (circle) { updateLayerListSelection(); refreshControls(); render(); }
   else { smUpdateLayerListSelection(); smRefreshControls(); smRender(); }
 }
@@ -7046,16 +8103,7 @@ function flushDesignBox() {
   if (!content || !content.isConnected) return;
   const svg = document.getElementById("canvas");
   const b = measureDesignBox(content, svg);
-  const changed = !sameBox(b, designBox);
   designBox = b;
-  if (changed) {
-    const fresh = buildArtboardShade();
-    if (shadeEl && shadeEl.isConnected) {
-      if (fresh) shadeEl.replaceWith(fresh);
-      else shadeEl.remove();
-    } else if (fresh) content.after(fresh);
-    shadeEl = fresh;
-  }
   syncOverhang();
 }
 
@@ -7557,6 +8605,7 @@ function renderStraight(list = blendRenderLayers(state).list) {
   document.getElementById("straightSizeLabel").textContent =
     `${Math.round(straightExportWidth)} × ${Math.round(straightExportHeight)} px`;
   const centerX = straightExportWidth / 2;
+  const placed = []; // { g, node, path, mask } per drawn layer, for the masks (see "Layer masks")
 
   for (const layer of stripLayers) {
     const g = document.createElementNS(SVG_NS, "g");
@@ -7566,6 +8615,7 @@ function renderStraight(list = blendRenderLayers(state).list) {
       svg.appendChild(g);
       continue;
     }
+    placed.push({ g, node: g, path: layer._path || groupChainOf(state, layer).map((gr) => "g" + gr.id), mask: layerIsActiveMask(state, layer) });
 
     if (layer.type === "ring" && !visibleArc(layer).full) {
       drawStraightRingArcs(g, layer, maxR, padY, centerX);
@@ -7616,6 +8666,28 @@ function renderStraight(list = blendRenderLayers(state).list) {
 
     svg.appendChild(g);
   }
+
+  // A mask layer cuts the run of layers just before it that sit in its own group (or deeper).
+  placed.forEach((m, mi) => {
+    if (!m.mask) return;
+    const nodes = [];
+    for (let i = mi - 1; i >= 0; i--) {
+      const e = placed[i];
+      if (!m.path.every((k, j) => e.path[j] === k)) break;
+      if (!nodes.includes(e.node)) nodes.unshift(e.node);
+    }
+    const { mask, id } = buildLayerMaskEl([m.g]);
+    if (nodes.length === 0) {
+      svg.appendChild(mask);
+      return;
+    }
+    const wrap = document.createElementNS(SVG_NS, "g");
+    wrap.setAttribute("mask", `url(#${id})`);
+    svg.insertBefore(wrap, nodes[0]);
+    wrap.appendChild(mask);
+    for (const nd of nodes) wrap.appendChild(nd);
+    for (let i = 0; i < mi; i++) if (nodes.includes(placed[i].node)) placed[i].node = wrap;
+  });
 }
 
 // --- Export ---
@@ -7681,13 +8753,44 @@ function nameGroupWrappers(root) {
   root.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:inkscape", INKSCAPE_NS);
 }
 
+// The Ring canvas is infinite; an export is a square centred on the ring centre (0,0 = canvas CENTER), as
+// large as the farthest painted extent of the design from that centre needs, and never smaller than the old
+// 4096 artboard, so a design that fits it exports exactly as it always did. Rendered at 4096 px at most.
+// `exportBoxOverride` pins the box while several files must share one canvas (layer exports).
+let exportBoxOverride = null;
+
+function ringExportHalf(svg) {
+  const half0 = CANVAS_SIZE / 2;
+  try {
+    if (!(svg.getBoundingClientRect().width > 0)) return half0;
+    const content = svg.firstElementChild;
+    if (!content) return half0;
+    const b = content.getBBox();
+    if (!(b.width > 0 || b.height > 0)) return half0;
+    // getBBox leaves strokes out: grow by half the widest stroke of any layer
+    let pad = 0;
+    for (const l of state.layers) pad = Math.max(pad, (Number(l.strokeWidth) || 0) / 2);
+    const ext = Math.max(CENTER - b.x, b.x + b.width - CENTER, CENTER - b.y, b.y + b.height - CENTER) + pad;
+    return Math.max(half0, Math.ceil(ext));
+  } catch (err) {
+    return half0;
+  }
+}
+
+function applyRingExportBox(clone, half) {
+  if (half === CANVAS_SIZE / 2) return;
+  clone.setAttribute("viewBox", `${CENTER - half} ${CENTER - half} ${2 * half} ${2 * half}`);
+}
+
 function getExportSvgString(svgId) {
   if (drafting || renderQueued || straightStale) {
     settleDraft();
     render(); // never export a draft
   }
   const svg = document.getElementById(svgId);
+  const ringHalf = svgId === "canvas" ? exportBoxOverride || ringExportHalf(svg) : 0;
   const clone = svg.cloneNode(true);
+  if (ringHalf) applyRingExportBox(clone, ringHalf);
   clone.querySelectorAll(".editor-only").forEach((el) => el.remove());
   // tileExportCanvas is hidden off-screen via inline style (opacity:0 etc) so it
   // doesn't show in the UI — but that same style would come along on the clone and
@@ -7897,10 +9000,23 @@ function buildZip(files) {
 // mid-flight and silently corrupt the new export's frames.
 let pngSequenceRunId = 0;
 
-async function exportPngSequence({ getSvgString, width, height, loopDuration, fps, renderFn, filenamePrefix, statusElId }) {
+let pngSequenceCancel = null; // set while an export runs: calls it to cancel that run
+
+async function exportPngSequence({ getSvgString, width, height, loopDuration, fps, renderFn, filenamePrefix, statusElId, buttonId }) {
   const runId = ++pngSequenceRunId;
+  let cancelled = false;
   const isCurrent = () => runId === pngSequenceRunId;
   const statusEl = statusElId ? document.getElementById(statusElId) : null;
+  // While running, the export button becomes "Cancel"; clicking it stops the frame loop.
+  const btn = buttonId ? document.getElementById(buttonId) : null;
+  const btnLabel = btn ? btn.dataset.label || btn.textContent : "";
+  if (btn) {
+    btn.dataset.label = btnLabel;
+    btn.textContent = "Cancel";
+  }
+  pngSequenceCancel = () => {
+    cancelled = true;
+  };
   const frameCount = Math.max(2, Math.round(loopDuration * fps));
   const digits = Math.max(4, String(frameCount).length);
   try {
@@ -7911,14 +9027,19 @@ async function exportPngSequence({ getSvgString, width, height, loopDuration, fp
     const completed = await collectAnimationFrames({
       getSvgString, outWidth: width, outHeight: height, loopDuration, renderFn, frameCount, statusEl,
       statusPrefix: "Rendering",
-      shouldContinue: isCurrent,
+      shouldContinue: () => isCurrent() && !cancelled,
       onFrame: async (canvas, i) => {
         const buf = await canvasToPngBuffer(canvas);
         const num = String(i + 1).padStart(digits, "0");
         files.push({ name: `${filenamePrefix}_${num}.png`, data: new Uint8Array(buf) });
       },
     });
-    if (!completed || !isCurrent()) return; // superseded — drop the partial frames silently
+    if (!isCurrent()) return; // superseded — drop the partial frames silently
+    if (!completed || cancelled) {
+      files.length = 0; // cancelled by the user: free the frames, write nothing
+      if (statusEl) statusEl.textContent = "Export cancelled.";
+      return;
+    }
     const zipBytes = buildZip(files);
     const zipName = withFileCode(`${filenamePrefix}-frames.zip`);
     downloadBlob(new Blob([zipBytes], { type: "application/zip" }), zipName);
@@ -7933,6 +9054,8 @@ async function exportPngSequence({ getSvgString, width, height, loopDuration, fp
     if (isCurrent()) {
       animTimeOverride = null;
       renderFn();
+      pngSequenceCancel = null;
+      if (btn) btn.textContent = btnLabel;
     }
   }
 }
@@ -7986,6 +9109,7 @@ async function exportLayersZip(opts) {
   const exportable = blendRenderLayers(state).list.filter((l) => layerExportable(l, opts));
   const buckets = new Map(); // group id (or null) -> { folder, rings, others }, in stacking order
   for (const l of exportable) {
+    if (l.mask) continue; // a mask is not a picture of its own: it cuts the files of the layers below it
     const chain = opts.flatten ? [] : groupChainOf(state, l); // folders follow the group tree
     const key = chain.map((g) => g.id).join("/");
     if (!buckets.has(key)) buckets.set(key, { folder: chain.map((g) => sanitizeFilePart(g.name)).join("/"), rings: [], others: [] });
@@ -7998,6 +9122,19 @@ async function exportLayersZip(opts) {
     return;
   }
 
+  // The masks that cut a file: those above its layers in the same group (or an enclosing one).
+  const pathKeys = (l) => l._path || groupChainOf(state, l).map((g) => "g" + g.id);
+  const maskLayersAll = exportable.filter((l) => layerIsActiveMask(state, l));
+  const withMasks = (members) => {
+    const set = new Set(members);
+    for (const m of maskLayersAll) {
+      const mp = pathKeys(m);
+      const mi = exportable.indexOf(m);
+      if (members.some((l) => exportable.indexOf(l) < mi && mp.every((k, i) => pathKeys(l)[i] === k))) set.add(m);
+    }
+    return exportable.filter((l) => set.has(l));
+  };
+
   flushTextRasters();
   animTimeOverride = 0;
   exportShowHidden = opts.includeHidden;
@@ -8005,6 +9142,10 @@ async function exportLayersZip(opts) {
   brushHiRes = true; // art brush bitmaps at export resolution
   try {
     const files = [];
+    // every file shares one canvas: the square that holds the whole design (see ringExportHalf)
+    state.layers = exportable;
+    render();
+    exportBoxOverride = ringExportHalf(document.getElementById("canvas"));
     const digits = Math.max(2, String(totalSteps).length);
     let step = 0;
 
@@ -8019,7 +9160,7 @@ async function exportLayersZip(opts) {
       if (bucket.rings.length > 0) {
         step++;
         if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (Rings)…`;
-        state.layers = bucket.rings;
+        state.layers = withMasks(bucket.rings);
         const buf = await captureCurrentLayers();
         files.push({ name: fileName(bucket.folder, "Rings"), data: new Uint8Array(buf) });
       }
@@ -8027,7 +9168,7 @@ async function exportLayersZip(opts) {
         step++;
         const label = layerDisplayName(layer) + (layer._repeatCopy != null ? ` (copy ${layer._repeatCopy + 1})` : "");
         if (statusEl) statusEl.textContent = `Rendering layer ${step}/${totalSteps} (${label})…`;
-        state.layers = [layer];
+        state.layers = withMasks([layer]);
         const buf = await captureCurrentLayers();
         files.push({ name: fileName(bucket.folder, sanitizeFilePart(label)), data: new Uint8Array(buf) });
       }
@@ -8043,6 +9184,7 @@ async function exportLayersZip(opts) {
     console.error(err);
     if (statusEl) statusEl.textContent = "Layer export failed — see console for details.";
   } finally {
+    exportBoxOverride = null;
     exportShowHidden = false;
     blendExpansionOff = false;
     brushHiRes = false;
@@ -8068,8 +9210,10 @@ function buildLayersSvgString(opts) {
   exportShowHidden = opts.includeHidden;
   brushHiRes = true; // art brush bitmaps at export resolution
   let clone;
+  let ringHalf = CANVAS_SIZE / 2;
   try {
     render();
+    ringHalf = ringExportHalf(document.getElementById("canvas"));
     clone = document.getElementById("canvas").cloneNode(true);
   } finally {
     brushHiRes = false;
@@ -8081,6 +9225,7 @@ function buildLayersSvgString(opts) {
   clone.removeAttribute("style");
   clone.setAttribute("xmlns", SVG_NS);
   clone.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:inkscape", INKSCAPE_NS);
+  applyRingExportBox(clone, ringHalf);
 
   const content = clone.firstElementChild; // the artwork wrapper render() puts first
   const mask = content.getAttribute("mask");
@@ -8145,7 +9290,8 @@ function buildLayersSvgString(opts) {
         continue;
       }
       lastUnit = null;
-      if (el.dataset.groupId != null) out.push({ group: el });
+      if (el.dataset.maskWrap != null) out.push({ maskWrap: el });
+      else if (el.dataset.groupId != null) out.push({ group: el });
       else if (el.dataset.repeatWrap != null && !skipRepeat) out.push({ flat: el }); // outside a repeating group: just its contents
     }
     const nodes = [];
@@ -8154,9 +9300,23 @@ function buildLayersSvgString(opts) {
         const w = buildLayer(it.unit);
         if (w) nodes.push(w);
       } else if (it.group) nodes.push(...buildGroupEl(it.group));
+      else if (it.maskWrap) nodes.push(...buildMaskWrap(it.maskWrap));
       else nodes.push(...build(it.flat, false));
     }
     return nodes;
+  };
+  // A mask layer's cut: the <mask> element is named after the layer ("Mask: Text 5") and sits beside a named
+  // <g mask="..."> that holds the layers below it.
+  const buildMaskWrap = (el) => {
+    const maskEl = el.querySelector(":scope > mask");
+    const name = el.dataset.maskName || "Mask";
+    const wrap = make(`Cut by ${name.replace(/^Mask: /, "")}`);
+    if (maskEl) {
+      setSvgNames(maskEl, name, used, false);
+      wrap.setAttribute("mask", `url(#${maskEl.getAttribute("id")})`);
+    }
+    build(el, false).forEach((n) => wrap.appendChild(n));
+    return maskEl ? [maskEl, wrap] : [wrap];
   };
   const buildGroupEl = (el) => {
     const group = groupOfEl(el);
@@ -8292,20 +9452,42 @@ document.getElementById("exportSvgBtn").addEventListener("click", () => exportSv
 document.getElementById("exportPngBtn").addEventListener("click", () =>
   exportPng("canvas", "ornament.png", CANVAS_SIZE, CANVAS_SIZE)
 );
-document.getElementById("exportStraightSvgBtn").addEventListener("click", () =>
-  exportSvg("straightCanvas", "ornament-straight.svg")
-);
+document.getElementById("exportStraightSvgBtn").addEventListener("click", () => {
+  if (!straightPreviewOn) renderStraight(); // hidden preview: render it just for this export
+  exportSvg("straightCanvas", "ornament-straight.svg");
+});
 // A large ring's unrolled circumference can run into five figures of pixels wide —
 // capped on the longer side so the PNG stays a sane file size. SVG stays uncapped since
 // it's vector; there's no pixel count to cap.
 const STRAIGHT_PREVIEW_MAX_DIMENSION = 12812;
 document.getElementById("exportStraightPngBtn").addEventListener("click", () => {
+  if (!straightPreviewOn) renderStraight(); // hidden preview: render it just for this export
   const scale = Math.min(1, STRAIGHT_PREVIEW_MAX_DIMENSION / Math.max(straightExportWidth, straightExportHeight));
   const width = Math.max(1, Math.round(straightExportWidth * scale));
   const height = Math.max(1, Math.round(straightExportHeight * scale));
   exportPng("straightCanvas", "ornament-straight.png", width, height);
 });
 document.getElementById("exportLayersBtn").addEventListener("click", exportLayers);
+
+// "Show Straight preview" toggle (Ring mode). Off: the strip and its gap are gone and render() skips it entirely.
+// Remembered in this browser (localStorage, best effort), not in projects.
+(function initStraightPreviewToggle() {
+  const KEY = "ornamentAtelier.showStraightPreview";
+  const box = document.getElementById("straightPreviewToggle");
+  const block = document.getElementById("straightPreviewBlock");
+  try { if (localStorage.getItem(KEY) === "0") straightPreviewOn = false; } catch (_) { /* storage blocked */ }
+  const apply = () => {
+    box.checked = straightPreviewOn;
+    block.style.display = straightPreviewOn ? "" : "none";
+  };
+  apply();
+  box.addEventListener("change", () => {
+    straightPreviewOn = box.checked;
+    try { localStorage.setItem(KEY, straightPreviewOn ? "1" : "0"); } catch (_) { /* storage blocked */ }
+    apply();
+    if (straightPreviewOn) render(); // rebuild the strip (it was skipped while hidden)
+  });
+})();
 
 // ============================================================
 // STRAIGHT MODE — a seamless repeating tile, independent of the circular ring editor
@@ -9016,6 +10198,7 @@ function smRender() {
 
   const previewSvg = document.getElementById("tileCanvas");
   previewSvg.setAttribute("viewBox", `0 0 ${w * 3} ${SM_HEIGHT}`);
+  const unit = currentMode === "circle" ? 0 : svgUnitsPerPx(previewSvg); // read before the rebuild (no forced layout of the new drawing)
   smRenderInto(previewSvg, w * 3, (layer) => smDistribute(layer));
   document.getElementById("tileSizeLabel").textContent = `${w} × ${SM_HEIGHT} px`;
 
@@ -9052,19 +10235,336 @@ function smRender() {
     indicator.setAttribute("pointer-events", "none");
     previewSvg.appendChild(indicator);
   }
+  if (currentMode !== "circle") appendSmEditorTools(previewSvg, unit);
+}
+
+// ============================================================
+// Straight mode: artboard handles, value badges and the group handle
+// ============================================================
+// The Ring editor's direct-manipulation tools, mapped onto the horizontal strip. Straight layers have
+// no origin: a layer's copies sit evenly along the tile, starting at startOffset (x), all on one
+// row at position (y, from the strip's middle), each turned by rotation. So per layer type:
+//   all but guide: blue crosshair at the FIRST copy in the centre tile = move: drag sideways = Start
+//     offset, up/down = Position, Shift = one axis, Position snaps to 0 within 6 px;
+//   motif, text, shape: blue ball on the right edge of that copy = size (text: letter size; a locked
+//     shape keeps its ratio), amber knob beyond it = rotation (Shift: 15 degree steps);
+//   line: ball on the line's top end = length, knob beyond it = rotation;
+//   guide: a full-width line, so only a crosshair in the middle of the centre tile: drag = Position
+//     (vertical only), plus the green stroke-width badge;
+//   purple badge = Count (not on a guide), green badge = size / length / stroke width, same markup,
+//     drag / wheel / click-to-type as the Ring editor (one undo step per gesture).
+// A whole group, or several layers: ONE crosshair at the mean of their first copies (drag = every
+// member moves by the same delta), a ball to its right = group Scale % about that point (the same
+// code as the Scale field, so "Scale line widths" is honoured), and a knob beyond it that adds one
+// shared turn to every member's own rotation (the copies stay where they are: a strip has no
+// centre to swing positions about). The green badge is the group Scale %.
+const SM_SNAP_PX = 6;
+const SM_BALL_PX = 52; // the group scale ball sits this far (screen px) to the right of the anchor
+const SM_POSITION_LIMIT = 500;
+let smDrag = null;
+
+function smGroupActive(layers) {
+  return layers.length > 1 || (layers.length === 1 && !!selectedWholeGroup(smState));
+}
+
+function smBadgeField(layer, kind) {
+  if (layer.type === GROUP_SCALE_PROXY) return kind === "size" ? { key: "scale", min: 1, max: 1000 } : null;
+  if (kind === "count") return layer.type === "guide" ? null : { key: "count", min: 1, max: 100 };
+  if (kind === "size") return layer.type === "guide" ? { key: "strokeWidth", min: 0, max: 100 } : SIZE_FIELD[layer.type] || null;
+  return null;
+}
+
+// The first copy of a layer in the centre tile, in tile-canvas coordinates (a guide: the tile's middle).
+function smAnchorOf(layer) {
+  const w = smState.tileWidth;
+  const y = SM_CENTER_Y + (layer.position || 0);
+  if (layer.type === "guide") return { x: w * 1.5, y };
+  const offs = smLayerOffsets(layer);
+  return { x: w + (offs.length ? offs[0] : (((layer.startOffset || 0) % w) + w) % w), y };
+}
+
+// The size ball: on the right edge of the first copy (a line: on its top end), on the ray `ang`.
+function smSizeBall(layer) {
+  if (layer.type === "guide") return null;
+  const a = smAnchorOf(layer);
+  const th = layer.rotation || 0;
+  const line = layer.type === "line";
+  const block = layer.type === "text" ? textBlockSize(layer) : null;
+  const half = (line ? layer.length : block ? block.w : layer.size) / 2;
+  if (!(half > 0)) return null;
+  const ang = line ? th : th + 90;
+  const u = unitVector(ang);
+  return { a, ang, half, u, x: a.x + u.x * half, y: a.y + u.y * half };
+}
+
+function smGroupAnchor(layers) {
+  const pts = layers.map(smAnchorOf);
+  return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length };
+}
+
+const SM_CROSSHAIR_MARKUP = `<circle r="14" fill="transparent" pointer-events="all" />
+      <circle r="6" fill="none" stroke="#4f8cff" stroke-width="2" />
+      <path d="M -10 0 H 10 M 0 -10 V 10" stroke="#4f8cff" stroke-width="2" />`;
+const SM_BALL_MARKUP = (kind, id) => `
+    <g data-handle="${kind}" data-handle-layer="${id}">
+      <circle r="14" fill="transparent" pointer-events="all" />
+      <circle r="7" fill="#1d2026" stroke="${HANDLE_BLUE}" stroke-width="2" />
+      <path d="M 0 -11 L -3.5 -7 H 3.5 Z M 0 11 L -3.5 7 H 3.5 Z" fill="${HANDLE_BLUE}" />
+    </g>`;
+
+function appendSmHandles(svg, unit) {
+  const selected = smGetSelectedLayers();
+  const lead = smGetActiveLayer();
+  if (!lead || selected.length === 0) return;
+  const grouped = smGroupActive(selected);
+  const addCross = (x, y, id) => {
+    const h = document.createElementNS(SVG_NS, "g");
+    h.setAttribute("class", grouped ? "editor-only origin-handle group-origin-handle" : "editor-only origin-handle");
+    h.dataset.originHandle = id;
+    h.setAttribute("transform", `translate(${x} ${y}) scale(${unit})`);
+    h.innerHTML = SM_CROSSHAIR_MARKUP;
+    svg.appendChild(h);
+    return h;
+  };
+  if (grouped) {
+    const g = smGroupAnchor(selected);
+    // the ball + knob live in one handle group turned to point right (local -y = right), so the ball
+    // keeps its screen distance from the anchor at any zoom
+    appendHandleGroup(svg, g.x, g.y, 90, unit, `<g transform="translate(0 ${-SM_BALL_PX})">${SM_BALL_MARKUP("gsize", lead.id)}${ROTATE_HANDLE_MARKUP(lead.id, "grotate")}</g>`);
+    const h = addCross(g.x, g.y, "pivot");
+    svg.insertBefore(h, svg.querySelector(".layer-handle")); // under the ball and knob
+    return;
+  }
+  for (const layer of selected) {
+    if (layerIsHidden(smState, layer)) continue;
+    const ball = smSizeBall(layer);
+    if (ball) appendHandleGroup(svg, ball.x, ball.y, ball.ang, unit, SM_BALL_MARKUP("size", layer.id) + ROTATE_HANDLE_MARKUP(layer.id, "rotate"));
+    const a = smAnchorOf(layer);
+    addCross(a.x, a.y, layer.id);
+  }
+}
+
+function appendSmBadges(svg, unit) {
+  const lead = smGetActiveLayer();
+  if (!lead || layerIsHidden(smState, lead)) return;
+  const selected = smGetSelectedLayers();
+  const kinds = ["count", "size"].filter((k) => badgeDisplay(k));
+  if (kinds.length === 0) return;
+  const grouped = smGroupActive(selected);
+  let p, base;
+  if (grouped) {
+    p = smGroupAnchor(selected);
+    base = 270; // the group ball and knob are to the right: badges go left
+  } else {
+    p = smAnchorOf(lead);
+    const ball = smSizeBall(lead);
+    base = (ball ? ball.ang : 90) + 180;
+  }
+  kinds.forEach((kind, i) => {
+    const u = unitVector(kinds.length === 1 ? base : base + (i === 0 ? -BADGE_SPREAD_DEG : BADGE_SPREAD_DEG));
+    const g = document.createElementNS(SVG_NS, "g");
+    g.setAttribute("class", "editor-only value-badge");
+    g.dataset.badge = kind;
+    g.dataset.bx = p.x;
+    g.dataset.by = p.y;
+    g.dataset.bdx = u.x * BADGE_DISTANCE_PX;
+    g.dataset.bdy = u.y * BADGE_DISTANCE_PX;
+    const disp = badgeDisplay(kind);
+    g.innerHTML = badgeMarkup(kind, disp.text, disp.tip);
+    placeBadge(g, unit);
+    svg.appendChild(g);
+  });
+  positionBadgeEditor();
+}
+
+// Everything editor-only that smRender adds on top of the drawing.
+function appendSmEditorTools(svg, unit) {
+  appendSmBadges(svg, unit);
+  appendSmHandles(svg, unit);
+}
+
+// --- Drags: the same shape as the Ring editor's (pointer captured on the <svg>, every move worked
+// out from the values at drag start, one undo step on the first real change) ---
+function smBeginDrag(e, kind, leadId) {
+  const svg = document.getElementById("tileCanvas");
+  const selected = smGetSelectedLayers();
+  const lead = leadId != null && !Number.isNaN(leadId) ? smState.layers.find((l) => l.id === leadId) : smGetActiveLayer();
+  if (!lead) return;
+  const base = new Map();
+  for (const l of selected) {
+    base.set(l.id, { position: l.position || 0, startOffset: l.startOffset, rotation: l.rotation, size: l.size, sizeY: l.sizeY, length: l.length, ball: smSizeBall(l) });
+  }
+  const grouped = smGroupActive(selected);
+  const pivot = grouped ? smGroupAnchor(selected) : smAnchorOf(lead);
+  const start = clientToSvgPoint(svg, e.clientX, e.clientY);
+  let scale0 = 100;
+  if (kind === "gsize") {
+    const info = groupScaleInfo(smApi);
+    if (!info) return;
+    scale0 = groupScaleValue(smApi, info);
+  }
+  smDrag = { kind, pointerId: e.pointerId, svg, leadId: lead.id, start, base, pivot, scale0, dist0: Math.max(1, Math.hypot(start.x - pivot.x, start.y - pivot.y)), moved: false };
+  try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+}
+
+function smMoveDrag(e) {
+  const d = smDrag;
+  const lead = smState.layers.find((l) => l.id === d.leadId);
+  if (!lead) return;
+  const pt = clientToSvgPoint(d.svg, e.clientX, e.clientY);
+  const targets = smGetSelectedLayers();
+  const lb = d.base.get(lead.id);
+  let readout = "";
+
+  if (d.kind === "move") {
+    let dx = pt.x - d.start.x, dy = pt.y - d.start.y;
+    if (e.shiftKey) {
+      if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+      else dx = 0;
+    }
+    const unit = svgUnitsPerPx(d.svg);
+    // Position snaps onto the strip's middle line (the whole selection keeps its formation).
+    dy = Math.abs(lb.position + dy) < SM_SNAP_PX * unit && !(e.shiftKey && dy === 0) ? -lb.position : Math.round(dy);
+    dx = Math.round(dx);
+    // One shared delta, held back as a whole so the extreme layer stops at the limit.
+    let yLo = -Infinity, yHi = Infinity, xLo = -Infinity, xHi = Infinity, anyX = false;
+    for (const l of targets) {
+      const b = d.base.get(l.id);
+      if (!b) continue;
+      if (l.type === "line" || l.type === "shape") { // Position is unbounded for Guide, Asset and Text; Line and Shape keep +-500
+        yLo = Math.max(yLo, -SM_POSITION_LIMIT - b.position);
+        yHi = Math.min(yHi, SM_POSITION_LIMIT - b.position);
+      }
+      if (b.startOffset != null) anyX = true; // Start offset is unbounded
+    }
+    dy = Math.min(yHi, Math.max(yLo, dy));
+    dx = anyX ? Math.min(xHi, Math.max(xLo, dx)) : 0;
+    if (!d.moved) {
+      if (dx === 0 && dy === 0) return;
+      d.moved = true;
+      smPushHistory();
+    }
+    for (const l of targets) {
+      const b = d.base.get(l.id);
+      if (!b) continue;
+      l.position = Math.round((b.position + dy) * 10000) / 10000;
+      if (b.startOffset != null) l.startOffset = b.startOffset + dx;
+    }
+    readout = `y ${lead.position}` + (lead.startOffset != null ? ` · x ${lead.startOffset}` : "");
+  } else if (d.kind === "size") {
+    const ball = lb.ball;
+    const field = SIZE_FIELD[lead.type];
+    if (!ball || !field) return;
+    const proj = (pt.x - d.start.x) * ball.u.x + (pt.y - d.start.y) * ball.u.y;
+    const edge = ball.half + proj; // the edge follows the pointer, the first copy's centre stays put
+    let v = lead.type === "line" ? 2 * edge : lb.size * (edge / ball.half);
+    if (e.shiftKey) v = Math.round(v / 10) * 10;
+    v = Math.min(field.max, Math.max(field.min, Math.round(v)));
+    const v0 = lead.type === "line" ? lb.length : lb.size;
+    if (!d.moved) {
+      if (v === v0) return;
+      d.moved = true;
+      smPushHistory();
+    }
+    lead[field.key] = v;
+    if (lead.type === "shape" && lead.lockRatio !== false) lead.sizeY = Math.round(v * (lb.size > 0 ? (lb.sizeY != null ? lb.sizeY : lb.size) / lb.size : 1));
+    readout = `${field.key} ${v}`;
+  } else if (d.kind === "rotate" || d.kind === "grotate") {
+    const angleOf = (q) => (Math.atan2(q.x - d.pivot.x, -(q.y - d.pivot.y)) * 180) / Math.PI;
+    let delta = angleOf(pt) - angleOf(d.start);
+    const v0 = d.kind === "grotate" ? 0 : lb.rotation || 0;
+    delta = e.shiftKey ? Math.round((v0 + delta) / HANDLE_SNAP_DEG) * HANDLE_SNAP_DEG - v0 : Math.round(delta);
+    if (!d.moved) {
+      if (wrapDegrees(delta) === 0) return;
+      d.moved = true;
+      smPushHistory();
+    }
+    for (const l of targets) {
+      const b = d.base.get(l.id);
+      if (!b || b.rotation == null) continue; // a guide has no rotation
+      l.rotation = wrapDegrees(b.rotation + delta);
+    }
+    readout = d.kind === "grotate" ? `${delta > 0 ? "+" : ""}${delta}°` : `${lead.rotation}°`;
+  } else if (d.kind === "gsize") {
+    let v = d.scale0 * (Math.hypot(pt.x - d.pivot.x, pt.y - d.pivot.y) / d.dist0);
+    if (e.shiftKey) v = Math.round(v / 5) * 5;
+    v = Math.min(GROUP_SCALE_MAX, Math.max(GROUP_SCALE_MIN, Math.round(v)));
+    if (!d.moved) {
+      if (v === Math.round(d.scale0)) return;
+      d.moved = true;
+    }
+    const num = document.getElementById(smApi.scale.id + "Num");
+    num.value = String(v);
+    noteGesture(); // applyGroupScale redraws at once: a draft while the pointer is down
+    applyGroupScale(smApi, num); // opens its own undo step on the first call
+    showDragReadout(e, `${v}%`);
+    return;
+  }
+  showDragReadout(e, readout);
+  smRefreshControls();
+  requestRender(true);
+}
+
+function smEndDrag(e) {
+  const d = smDrag;
+  if (!d) return;
+  smDrag = null;
+  if (d.kind === "gsize") smApi.scale.gesture = null;
+  try { if (d.svg.hasPointerCapture(d.pointerId)) d.svg.releasePointerCapture(d.pointerId); } catch (_) { /* synthetic */ }
+  const el = document.getElementById("dragReadout");
+  if (el) el.hidden = true;
+}
+
+{
+  const tile = document.getElementById("tileCanvas");
+  tile.addEventListener("pointermove", (e) => {
+    if (badgeDrag && e.pointerId === badgeDrag.pointerId) moveBadgeDrag(e);
+    else if (smDrag && e.pointerId === smDrag.pointerId) smMoveDrag(e);
+  });
+  for (const type of ["pointerup", "pointercancel"]) {
+    tile.addEventListener(type, (e) => {
+      endBadgeDrag(e);
+      smEndDrag(e);
+    });
+  }
 }
 
 // Delegated once, same reasoning (pointerdown-not-click fix, and cycling through
 // overlapping layers on repeat clicks) as the ring editor's canvas listener above —
 // its own independent cycler, see makeLayerClickCycler.
-const pickStraightClickLayer = makeLayerClickCycler();
+const pickStraightClickLayer = makeLayerClickCycler(() => smState);
 
 document.getElementById("tileCanvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+  const badge = e.target.closest("[data-badge]");
+  if (badge) {
+    closeBadgeEditor(true);
+    beginBadgeDrag(e, badge.dataset.badge);
+    e.preventDefault();
+    return;
+  }
+  if (e.target.closest("[data-origin-handle]")) {
+    smBeginDrag(e, "move", null);
+    e.preventDefault();
+    return;
+  }
+  const handle = e.target.closest("[data-handle]");
+  if (handle) {
+    smBeginDrag(e, handle.dataset.handle, Number(handle.dataset.handleLayer));
+    e.preventDefault();
+    return;
+  }
   const id = pickStraightClickLayer(e.clientX, e.clientY, multi);
-  if (id != null) smSelectLayer(id, { toggle: multi });
+  if (typeof id === "string") selectGroupIn(smApi, Number(id.slice(1)), { toggle: multi }); // plain click: the top-level group
+  else if (id != null) smSelectLayer(id, { toggle: multi });
   else beginMarquee(e, "straight");
+});
+
+document.getElementById("tileCanvas").addEventListener("dblclick", (e) => {
+  if (e.target.closest("[data-badge],[data-handle],[data-origin-handle]")) return;
+  const id = pickStraightClickLayer.drill(e.clientX, e.clientY);
+  if (id != null) smSelectLayer(id);
 });
 
 // --- Controls ---
@@ -9138,9 +10638,20 @@ function smRefreshControls() {
       const ta = document.getElementById("smTextContent");
       if (ta.value !== active.text) ta.value = active.text;
       document.getElementById("smTextFont").value = active.fontId;
+      updateGlyphBox("smText", active.fontId);
       document.getElementById("smTextColor").value = active.textColor;
       smSetFieldValue("smTextLetterSpacing", active.letterSpacing || 0);
       document.getElementById("smTextAlign").value = active.textAlign || "center";
+      smSetFieldValue("smTextLeading", active.leading ?? 120);
+      document.getElementById("smTextKerning").value = active.kerning || "auto";
+      smSetFieldValue("smTextScaleX", active.scaleX ?? 100);
+      smSetFieldValue("smTextScaleY", active.scaleY ?? 100);
+      smSetFieldValue("smTextBaseline", active.baselineShift ?? 0);
+      smSetFieldValue("smTextCharRotation", active.charRotation ?? 0);
+      document.getElementById("smTextAllCaps").checked = !!active.allCaps;
+      document.getElementById("smTextSmallCaps").checked = !!active.smallCaps;
+      document.getElementById("smTextUnderline").checked = !!active.underline;
+      document.getElementById("smTextStrike").checked = !!active.strike;
     }
     document.getElementById("smMotifSizeLabel").textContent = isText ? "Letter size (font size)" : "Size";
     for (const id of ["smMotifSize", "smMotifSizeNum"]) {
@@ -9302,7 +10813,7 @@ document.getElementById("smShapeLockRatio").addEventListener("click", () => {
 });
 smBindControl("smShapeFillColor", (l, el) => (l.fillColor = el.value));
 smBindControl("smShapeFillOpacity", (l, el) => (l.fillOpacity = Number(el.value)));
-smBindControl("smShapeStrokeWidth", (l, el) => (l.strokeWidth = Number(el.value)));
+smBindControl("smShapeStrokeWidth", (l, el) => (l.strokeWidth = Math.max(0, Number(el.value))));
 smBindControl("smShapeStrokeColor", (l, el) => (l.strokeColor = el.value));
 smBindControl("smShapeCount", (l, el) => (l.count = Number(el.value)));
 smBindControl("smShapeStartOffset", (l, el) => (l.startOffset = Number(el.value)));
@@ -9320,6 +10831,16 @@ smBindControl("smTextFont", (l, el) => {
 smBindControl("smTextColor", (l, el) => (l.textColor = el.value));
 smBindControl("smTextLetterSpacing", (l, el) => (l.letterSpacing = Number(el.value)));
 smBindControl("smTextAlign", (l, el) => (l.textAlign = el.value));
+smBindControl("smTextLeading", (l, el) => (l.leading = Number(el.value)));
+smBindControl("smTextKerning", (l, el) => (l.kerning = el.value));
+smBindControl("smTextScaleX", (l, el) => (l.scaleX = Number(el.value)));
+smBindControl("smTextScaleY", (l, el) => (l.scaleY = Number(el.value)));
+smBindControl("smTextBaseline", (l, el) => (l.baselineShift = Number(el.value)));
+smBindControl("smTextCharRotation", (l, el) => (l.charRotation = Number(el.value)));
+smBindControl("smTextAllCaps", (l, el) => (l.allCaps = el.checked));
+smBindControl("smTextSmallCaps", (l, el) => (l.smallCaps = el.checked));
+smBindControl("smTextUnderline", (l, el) => (l.underline = el.checked));
+smBindControl("smTextStrike", (l, el) => (l.strike = el.checked));
 {
   let timer = null;
   document.getElementById("smTextContent").addEventListener("input", () => {
@@ -9513,7 +11034,11 @@ function verticalContentBounds(ctx, width, height) {
   return top === -1 ? null : { top, bottom };
 }
 
-document.getElementById("smExportPngSeqBtn").addEventListener("click", () =>
+document.getElementById("smExportPngSeqBtn").addEventListener("click", () => {
+  if (pngSequenceCancel) {
+    pngSequenceCancel();
+    return;
+  }
   exportPngSequence({
     getSvgString: smBuildExportSvgString,
     width: smState.tileWidth,
@@ -9523,8 +11048,9 @@ document.getElementById("smExportPngSeqBtn").addEventListener("click", () =>
     renderFn: smRender,
     filenamePrefix: "ornament-tile",
     statusElId: "smAnimExportStatus",
-  })
-);
+    buttonId: "smExportPngSeqBtn",
+  });
+});
 
 document.getElementById("smExportPngBtn").addEventListener("click", () => {
   const svgString = withFrozenAnimation(() => smBuildExportSvgString());
@@ -9857,7 +11383,8 @@ function setProjectStatus(message, isError) {
 // Files saved before Placement existed lack its fields; filling them in on load keeps
 // the mixed-value check from seeing "undefined" next to 0 as a disagreement.
 function withPlacementDefaults(layers) {
-  return layers.map((l) => ({ ...placementDefaults(), ...l }));
+  // (a ring from an older file also gets its Fill fields, off, so a mixed selection never compares undefined with false)
+  return layers.map((l) => ({ ...placementDefaults(), ...(l.type === "ring" ? { fillOn: false, fillColor: "#e0e0e0" } : null), ...(l.type === "text" ? TEXT_STYLE_DEFAULTS : null), ...l }));
 }
 
 function maxLayerId(layers) {
@@ -10016,6 +11543,47 @@ document.getElementById("openProjectInput").addEventListener("change", (e) => {
   e.target.value = ""; // allow re-selecting the same file next time
 });
 
+// Drop a project .json anywhere on the window: same path as Open Project (loadProject, which
+// detects the mode from the file, pushes undo and reports in the project status line). A
+// subtle overlay shows while a file is dragged over the window. Non-.json files are ignored.
+(() => {
+  const overlay = document.createElement("div");
+  overlay.id = "dropOverlay";
+  overlay.textContent = "Drop a project .json to open it";
+  overlay.hidden = true;
+  document.body.appendChild(overlay);
+  let depth = 0;
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  const hide = () => {
+    depth = 0;
+    overlay.hidden = true;
+  };
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    overlay.hidden = false;
+  });
+  window.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) overlay.hidden = true;
+  });
+  window.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // never let the browser navigate to the dropped file
+    hide();
+    const file = Array.from(e.dataTransfer.files).find((f) => /\.json$/i.test(f.name) || f.type === "application/json");
+    if (file) loadProject(file);
+    else setProjectStatus("Only project .json files can be dropped here.", true);
+  });
+})();
+
 // --- Reset buttons (Rotation / Start angle fields, both modes) ---
 // Dispatching synthetic events on the target range input reuses its existing
 // bindControl/smBindControl wiring, so state updates, num-input sync, and undo
@@ -10145,7 +11713,7 @@ fontFileInput.addEventListener("change", async (e) => {
 
 const localFonts = { list: null, dialog: document.getElementById("localFontsDialog") };
 const installedFontsButtons = ["textInstalledFontsBtn", "smTextInstalledFontsBtn"].map((id) => document.getElementById(id));
-const installedFontsHint = "Installed fonts aren't available in this browser. Use Load font file…";
+const installedFontsHint = "Installed fonts need Chrome or Edge on desktop. You can still load a font file.";
 
 function disableInstalledFonts(message) {
   installedFontsButtons.forEach((b) => (b.disabled = true));
@@ -10232,6 +11800,11 @@ function setMode(mode) {
   if (mode === "straight") smRender();
   // "Fit design" only means something for the Ring editor's off-artboard artwork.
   document.getElementById("zoomFitDesignBtn").hidden = mode !== "circle";
+  {
+    const fitBtn = document.getElementById("zoomFitArtboardBtn");
+    fitBtn.textContent = mode === "circle" ? "Fit centre" : "Fit artboard";
+    fitBtn.title = mode === "circle" ? "Frame the 4096 units around the ring centre (0)" : "Frame the whole artboard (0)";
+  }
   syncOverhang();
   // The Zoom box follows whichever artboard is showing, and the on-screen readouts can
   // only be measured once the newly visible mode is laid out.
@@ -10355,11 +11928,13 @@ resetPreviewView();
       if (e.button !== 0 || document.activeElement === box) return; // already typing: native caret
       e.preventDefault();
       const range = document.getElementById(box.id.replace(/Num$/, ""));
-      const min = attr(box, "min", attr(range, "min", -Infinity));
-      const max = attr(box, "max", attr(range, "max", Infinity));
+      // A box with no min/max attribute is unbounded (the slider keeps its own range); the step grid and drag speed still follow the slider.
+      const gridMin = attr(range, "min", 0), rmin = attr(range, "min", -Infinity), rmax = attr(range, "max", Infinity);
+      const min = attr(box, "min", -Infinity);
+      const max = attr(box, "max", Infinity);
       const step = attr(box, "step", 1);
-      const cur = Number(range.value);
-      drag = { box, range, min, max, step, x0: e.clientX, y0: e.clientY, base: Number.isFinite(cur) ? cur : 0, moved: false, id: e.pointerId };
+      const cur = Number(box.value.trim() === "" ? range.value : box.value); // the box can hold a value beyond the slider range
+      drag = { box, range, min, max, gridMin, span: rmax - rmin, step, x0: e.clientX, y0: e.clientY, base: Number.isFinite(cur) ? cur : 0, moved: false, id: e.pointerId };
       try { box.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
     });
     box.addEventListener("pointermove", (e) => {
@@ -10371,10 +11946,10 @@ resetPreviewView();
         d.moved = true;
         document.body.classList.add("sf-scrubbing");
       }
-      const span = Number.isFinite(d.max - d.min) ? d.max - d.min : 360;
+      const span = Number.isFinite(d.span) ? d.span : 360;
       const perPx = Math.max(d.step / 6, span / 800) * (e.shiftKey ? 5 : 1);
       let v = d.base + dx * perPx;
-      v = d.min + Math.round((v - d.min) / d.step) * d.step; // honour the step grid
+      v = d.gridMin + Math.round((v - d.gridMin) / d.step) * d.step; // honour the step grid
       v = Math.min(d.max, Math.max(d.min, v));
       const decimals = (String(d.step).split(".")[1] || "").length;
       const text = String(Number(v.toFixed(decimals)));

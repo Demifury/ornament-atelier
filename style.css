@@ -851,7 +851,6 @@ svg#canvas {
   width: calc(min(70vh, 70vw) * var(--ring-zoom, 1));
   height: calc(min(70vh, 70vw) * var(--ring-zoom, 1));
   overflow: visible;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
   background: transparent;
 }
 
@@ -876,7 +875,9 @@ svg#canvas {
 /* While a badge is being scrubbed the pointer is captured on the <svg>, so the cursor has to
    be forced there rather than coming from the (rebuilt every move) badge under it. */
 svg#canvas.badge-scrubbing,
-svg#canvas.badge-scrubbing * {
+svg#canvas.badge-scrubbing *,
+svg#tileCanvas.badge-scrubbing,
+svg#tileCanvas.badge-scrubbing * {
   cursor: ew-resize !important;
 }
 
@@ -1511,3 +1512,77 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 }
 .brush-group .motif-preview { flex-wrap: wrap; }
 .brush-group .motif-preview .motif-preview-name:empty { display: none; }
+#dropOverlay { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: rgba(20, 20, 24, 0.55); border: 2px dashed #6b6cff; color: #e8e8ee; font-size: 18px; pointer-events: none; }
+#dropOverlay[hidden] { display: none; }
+
+/* A repeat pivot that is only a marker (one member selected, not the whole group): never takes a click. */
+.repeat-pivot-passive, .repeat-pivot-passive * { pointer-events: none !important; }
+
+/* Layer list drag and drop: line before/after a row, highlight on a group row, red when refused. */
+.layer-item.dragging { opacity: 0.45; }
+.layer-item.drop-above { box-shadow: 0 -3px 0 0 #4f8cff; }
+.layer-item.drop-below { box-shadow: 0 3px 0 0 #4f8cff; }
+.layer-item.drop-into { background: #1b2f4d; border-color: #4f8cff; }
+.layer-item.drop-bad.drop-above { box-shadow: 0 -3px 0 0 #ff6b6b; }
+.layer-item.drop-bad.drop-below { box-shadow: 0 3px 0 0 #ff6b6b; }
+.layer-item.drop-bad.drop-into { background: #3a1c1c; border-color: #ff6b6b; }
+.layer-drop-end { flex-shrink: 0; padding: 6px 8px; border: 1px dashed #3a3c46; border-radius: 6px; font-size: 11px; color: #8a8a92; text-align: center; }
+.layer-drop-end.drop-into { border-color: #4f8cff; background: #1b2f4d; color: #cfe0ff; }
+.layer-drop-end.drop-bad { border-color: #ff6b6b; background: #3a1c1c; }
+.layer-drop-msg { margin: 6px 0 0; font-size: 11.5px; color: #ff9a9a; }
+
+/* The Repeat panel now lives in the left column. */
+.sidebar .panel.fam-repeat { --fam: #ff3fa4; --fam-ink: #ff9fcf; }
+.ring-fill { pointer-events: none; }
+
+/* Ring mode: "Show Straight preview" toggle above the strip. Sticky to the left so it stays reachable when the wide strip scrolls. */
+.straight-toggle-row {
+  position: sticky;
+  left: 12px;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 -14px 12px;
+  font-size: 12px;
+  color: #d5d5da;
+  z-index: 2;
+}
+.straight-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.straight-toggle-note { color: #aeaeb6; font-size: 11px; }
+
+/* Glyph picker under the font list of a text layer (symbol-only fonts) */
+.glyph-box { margin-top: 6px; }
+.glyph-box[hidden] { display: none; }
+.glyph-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(26px, 1fr));
+  gap: 2px;
+  max-height: 128px;
+  overflow-y: auto;
+  margin-top: 4px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+.glyph-grid button {
+  padding: 0;
+  height: 26px;
+  font-size: 18px;
+  line-height: 1;
+  background: transparent;
+  color: #e0e0e0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.glyph-grid button:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.25); }
+
+/* Text panel: Character group (icons beside the names, caps / underline toggle row) */
+.sf-ico { display: inline-block; min-width: 18px; margin-right: 4px; color: #8a8a96; font-size: 11px; font-weight: 600; letter-spacing: -0.5px; }
+.sf-toggles.sf-toggles-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sf-toggles.sf-toggles-4 .sf-toggle:last-child:nth-child(odd) { grid-column: auto; }
+.sf-toggles-4 .sf-toggle span { font-weight: 600; min-height: 30px; }
+.sf-toggles-4 .tt-ul span { text-decoration: underline; }
+.sf-toggles-4 .tt-st span { text-decoration: line-through; }
+.sf-toggles-4 .tt-small small { font-size: 0.7em; }

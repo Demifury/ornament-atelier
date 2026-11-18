@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0e0f12" />
 <link rel="icon" type="image/png" href="images/icon-192.png" />
 <link rel="apple-touch-icon" href="images/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=67" />
+<link rel="stylesheet" href="style.css?v=75" />
 </head>
 <body>
 <div class="app">
@@ -34,13 +34,20 @@
 <div class="sf-grid">
 <div class="sf" title="Radius (position from center)">
 <div class="sf-head"><label for="ringRadiusNum">Radius</label></div>
-<div class="sf-box"><input type="range" id="ringRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="ringRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="ringRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="ringRadiusNum" min="0" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Stroke colour and width">
 <div class="sf-head"><label for="ringStrokeWidthNum">Stroke width</label></div>
 <div class="sf-box sf-box-color"><input type="color" id="ringStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="ringStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="ringStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
 </div>
+<div class="sf sf-wide" title="Fill the disc inside the ring (a cut ring fills as a pie slice). The Straight preview does not draw it.">
+<div class="sf-head"><label for="ringFillColor">Fill colour</label></div>
+<div class="sf-box sf-box-color"><input type="color" id="ringFillColor" class="sf-swatch sf-swatch-wide" aria-label="Fill colour" /></div>
+</div>
 </div></div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Fill the disc inside the ring (a cut ring fills as a pie slice)"><input type="checkbox" id="ringFillOn" /><span>Fill the disc</span></label>
+</div>
       </section>
 
       <section class="panel hidden fam-type" id="textPanel">
@@ -54,6 +61,7 @@
 <div class="sf sf-wide">
 <div class="sf-head"><label for="textFont">Font</label></div>
 <div class="sf-box"><select id="textFont"></select></div>
+<div class="glyph-box" id="textGlyphBox" hidden><p class="hint sf-hint">This font has symbols only: paste its characters, or pick one below.</p><div class="glyph-grid" id="textGlyphGrid" data-target="textContent"></div></div>
 </div>
 </div></div>
         <div class="sf-btns">
@@ -67,9 +75,23 @@
 <div class="sf-head"><label for="textColor">Colour</label></div>
 <div class="sf-box sf-box-color"><input type="color" id="textColor" class="sf-swatch sf-swatch-wide" aria-label="Text colour" /></div>
 </div>
-<div class="sf" title="Letter spacing (% of font size)">
-<div class="sf-head"><label for="textLetterSpacingNum">Letter spacing</label></div>
-<div class="sf-box"><input type="range" id="textLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="textLetterSpacingNum" min="-20" max="100" step="1" class="num-input sf-num" /></div>
+<div class="sf" title="Tracking: space between all letters (% of font size)">
+<div class="sf-head"><label for="textLetterSpacingNum"><span class="sf-ico" aria-hidden="true">VA</span>Tracking</label></div>
+<div class="sf-box"><input type="range" id="textLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="textLetterSpacingNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" title="Around the ring, or Radial: a straight line from the centre of the layer">
+<div class="sf-head"><label for="textDirection">Direction</label></div>
+<div class="sf-box"><select id="textDirection">
+<option value="around">Around the ring</option>
+<option value="radial">Radial (from the centre)</option>
+</select></div>
+</div>
+<div class="sf sf-wide" id="textReadField">
+<div class="sf-head"><label for="textRead">Read</label></div>
+<div class="sf-box"><select id="textRead">
+<option value="outward">Outward (starts at the radius)</option>
+<option value="inward">Inward (toward the centre)</option>
+</select></div>
 </div>
 <div class="sf sf-wide">
 <div class="sf-head"><label for="textAlign">Alignment</label></div>
@@ -80,7 +102,40 @@
 </select></div>
 </div>
 </div></div>
-        <div class="sf-toggles">
+        <div class="sf-group"><div class="sf-group-label">Character</div>
+<div class="sf-grid">
+<div class="sf" title="Leading: distance between lines (% of font size)">
+<div class="sf-head"><label for="textLeadingNum"><span class="sf-ico" aria-hidden="true">&#8597;</span>Leading</label></div>
+<div class="sf-box"><input type="range" id="textLeading" min="40" max="300" step="1" /><input type="text" inputmode="decimal" id="textLeadingNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Kerning: Auto uses the font's own pair kerning, None switches it off">
+<div class="sf-head"><label for="textKerning"><span class="sf-ico" aria-hidden="true">VA</span>Kerning</label></div>
+<div class="sf-box"><select id="textKerning"><option value="auto">Auto (font kerning)</option><option value="none">None</option></select></div>
+</div>
+<div class="sf" title="Horizontal scale of the letters (%)">
+<div class="sf-head"><label for="textScaleXNum"><span class="sf-ico" aria-hidden="true">&#8596;</span>Scale H</label></div>
+<div class="sf-box"><input type="range" id="textScaleX" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="textScaleXNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Vertical scale of the letters (%)">
+<div class="sf-head"><label for="textScaleYNum"><span class="sf-ico" aria-hidden="true">&#8597;</span>Scale V</label></div>
+<div class="sf-box"><input type="range" id="textScaleY" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="textScaleYNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Baseline shift (% of font size, + = outward / up)">
+<div class="sf-head"><label for="textBaselineNum"><span class="sf-ico" aria-hidden="true">Aa</span>Baseline</label></div>
+<div class="sf-box"><input type="range" id="textBaseline" min="-100" max="100" step="1" /><input type="text" inputmode="decimal" id="textBaselineNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Turns every letter by this many degrees">
+<div class="sf-head"><label for="textCharRotationNum"><span class="sf-ico" aria-hidden="true">&#8635;</span>Rotate</label></div>
+<div class="sf-box"><input type="range" id="textCharRotation" min="-180" max="180" step="1" /><input type="text" inputmode="decimal" id="textCharRotationNum" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+<div class="sf-toggles sf-toggles-4">
+<label class="sf-toggle tt-caps" title="All caps"><input type="checkbox" id="textAllCaps" /><span>TT</span></label>
+<label class="sf-toggle tt-small" title="Small caps (lower case drawn as capitals at 75%)"><input type="checkbox" id="textSmallCaps" /><span>T<small>T</small></span></label>
+<label class="sf-toggle tt-ul" title="Underline"><input type="checkbox" id="textUnderline" /><span>U</span></label>
+<label class="sf-toggle tt-st" title="Strikethrough"><input type="checkbox" id="textStrike" /><span>S</span></label>
+</div>
+        <div class="sf-toggles" id="textFitRow">
 <label class="sf-toggle"><input type="checkbox" id="textFitArc" /><span>Fit to arc (spread letters to fill it)</span></label>
 </div>
         <p class="hint sf-hint" id="textFitHint"></p>
@@ -107,11 +162,11 @@
 </div>
 <div class="sf" title="Radius (position from center)">
 <div class="sf-head"><label for="motifRadiusNum">Radius</label></div>
-<div class="sf-box"><input type="range" id="motifRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="motifRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="motifRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="motifRadiusNum" min="0" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf">
 <div class="sf-head"><label for="motifRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="motifRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="motifRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="motifRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="motifRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="motifRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-group"><div class="sf-group-label">Distribution</div>
@@ -122,7 +177,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="motifStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="motifStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="motifStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="motifStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="motifStartAngle" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="motifStartAngleNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" id="motifBendField" title="Bend (fit to circle)">
 <div class="sf-head"><label for="motifBendNum">Bend</label></div>
@@ -143,7 +198,7 @@
 <div class="sf-grid">
 <div class="sf" title="Radius (position from center)">
 <div class="sf-head"><label for="lineRadiusNum">Radius</label></div>
-<div class="sf-box"><input type="range" id="lineRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="lineRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="lineRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="lineRadiusNum" min="0" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf">
 <div class="sf-head"><label for="lineLengthNum">Length</label></div>
@@ -151,7 +206,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="lineRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="lineRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="lineRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="lineRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="lineRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="lineRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Stroke colour and width">
 <div class="sf-head"><label for="lineStrokeWidthNum">Stroke width</label></div>
@@ -166,7 +221,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="lineStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="lineStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="lineStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="lineStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="lineStartAngle" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="lineStartAngleNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-toggles">
@@ -180,7 +235,7 @@
 <div class="sf-grid">
 <div class="sf" title="Angle (0 = up, clockwise)">
 <div class="sf-head"><label for="straightAngleNum">Angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="straightAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="straightAngle" min="0" max="359" step="1" /><input type="text" inputmode="decimal" id="straightAngleNum" min="0" max="359" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="straightAngle" min="0" max="360" step="1" /><input type="text" inputmode="decimal" id="straightAngleNum" min="0" max="360" step="1" class="num-input sf-num" /></div>
 </div>
 <div class="sf">
 <div class="sf-head"><label for="straightLengthNum">Length</label></div>
@@ -188,7 +243,7 @@
 </div>
 <div class="sf" title="Offset (middle of the line, from the origin)">
 <div class="sf-head"><label for="straightOffsetNum">Offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="straightOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="straightOffset" min="-3000" max="3000" step="1" /><input type="text" inputmode="decimal" id="straightOffsetNum" min="-3000" max="3000" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="straightOffset" min="-3000" max="3000" step="1" /><input type="text" inputmode="decimal" id="straightOffsetNum" step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <p class="hint sf-hint">Offset = half the length makes a ray that starts at the origin.</p>
@@ -241,11 +296,11 @@
 <div class="sf-grid">
 <div class="sf" title="Radius (position from center)">
 <div class="sf-head"><label for="shapeRadiusNum">Radius</label></div>
-<div class="sf-box"><input type="range" id="shapeRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="shapeRadiusNum" min="50" max="1900" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="shapeRadius" min="50" max="1900" step="0.1" /><input type="text" inputmode="decimal" id="shapeRadiusNum" min="0" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Rotation">
 <div class="sf-head"><label for="shapeRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="shapeRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="shapeRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="shapeRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="shapeRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Width">
 <div class="sf-head"><label for="shapeSizeNum">Width</label></div>
@@ -264,7 +319,7 @@
 </div>
 <div class="sf" title="Start angle">
 <div class="sf-head"><label for="shapeStartAngleNum">Start angle</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeStartAngle" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="shapeStartAngle" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="shapeStartAngleNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="shapeStartAngle" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="shapeStartAngleNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Bend (fit to circle)">
 <div class="sf-head"><label for="shapeBendNum">Bend</label></div>
@@ -272,7 +327,7 @@
 </div>
 <div class="sf" title="Flip offset (align flipped copies)">
 <div class="sf-head"><label for="shapeFlipOffsetNum">Flip offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="shapeFlipOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="shapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="shapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="shapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="shapeFlipOffsetNum" step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-group"><div class="sf-group-label">Fill and stroke</div>
@@ -300,11 +355,11 @@
 <div class="sf-grid">
 <div class="sf" title="Origin X (offset from center)">
 <div class="sf-head"><label for="placeOriginXNum">Origin X</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeOriginX" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="placeOriginX" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginXNum" min="-2048" max="2048" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="placeOriginX" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginXNum" step="1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Origin Y (offset from center)">
 <div class="sf-head"><label for="placeOriginYNum">Origin Y</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeOriginY" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="placeOriginY" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginYNum" min="-2048" max="2048" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="placeOriginY" min="-2048" max="2048" step="1" /><input type="text" inputmode="decimal" id="placeOriginYNum" step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-btns">
@@ -327,7 +382,7 @@
 <div class="sf-grid">
 <div class="sf" data-arc-only title="Arc start (degrees)">
 <div class="sf-head"><label for="placeArcStartNum">Arc start</label><button type="button" class="reset-btn sf-reset" data-reset-target="placeArcStart" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="placeArcStart" min="0" max="359" step="1" /><input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="359" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="placeArcStart" min="0" max="360" step="1" /><input type="text" inputmode="decimal" id="placeArcStartNum" min="0" max="360" step="1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" data-arc-only title="Arc sweep (degrees)">
 <div class="sf-head"><label for="placeArcSweepNum">Arc sweep</label></div>
@@ -343,18 +398,64 @@
 </div>
 </div></div>
       </section>
+      <section class="panel fam-repeat" id="repeatPanel" style="display:none">
+        <h2>Repeat around a point</h2>
+        <p class="hint sf-hint">Copies of the group turned about the pink pivot, redrawn live as the group changes.</p>
+        <p class="hint sf-hint" id="repeatCapHint" hidden>Copy limit reached (5000 generated layers): the remaining copies are not drawn.</p>
+        <div class="sf-grid">
+<div class="sf" title="Total copies, the original included">
+<div class="sf-head"><label for="repeatCopiesNum">Copies</label></div>
+<div class="sf-box"><input type="range" id="repeatCopies" min="1" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatCopiesNum" min="1" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="360 = full circle; any other angle is an arc with a copy at both ends">
+<div class="sf-head"><label for="repeatTotalNum">Total angle</label></div>
+<div class="sf-box"><input type="range" id="repeatTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf sf-wide" title="Added to every copy's turn (the original stays where it is)">
+<div class="sf-head"><label for="repeatStartNum">Start angle</label></div>
+<div class="sf-box"><input type="range" id="repeatStart" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatStartNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-grid">
+<div class="sf" title="Pivot X (offset from center)">
+<div class="sf-head"><label for="repeatPivotXNum">Pivot X</label></div>
+<div class="sf-box"><input type="range" id="repeatPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotXNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot Y (offset from center)">
+<div class="sf-head"><label for="repeatPivotYNum">Pivot Y</label></div>
+<div class="sf-box"><input type="range" id="repeatPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotYNum" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-grid">
+<div class="sf sf-wide" title="Scale the whole group about the pink pivot (the pivot stays put)">
+<div class="sf-head"><label for="repeatScaleNum">Scale (% about the pivot)</label></div>
+<div class="sf-box"><input type="range" id="repeatScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="repeatScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
+<div class="sf-toggles"><label class="sf-toggle" title="Group scale also scales line widths (off: widths stay)"><input type="checkbox" id="repeatScaleStrokes" /><span>Scale line widths</span></label></div>
+</div>
+</div>
+        <div class="sf-btns">
+<button type="button" id="repeatCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
+</div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Turn each copy's own orientation with it (off: only its position moves)"><input type="checkbox" id="repeatRotate" /><span>Rotate copies</span></label>
+</div>
+        <div class="sf-btns">
+<button type="button" id="repeatExpandBtn" data-tip="Turn the copies into real layers (one group each)">Expand</button>
+<button type="button" id="repeatReleaseBtn" data-tip="Remove the repeat, keep the group">Release</button>
+</div>
+      </section>
 
       <div class="ornament-divider ornament-divider-export"></div>
       <section class="panel fam-export">
         <h2>Export — Images</h2>
-        <p class="hint sf-hint">Static pictures, full resolution. Ring: export 4096×4096. Straight: export full ring at max 12812px.</p>
+        <p class="hint sf-hint">Static pictures, full resolution. Ring: Exports a square centred on the ring centre, up to 4096 px. Straight: export full ring at max 12812px.</p>
         <div class="sf-sub">Ring editor</div>
         <div class="sf-btns">
 <button id="exportPngBtn">PNG</button>
 <button id="exportSvgBtn">SVG</button>
 </div>
         <div class="sf-sub">Straight preview</div>
-        <p class="hint sf-hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored, and straight line layers are not shown.</p>
+        <p class="hint sf-hint">Unrolls each layer around its own centre; origin offsets and mirroring are ignored, straight line layers and radial text are not shown.</p>
         <div class="sf-btns">
 <button id="exportStraightPngBtn">PNG</button>
 <button id="exportStraightSvgBtn">SVG</button>
@@ -393,7 +494,7 @@
 <div class="sf-grid">
 <div class="sf" title="Position (from center)">
 <div class="sf-head"><label for="smGuidePositionNum">Position</label></div>
-<div class="sf-box"><input type="range" id="smGuidePosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smGuidePositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smGuidePosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smGuidePositionNum" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Stroke colour and width">
 <div class="sf-head"><label for="smGuideStrokeWidthNum">Stroke width</label></div>
@@ -413,6 +514,7 @@
 <div class="sf sf-wide">
 <div class="sf-head"><label for="smTextFont">Font</label></div>
 <div class="sf-box"><select id="smTextFont"></select></div>
+<div class="glyph-box" id="smTextGlyphBox" hidden><p class="hint sf-hint">This font has symbols only: paste its characters, or pick one below.</p><div class="glyph-grid" id="smTextGlyphGrid" data-target="smTextContent"></div></div>
 </div>
 </div></div>
         <div class="sf-btns">
@@ -426,9 +528,9 @@
 <div class="sf-head"><label for="smTextColor">Colour</label></div>
 <div class="sf-box sf-box-color"><input type="color" id="smTextColor" class="sf-swatch sf-swatch-wide" aria-label="Text colour" /></div>
 </div>
-<div class="sf" title="Letter spacing (% of font size)">
-<div class="sf-head"><label for="smTextLetterSpacingNum">Letter spacing</label></div>
-<div class="sf-box"><input type="range" id="smTextLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="smTextLetterSpacingNum" min="-20" max="100" step="1" class="num-input sf-num" /></div>
+<div class="sf" title="Tracking: space between all letters (% of font size)">
+<div class="sf-head"><label for="smTextLetterSpacingNum"><span class="sf-ico" aria-hidden="true">VA</span>Tracking</label></div>
+<div class="sf-box"><input type="range" id="smTextLetterSpacing" min="-20" max="100" step="1" /><input type="text" inputmode="decimal" id="smTextLetterSpacingNum" step="1" class="num-input sf-num" /></div>
 </div>
 <div class="sf sf-wide">
 <div class="sf-head"><label for="smTextAlign">Line alignment</label></div>
@@ -439,6 +541,39 @@
 </select></div>
 </div>
 </div></div>
+        <div class="sf-group"><div class="sf-group-label">Character</div>
+<div class="sf-grid">
+<div class="sf" title="Leading: distance between lines (% of font size)">
+<div class="sf-head"><label for="smTextLeadingNum"><span class="sf-ico" aria-hidden="true">&#8597;</span>Leading</label></div>
+<div class="sf-box"><input type="range" id="smTextLeading" min="40" max="300" step="1" /><input type="text" inputmode="decimal" id="smTextLeadingNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Kerning: Auto uses the font's own pair kerning, None switches it off">
+<div class="sf-head"><label for="smTextKerning"><span class="sf-ico" aria-hidden="true">VA</span>Kerning</label></div>
+<div class="sf-box"><select id="smTextKerning"><option value="auto">Auto (font kerning)</option><option value="none">None</option></select></div>
+</div>
+<div class="sf" title="Horizontal scale of the letters (%)">
+<div class="sf-head"><label for="smTextScaleXNum"><span class="sf-ico" aria-hidden="true">&#8596;</span>Scale H</label></div>
+<div class="sf-box"><input type="range" id="smTextScaleX" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="smTextScaleXNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Vertical scale of the letters (%)">
+<div class="sf-head"><label for="smTextScaleYNum"><span class="sf-ico" aria-hidden="true">&#8597;</span>Scale V</label></div>
+<div class="sf-box"><input type="range" id="smTextScaleY" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="smTextScaleYNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Baseline shift (% of font size, + = outward / up)">
+<div class="sf-head"><label for="smTextBaselineNum"><span class="sf-ico" aria-hidden="true">Aa</span>Baseline</label></div>
+<div class="sf-box"><input type="range" id="smTextBaseline" min="-100" max="100" step="1" /><input type="text" inputmode="decimal" id="smTextBaselineNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Turns every letter by this many degrees">
+<div class="sf-head"><label for="smTextCharRotationNum"><span class="sf-ico" aria-hidden="true">&#8635;</span>Rotate</label></div>
+<div class="sf-box"><input type="range" id="smTextCharRotation" min="-180" max="180" step="1" /><input type="text" inputmode="decimal" id="smTextCharRotationNum" step="1" class="num-input sf-num" /></div>
+</div>
+</div></div>
+<div class="sf-toggles sf-toggles-4">
+<label class="sf-toggle tt-caps" title="All caps"><input type="checkbox" id="smTextAllCaps" /><span>TT</span></label>
+<label class="sf-toggle tt-small" title="Small caps (lower case drawn as capitals at 75%)"><input type="checkbox" id="smTextSmallCaps" /><span>T<small>T</small></span></label>
+<label class="sf-toggle tt-ul" title="Underline"><input type="checkbox" id="smTextUnderline" /><span>U</span></label>
+<label class="sf-toggle tt-st" title="Strikethrough"><input type="checkbox" id="smTextStrike" /><span>S</span></label>
+</div>
       </section>
 
       <section class="panel fam-asset" id="smMotifPanel">
@@ -462,11 +597,11 @@
 </div>
 <div class="sf" title="Position (from center)">
 <div class="sf-head"><label for="smMotifPositionNum">Position</label></div>
-<div class="sf-box"><input type="range" id="smMotifPosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smMotifPositionNum" min="-500" max="500" step="0.1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smMotifPosition" min="-500" max="500" step="0.1" /><input type="text" inputmode="decimal" id="smMotifPositionNum" step="0.1" class="num-input sf-num" /></div>
 </div>
 <div class="sf">
 <div class="sf-head"><label for="smMotifRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smMotifRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smMotifRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smMotifRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smMotifRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="smMotifRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-group"><div class="sf-group-label">Distribution</div>
@@ -477,7 +612,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="smMotifStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smMotifStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smMotifStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smMotifStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smMotifStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smMotifStartOffsetNum" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-toggles">
@@ -501,7 +636,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="smLineRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smLineRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smLineRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smLineRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smLineRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="smLineRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Stroke colour and width">
 <div class="sf-head"><label for="smLineStrokeWidthNum">Stroke width</label></div>
@@ -516,7 +651,7 @@
 </div>
 <div class="sf">
 <div class="sf-head"><label for="smLineStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smLineStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smLineStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smLineStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smLineStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smLineStartOffsetNum" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
       </section>
@@ -540,7 +675,7 @@
 </div>
 <div class="sf" title="Rotation">
 <div class="sf-head"><label for="smShapeRotationNum">Rotation</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeRotation" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smShapeRotation" min="0" max="359" step="5" /><input type="text" inputmode="decimal" id="smShapeRotationNum" min="0" max="359" step="5" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smShapeRotation" min="0" max="360" step="5" /><input type="text" inputmode="decimal" id="smShapeRotationNum" min="0" max="360" step="5" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Width">
 <div class="sf-head"><label for="smShapeSizeNum">Width</label></div>
@@ -559,11 +694,11 @@
 </div>
 <div class="sf" title="Start offset">
 <div class="sf-head"><label for="smShapeStartOffsetNum">Start offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeStartOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smShapeStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smShapeStartOffsetNum" min="-200" max="200" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smShapeStartOffset" min="-200" max="200" step="5" /><input type="text" inputmode="decimal" id="smShapeStartOffsetNum" step="5" data-wheel-step="1" class="num-input sf-num" /></div>
 </div>
 <div class="sf" title="Flip offset (align flipped copies)">
 <div class="sf-head"><label for="smShapeFlipOffsetNum">Flip offset</label><button type="button" class="reset-btn sf-reset" data-reset-target="smShapeFlipOffset" data-tip="Reset to 0" aria-label="Reset to 0"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button></div>
-<div class="sf-box"><input type="range" id="smShapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="smShapeFlipOffsetNum" min="-400" max="400" step="1" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="smShapeFlipOffset" min="-400" max="400" step="1" /><input type="text" inputmode="decimal" id="smShapeFlipOffsetNum" step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-group"><div class="sf-group-label">Fill and stroke</div>
@@ -574,7 +709,7 @@
 </div>
 <div class="sf" title="Stroke colour and width">
 <div class="sf-head"><label for="smShapeStrokeWidthNum">Stroke width</label></div>
-<div class="sf-box sf-box-color"><input type="color" id="smShapeStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="smShapeStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smShapeStrokeWidthNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
+<div class="sf-box sf-box-color"><input type="color" id="smShapeStrokeColor" class="sf-swatch" aria-label="Stroke colour" /><input type="range" id="smShapeStrokeWidth" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="smShapeStrokeWidthNum" min="0" step="1" class="num-input sf-num" /></div>
 </div>
 </div></div>
         <div class="sf-toggles">
@@ -637,7 +772,7 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Export PNG</td></tr>
         <tr><td><kbd>Ctrl</kbd> / <kbd>Alt</kbd> + <kbd>Scroll</kbd></td><td>Zoom at the pointer (also pinch)</td></tr>
         <tr><td><kbd>Space</kbd> + drag</td><td>Pan the preview (or middle-mouse drag)</td></tr>
-        <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit artboard / 100%</td></tr>
+        <tr><td><kbd>F</kbd> / <kbd>0</kbd> / <kbd>1</kbd></td><td>Fit design / fit centre / 100%</td></tr>
         <tr><td><kbd>Delete</kbd></td><td>Remove selected layers</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>G</kbd></td><td>Group the selected layers</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td><td>Ungroup the selected layers</td></tr>
@@ -715,9 +850,12 @@
 <div class="sf-head"><label for="layerOpacityNum">Layer opacity</label></div>
 <div class="sf-box"><input type="range" id="layerOpacity" min="0" max="100" step="1" /><input type="text" inputmode="decimal" id="layerOpacityNum" min="0" max="100" step="1" class="num-input sf-num" /></div>
 </div>
+<div class="sf sf-wide" id="layerMaskField" title="A mask layer is not drawn: where it would paint (fill and stroke, alpha included) it cuts a hole in every layer below it in the same group. Layers above it are not touched.">
+<div class="sf-toggles"><label class="sf-toggle"><input type="checkbox" id="layerMask" /><span>Mask (cut out below)</span></label></div>
+</div>
 <div class="sf" id="layerAnimSpeedField" title="Animation speed (degrees/second)">
 <div class="sf-head"><label for="layerAnimSpeedNum">Animation speed</label></div>
-<div class="sf-box"><input type="range" id="layerAnimSpeed" min="-5" max="5" step="0.05" /><input type="text" inputmode="decimal" id="layerAnimSpeedNum" min="-5" max="5" step="0.05" class="num-input sf-num" /></div>
+<div class="sf-box"><input type="range" id="layerAnimSpeed" min="-5" max="5" step="0.05" /><input type="text" inputmode="decimal" id="layerAnimSpeedNum" step="0.05" class="num-input sf-num" /></div>
 </div>
 <div class="sf sf-wide" id="groupScaleField" style="display:none" title="Scale (% of the group, about its pivot)">
 <div class="sf-head"><label for="groupScaleNum">Scale (% of the group)</label></div>
@@ -728,7 +866,7 @@
         <div class="sf-btns">
 <button type="button" id="randomizeSpeedsBtn">Randomize speeds</button>
 <button type="button" id="zeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset speeds</button>
-<button id="clearLayersBtn" title="Remove every layer">Clear layers</button>
+<button id="clearLayersBtn" title="Remove every layer">Clear All Layers</button>
 </div>
       </section>
       <section class="panel fam-blend" id="blendPanel" style="display:none">
@@ -748,57 +886,42 @@
 <option value="easeInOut">Ease in-out</option>
 </select></div>
 </div>
+<div class="sf sf-wide" id="blendPathField" title="Straight: the steps move from the start layer's origin to the end layer's. Around a point: they swing about a pivot.">
+<div class="sf-head"><label for="blendPath">Path</label></div>
+<div class="sf-box"><select id="blendPath">
+<option value="straight">Straight</option>
+<option value="around">Around a point</option>
+</select></div>
 </div>
+</div>
+        <div id="blendAroundBox" hidden>
+        <p class="hint sf-hint">The start layer stays where it is; the steps and the end layer swing about the pink pivot (the end layer's own position is ignored, its look is used).</p>
+        <div class="sf-grid">
+<div class="sf sf-wide" title="How far round the pivot the blend goes. 360 = full circle: the end layer sits one step before the start">
+<div class="sf-head"><label for="blendTotalNum">Total angle</label></div>
+<div class="sf-box"><input type="range" id="blendTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="blendTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot X (offset from center)">
+<div class="sf-head"><label for="blendPivotXNum">Pivot X</label></div>
+<div class="sf-box"><input type="range" id="blendPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotXNum" step="1" class="num-input sf-num" /></div>
+</div>
+<div class="sf" title="Pivot Y (offset from center)">
+<div class="sf-head"><label for="blendPivotYNum">Pivot Y</label></div>
+<div class="sf-box"><input type="range" id="blendPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="blendPivotYNum" step="1" class="num-input sf-num" /></div>
+</div>
+</div>
+        <div class="sf-btns">
+<button type="button" id="blendCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
+</div>
+        <div class="sf-toggles">
+<label class="sf-toggle" title="Turn each step's own orientation with it (off: only its position moves)"><input type="checkbox" id="blendRotate" /><span>Rotate copies</span></label>
+<label class="sf-toggle" title="Morph start, end, then back to start, so a full circle has no jump where it meets the start"><input type="checkbox" id="blendClose" /><span>Close loop</span></label>
+</div>
+        </div>
         <div class="sf-btns">
 <button type="button" id="blendSwapBtn" data-tip="Swap start and end layer">Swap start/end</button>
 <button type="button" id="blendExpandBtn" data-tip="Turn the in-between layers into real layers">Expand</button>
 <button type="button" id="blendReleaseBtn" data-tip="Remove the blend, keep start and end">Release</button>
-</div>
-      </section>
-      <section class="panel fam-repeat" id="repeatPanel" style="display:none">
-        <h2>Repeat around a point</h2>
-        <p class="hint sf-hint">Copies of the group turned about the pink pivot, redrawn live as the group changes.</p>
-        <p class="hint sf-hint" id="repeatCapHint" hidden>Copy limit reached (5000 generated layers): the remaining copies are not drawn.</p>
-        <div class="sf-grid">
-<div class="sf" title="Total copies, the original included">
-<div class="sf-head"><label for="repeatCopiesNum">Copies</label></div>
-<div class="sf-box"><input type="range" id="repeatCopies" min="1" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatCopiesNum" min="1" max="360" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf" title="360 = full circle; any other angle is an arc with a copy at both ends">
-<div class="sf-head"><label for="repeatTotalNum">Total angle</label></div>
-<div class="sf-box"><input type="range" id="repeatTotal" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatTotalNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf sf-wide" title="Added to every copy's turn (the original stays where it is)">
-<div class="sf-head"><label for="repeatStartNum">Start angle</label></div>
-<div class="sf-box"><input type="range" id="repeatStart" min="-360" max="360" step="1" /><input type="text" inputmode="decimal" id="repeatStartNum" min="-360" max="360" step="1" class="num-input sf-num" /></div>
-</div>
-</div>
-        <div class="sf-grid">
-<div class="sf" title="Pivot X (offset from center)">
-<div class="sf-head"><label for="repeatPivotXNum">Pivot X</label></div>
-<div class="sf-box"><input type="range" id="repeatPivotX" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotXNum" min="-8192" max="8192" step="1" class="num-input sf-num" /></div>
-</div>
-<div class="sf" title="Pivot Y (offset from center)">
-<div class="sf-head"><label for="repeatPivotYNum">Pivot Y</label></div>
-<div class="sf-box"><input type="range" id="repeatPivotY" min="-8192" max="8192" step="1" /><input type="text" inputmode="decimal" id="repeatPivotYNum" min="-8192" max="8192" step="1" class="num-input sf-num" /></div>
-</div>
-</div>
-        <div class="sf-grid">
-<div class="sf sf-wide" title="Scale the whole group about the pink pivot (the pivot stays put)">
-<div class="sf-head"><label for="repeatScaleNum">Scale (% about the pivot)</label></div>
-<div class="sf-box"><input type="range" id="repeatScale" min="10" max="400" step="1" /><input type="text" inputmode="decimal" id="repeatScaleNum" min="1" max="1000" step="1" class="num-input sf-num" /></div>
-<div class="sf-toggles"><label class="sf-toggle" title="Group scale also scales line widths (off: widths stay)"><input type="checkbox" id="repeatScaleStrokes" /><span>Scale line widths</span></label></div>
-</div>
-</div>
-        <div class="sf-btns">
-<button type="button" id="repeatCentreBtn" data-tip="Put the pivot on the artboard centre">Centre</button>
-</div>
-        <div class="sf-toggles">
-<label class="sf-toggle" title="Turn each copy's own orientation with it (off: only its position moves)"><input type="checkbox" id="repeatRotate" /><span>Rotate copies</span></label>
-</div>
-        <div class="sf-btns">
-<button type="button" id="repeatExpandBtn" data-tip="Turn the copies into real layers (one group each)">Expand</button>
-<button type="button" id="repeatReleaseBtn" data-tip="Remove the repeat, keep the group">Release</button>
 </div>
       </section>
       <section class="panel fam-effects" id="roughnessPanel">
@@ -920,7 +1043,7 @@
         <div class="sf-btns">
 <button type="button" id="smRandomizeSpeedsBtn">Randomize speeds</button>
 <button type="button" id="smZeroSpeedsBtn" title="Set every layer's animation speed to 0">Reset speeds</button>
-<button id="smClearLayersBtn" title="Remove every layer">Clear layers</button>
+<button id="smClearLayersBtn" title="Remove every layer">Clear All Layers</button>
 </div>
       </section>
       <section class="panel fam-effects" id="smRoughnessPanel">
@@ -964,7 +1087,11 @@
 
   <main class="preview">
     <div id="circleModePreview">
-      <div class="artboard-block">
+      <div class="straight-toggle-row" id="straightToggleRow">
+        <label class="straight-toggle"><input type="checkbox" id="straightPreviewToggle" checked /> Show Straight preview</label>
+        <span class="straight-toggle-note">Doesn't work with Repeat, Blend and layers moved off the centre.</span>
+      </div>
+      <div class="artboard-block" id="straightPreviewBlock">
         <div class="artboard-label">
           <div>Straight preview (unrolled, view/export only) <span class="artboard-size" id="straightSizeLabel"></span></div>
           <div class="artboard-disclaimer">(positions may not always render accurately)</div>
@@ -973,7 +1100,7 @@
       </div>
       <div class="artboard-block">
         <div class="artboard-label">
-          <div>Ring editor <span class="artboard-size">4096 × 4096 px</span></div>
+          <div>Ring editor <span class="artboard-size">infinite canvas</span></div>
           <div class="artboard-onscreen">shown at <span id="ringOnScreenSize">—</span> on screen</div>
         </div>
         <svg id="canvas" viewBox="0 0 4096 4096" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -1003,7 +1130,7 @@
         <input type="text" inputmode="decimal" id="ringZoomNum" min="10" max="800" step="10" class="num-input" />
         <span class="zoom-unit">%</span>
         <button type="button" class="zoom-btn" id="zoomFitDesignBtn" title="Frame all the artwork, including parts outside the artboard (F)">Fit design</button>
-        <button type="button" class="zoom-btn" id="zoomFitArtboardBtn" title="Frame the whole artboard (0)">Fit artboard</button>
+        <button type="button" class="zoom-btn" id="zoomFitArtboardBtn" title="Frame the 4096 units around the ring centre (0)">Fit centre</button>
         <button type="button" class="zoom-btn" id="zoom100Btn" title="Zoom to 100% (1)">100%</button>
       </div>
     </div>
@@ -1022,6 +1149,6 @@
   </div>
 </div>
 
-<script src="app.js?v=100"></script>
+<script src="app.js?v=115"></script>
 </body>
 </html>
