@@ -364,7 +364,10 @@
 </div></div>
         <div class="sf-btns">
 <button type="button" id="placeCentreBtn">Centre</button>
+<button type="button" id="placeGroupRingBtn" style="display:none" data-tip="Put this group's origin on the ring centre (0, 0); the members stay">Ring centre</button>
+<button type="button" id="placeGroupContentsBtn" style="display:none" data-tip="Put this group's origin on the middle of its painted bounding box; the members stay">Contents centre</button>
 </div>
+        <p class="hint sf-hint" id="placeGroupHint" style="display:none">Group origin: the point this group scales and turns about. Typing a value or pressing a button moves only the origin, not the members.</p>
         <div class="sf-group"><div class="sf-group-label">Symmetry</div>
 <div class="sf-grid">
 <div class="sf sf-wide">
@@ -834,7 +837,11 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td><td>Ungroup the selected layers</td></tr>
         <tr><td><kbd>Scroll</kbd> over a badge</td><td>Change its value by 1 (<kbd>Shift</kbd>: by 10)</td></tr>
         <tr><td><kbd>Drag</kbd> a badge left / right</td><td>Scrub its value (<kbd>Shift</kbd>: coarser); a plain click types one</td></tr>
-        <tr><td><kbd>Ctrl</kbd> / <kbd>Shift</kbd> + click a shape</td><td>Add or remove its layer in the selection</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></td><td>Copy / cut / paste the selected layers and groups (pasted above the selection, same place; also between tabs)</td></tr>
+        <tr><td>Click a shape</td><td>Select only that layer, even inside a group</td></tr>
+        <tr><td><kbd>Shift</kbd> + click a shape</td><td>Select its group; click again to go one level up</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + click a shape</td><td>Add or remove its layer in the selection</td></tr>
+        <tr><td><kbd>Alt</kbd> + click a group's arrow</td><td>Fold or unfold that group with everything inside it</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>Confirm layer rename</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Cancel layer rename</td></tr>
       </table>
@@ -846,7 +853,7 @@
     <div id="circleLayersPanel">
       <section class="panel fam-place">
         <h2>Layers</h2>
-        <p class="hint">Top = front. Ctrl/Shift+click selects several; Ctrl+G groups them.</p>
+        <p class="hint">Top = front. Ctrl+click adds or removes a layer, Shift+click selects a range; Ctrl+G groups them.</p>
         <div class="add-family fam-geom">
           <span class="add-family-label">Geometry</span>
           <div class="add-family-row">
@@ -874,6 +881,8 @@
           <button id="renameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
           <button id="groupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)" data-ico="group"><svg viewBox="0 0 24 24"></svg></button>
           <button id="ungroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
+          <button id="collapseAllGroupsBtn" class="icon-btn" data-tip="Collapse all groups" aria-label="Collapse all groups"><svg viewBox="0 0 24 24"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg></button>
+          <button id="expandAllGroupsBtn" class="icon-btn" data-tip="Expand all groups" aria-label="Expand all groups"><svg viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></svg></button>
           <span class="tip-wrap" id="blendBtnWrap" data-tip="Blend (Ctrl+Alt+B)"><button id="blendBtn" class="icon-btn" data-tip="Blend (Ctrl+Alt+B)" aria-label="Blend (Ctrl+Alt+B)" data-ico="blend"><svg viewBox="0 0 24 24"></svg></button></span>
           <span class="tip-wrap" id="repeatBtnWrap" data-tip="Repeat around a point"><button id="repeatBtn" class="icon-btn" data-tip="Repeat around a point" aria-label="Repeat around a point" data-ico="repeat"><svg viewBox="0 0 24 24"></svg></button></span>
           <button id="removeLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
@@ -975,7 +984,7 @@
       </section>
       <section class="panel fam-place">
         <h2>Layers</h2>
-        <p class="hint">Top = front. Ctrl/Shift+click selects several; Ctrl+G groups them.</p>
+        <p class="hint">Top = front. Ctrl+click adds or removes a layer, Shift+click selects a range; Ctrl+G groups them.</p>
         <div class="add-family fam-geom">
           <span class="add-family-label">Geometry</span>
           <div class="add-family-row">
@@ -1002,6 +1011,8 @@
           <button id="smRenameLayerBtn" class="icon-btn" data-tip="Rename layer" aria-label="Rename layer"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
           <button id="smGroupLayersBtn" class="icon-btn" data-tip="Group (Ctrl+G)" aria-label="Group (Ctrl+G)" data-ico="group"><svg viewBox="0 0 24 24"></svg></button>
           <button id="smUngroupLayersBtn" class="icon-btn" data-tip="Ungroup (Ctrl+Shift+G)" aria-label="Ungroup (Ctrl+Shift+G)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 13h6"/></svg></button>
+          <button id="smCollapseAllGroupsBtn" class="icon-btn" data-tip="Collapse all groups" aria-label="Collapse all groups"><svg viewBox="0 0 24 24"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg></button>
+          <button id="smExpandAllGroupsBtn" class="icon-btn" data-tip="Expand all groups" aria-label="Expand all groups"><svg viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></svg></button>
           <button id="smRemoveLayerBtn" class="icon-btn icon-btn-danger" data-tip="Remove layer" aria-label="Remove layer"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/></svg></button>
         </div>
         <div class="order-history-row">
@@ -1149,6 +1160,6 @@
   </div>
 </div>
 
-<script src="app.js?v=127"></script>
+<script src="app.js?v=130"></script>
 </body>
 </html>

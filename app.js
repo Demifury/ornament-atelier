@@ -1840,6 +1840,7 @@ function normalizeGroups(target) {
   target.groups = target.groups.filter((g) => used.has(g.id));
   for (const g of target.groups) if (g.blend && !blendMembersOk(target, g)) delete g.blend; // losing start or end releases the blend
   target.layers = flattenLayerTree(buildLayerTree(target)); // every group's subtree one block in the stacking order
+  if (target === state) fillGroupOrigins(target); // (Straight groups fill theirs on first use: smGroupOriginAt)
 }
 
 // Groups from a project file, checked rather than trusted.
@@ -1850,6 +1851,10 @@ function sanitizeGroups(raw, allowBlend = false) {
     if (!g || !Number.isFinite(g.id) || out.some((o) => o.id === g.id)) continue;
     const group = { id: g.id, name: typeof g.name === "string" && g.name ? g.name : `Group ${g.id}`, visible: g.visible !== false, parentId: Number.isFinite(g.parentId) ? g.parentId : null };
     if (Number.isFinite(g.scale) && g.scale > 0 && g.scale !== 100) group.scale = g.scale; // only groups that were scaled carry it
+    if (Number.isFinite(g.originX) && Number.isFinite(g.originY)) {
+      group.originX = Math.max(-GROUP_ORIGIN_LIMIT, Math.min(GROUP_ORIGIN_LIMIT, g.originX));
+      group.originY = Math.max(-GROUP_ORIGIN_LIMIT, Math.min(GROUP_ORIGIN_LIMIT, g.originY));
+    }
     if (allowBlend && g.blend && Number.isFinite(g.blend.startId) && Number.isFinite(g.blend.endId)) {
       group.blend = {
         startId: g.blend.startId,
@@ -1898,6 +1903,33 @@ function singleGroupSelected(target, g) {
   return !!s && s.gid === g.id && s.key === (target.selectedLayerIds || []).join(",");
 }
 
+// Shift+click on the canvas. `ids` = the single layers under the pointer, topmost first. The layer (one that is
+// already selected wins over the front one) stands for its innermost group; if that group is already
+// selected the click goes one level up, and so on to the outermost. A layer outside any group is just selected.
+function shiftSelectGroup(api, ids) {
+  const t = api.target;
+  if (!ids.length) return;
+  const sel = new Set(getSelectedLayersFrom(t).map((l) => l.id));
+  const id = ids.find((i) => sel.has(i)) ?? ids[0];
+  const layer = t.layers.find((l) => l.id === id);
+  if (!layer) return;
+  const chain = groupChainOf(t, layer).reverse(); // innermost first
+  if (chain.length === 0) {
+    api.select(id, {});
+    return;
+  }
+  let pick = chain[chain.length - 1];
+  for (const g of chain) {
+    const ls = subtreeLayers(t, g.id);
+    const selected = ls.every((l) => sel.has(l.id)) && (ls.length > 1 || singleGroupSelected(t, g));
+    if (!selected) {
+      pick = g;
+      break;
+    }
+  }
+  api.selectGroup(pick.id, {});
+}
+
 function selectGroupIn(api, gid, opts = {}) {
   resolveGroupSelection(api.target, gid, opts);
   api.updateSelection();
@@ -1936,6 +1968,44 @@ function cloneLayerData(layer, newId) {
   return clone;
 }
 
+// One whole group with everything below it (nested groups, layers), copied out of `src` ({ layers, groups }: a
+// target, or a clipboard) as fresh objects under new ids. The copy of `root` gets `parentId`; blend start/end are
+// re-pointed at the copies of their layers. Returns { groups, layers } (layers in block order); the new layer ids are
+// also pushed on `newIds`. Placing them is the caller's job. Shared by Duplicate and Paste.
+function cloneGroupTree(src, root, api, parentId, newIds) {
+  const ids = groupSubtreeIds(src, root.id);
+  const olds = src.groups.filter((g) => ids.has(g.id));
+  const gmap = new Map();
+  for (const g of olds) {
+    const copy = { id: nextGroupId++, name: g.id === root.id ? g.name + " copy" : g.name, visible: g.visible !== false, parentId: null };
+    if (g.scale) copy.scale = g.scale;
+    if (Number.isFinite(g.originX)) {
+      copy.originX = g.originX;
+      copy.originY = g.originY;
+    }
+    if (g.repeat) copy.repeat = { ...g.repeat };
+    if (g.mask) copy.mask = true;
+    gmap.set(g.id, copy);
+  }
+  for (const g of olds) gmap.get(g.id).parentId = g.id === root.id ? parentId : gmap.get(g.parentId).id;
+  const block = subtreeLayers(src, root.id);
+  const idMap = new Map();
+  const copies = block.map((m) => {
+    const c = cloneLayerData(m, api.nextId());
+    c.groupId = gmap.get(m.groupId).id;
+    idMap.set(m.id, c.id);
+    newIds.push(c.id);
+    return c;
+  });
+  // a blend keeps its settings and points at the copies of its start and end
+  for (const g of olds) {
+    if (g.blend && idMap.has(g.blend.startId) && idMap.has(g.blend.endId)) {
+      gmap.get(g.id).blend = { ...g.blend, startId: idMap.get(g.blend.startId), endId: idMap.get(g.blend.endId) };
+    }
+  }
+  return { groups: olds.map((g) => gmap.get(g.id)), layers: copies };
+}
+
 // Copies every selected layer, each right above its original. Where the selection covers a
 // whole group, the copies form a new group (new id) above the original block instead.
 function duplicateSelection(api) {
@@ -1948,34 +2018,10 @@ function duplicateSelection(api) {
   const plans = new Map(); // last layer of a whole group's block -> the copies to put after it
   const newIds = [];
   for (const root of items.groups) {
-    const ids = groupSubtreeIds(t, root.id);
-    const olds = t.groups.filter((g) => ids.has(g.id));
-    const gmap = new Map();
-    for (const g of olds) {
-      const copy = { id: nextGroupId++, name: g.id === root.id ? g.name + " copy" : g.name, visible: g.visible !== false, parentId: null };
-      if (g.scale) copy.scale = g.scale;
-      if (g.repeat) copy.repeat = { ...g.repeat };
-      if (g.mask) copy.mask = true;
-      gmap.set(g.id, copy);
-    }
-    for (const g of olds) gmap.get(g.id).parentId = g.id === root.id ? root.parentId ?? null : gmap.get(g.parentId).id;
     const block = subtreeLayers(t, root.id);
-    const idMap = new Map();
-    const copies = block.map((m) => {
-      const c = cloneLayerData(m, api.nextId());
-      c.groupId = gmap.get(m.groupId).id;
-      idMap.set(m.id, c.id);
-      newIds.push(c.id);
-      return c;
-    });
-    // a blend keeps its settings and points at the copies of its start and end
-    for (const g of olds) {
-      if (g.blend && idMap.has(g.blend.startId) && idMap.has(g.blend.endId)) {
-        gmap.get(g.id).blend = { ...g.blend, startId: idMap.get(g.blend.startId), endId: idMap.get(g.blend.endId) };
-      }
-    }
-    for (const g of olds) t.groups.push(gmap.get(g.id));
-    plans.set(block[block.length - 1], copies);
+    const made = cloneGroupTree(t, root, api, root.parentId ?? null, newIds);
+    for (const g of made.groups) t.groups.push(g);
+    plans.set(block[block.length - 1], made.layers);
   }
   const out = [];
   for (const l of t.layers) {
@@ -2011,6 +2057,145 @@ function removeSelection(api) {
   api.renderList();
   api.refresh();
   api.redraw();
+}
+
+// --- Clipboard: Ctrl+C / Ctrl+X / Ctrl+V (both modes) ---
+// Copy keeps the selection as plain data: its layers (stacking order) and the whole groups among them with their
+// subtree, blend / repeat / mask settings and assets. It is held in the page (pageClipboard) AND written as JSON
+// text (marker field) to the system clipboard, so a paste also works in another tab or window. Paste puts fresh
+// copies (new ids, blend start/end and group parents re-pointed: the Duplicate code, cloneGroupTree) right above
+// the current selection, in its group, at the same place on the canvas, or at the top with nothing selected.
+const CLIPBOARD_MARKER = "ornament-atelier-layers";
+let pageClipboard = null;
+
+function copySelection(api) {
+  const t = api.target;
+  const selected = getSelectedLayersFrom(t);
+  if (selected.length === 0) return false;
+  const items = selectionItems(t, selected);
+  const ownGroups = new Set();
+  for (const g of items.groups) groupSubtreeIds(t, g.id).forEach((id) => ownGroups.add(id));
+  const sel = new Set(selected.map((l) => l.id));
+  const layers = snapshotLayers(t.layers.filter((l) => sel.has(l.id)));
+  for (const l of layers) if (l.groupId != null && !ownGroups.has(l.groupId)) delete l.groupId; // a loose member leaves its group
+  const groups = JSON.parse(JSON.stringify(t.groups.filter((g) => ownGroups.has(g.id))));
+  for (const g of groups) if (items.groups.some((r) => r.id === g.id)) g.parentId = null;
+  const payload = { [CLIPBOARD_MARKER]: 1, mode: api === circleApi ? "circle" : "straight", layers, groups };
+  const fonts = collectProjectFonts(layers);
+  if (Object.keys(fonts).length) payload.fonts = fonts;
+  pageClipboard = payload;
+  try {
+    const p = navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(payload));
+    if (p && p.catch) p.catch(() => {}); // denied: the page clipboard still works in this tab
+  } catch (_) { /* no clipboard API */ }
+  setProjectStatus(`Copied ${layers.length} layer${layers.length === 1 ? "" : "s"}${groups.length ? ` and ${groups.length} group${groups.length === 1 ? "" : "s"}` : ""}.`);
+  return true;
+}
+
+function cutSelection(api) {
+  if (!copySelection(api)) return;
+  const n = pageClipboard.layers.length;
+  removeSelection(api); // one undo step
+  setProjectStatus(`Cut ${n} layer${n === 1 ? "" : "s"}. (Ctrl+Z puts them back.)`);
+}
+
+function parseClipboardPayload(text) {
+  if (typeof text !== "string" || text.indexOf(CLIPBOARD_MARKER) < 0) return null;
+  try {
+    const data = JSON.parse(text);
+    return data && data[CLIPBOARD_MARKER] === 1 && Array.isArray(data.layers) ? data : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+const CLIPBOARD_LAYER_TYPES = { circle: ["ring", "motif", "line", "shape", "text", "straight"], straight: ["line", "guide", "motif", "shape", "text"] };
+
+// Returns true when something was pasted. A payload from the other mode (or with layer types this mode does not
+// have) is refused with a message instead.
+async function pasteClipboardPayload(api, payload) {
+  const t = api.target;
+  const circle = api === circleApi;
+  const mode = circle ? "circle" : "straight";
+  const okTypes = CLIPBOARD_LAYER_TYPES[mode];
+  const rawLayers = Array.isArray(payload.layers) ? payload.layers : [];
+  const compatible = payload.mode === mode && rawLayers.length > 0 && rawLayers.every((l) => l && Number.isFinite(l.id) && okTypes.includes(l.type));
+  if (!compatible) {
+    setProjectStatus(payload.mode && payload.mode !== mode ? `Can't paste ${payload.mode === "circle" ? "Circle" : "Straight"} layers into ${circle ? "Circle" : "Straight"} mode: the two layer models differ.` : "Nothing to paste: the clipboard holds no layers for this mode.", true);
+    return false;
+  }
+  const clipLayers = circle ? withPlacementDefaults(snapshotLayers(rawLayers)) : snapshotLayers(rawLayers);
+  await restoreProjectFonts(payload.fonts, clipLayers);
+  const clipGroups = sanitizeGroups(payload.groups, circle);
+  const gids = new Set(clipGroups.map((g) => g.id));
+  for (const l of clipLayers) if (l.groupId != null && !gids.has(l.groupId)) delete l.groupId;
+  const src = { layers: clipLayers, groups: clipGroups };
+  // where: right above the front-most selected item, in its group (a Blend group is never pasted into)
+  const selected = getSelectedLayersFrom(t);
+  let afterIdx = t.layers.length - 1;
+  let parentId = null;
+  if (selected.length) {
+    const items = selectionItems(t, selected);
+    let best = -1;
+    for (const g of items.groups) {
+      const blk = subtreeLayers(t, g.id);
+      const idx = t.layers.indexOf(blk[blk.length - 1]);
+      if (idx > best) { best = idx; parentId = g.parentId ?? null; }
+    }
+    for (const l of items.layers) {
+      const idx = t.layers.indexOf(l);
+      if (idx > best) { best = idx; parentId = l.groupId ?? null; }
+    }
+    afterIdx = best;
+    while (parentId != null) {
+      const pg = groupById(t, parentId);
+      if (!pg || !pg.blend) break;
+      const blk = subtreeLayers(t, pg.id);
+      afterIdx = Math.max(afterIdx, t.layers.indexOf(blk[blk.length - 1]));
+      parentId = pg.parentId ?? null;
+    }
+  }
+  api.push(); // one undo step for the whole paste
+  const rootOf = (l) => {
+    let g = groupById(src, l.groupId);
+    for (let n = 0; g && g.parentId != null && gids.has(g.parentId) && n < 64; n++) g = groupById(src, g.parentId);
+    return g;
+  };
+  const done = new Set();
+  const pasted = [];
+  const newIds = [];
+  const newGroups = [];
+  const rootCopies = [];
+  for (const l of clipLayers) {
+    const root = l.groupId != null ? rootOf(l) : null;
+    if (root) {
+      if (done.has(root.id)) continue;
+      done.add(root.id);
+      const made = cloneGroupTree(src, root, api, parentId, newIds);
+      pasted.push(...made.layers);
+      newGroups.push(...made.groups);
+      rootCopies.push(made.groups[0]);
+    } else {
+      const c = cloneLayerData(l, api.nextId());
+      if (parentId == null) delete c.groupId;
+      else c.groupId = parentId;
+      newIds.push(c.id);
+      pasted.push(c);
+    }
+  }
+  t.layers.splice(afterIdx + 1, 0, ...pasted);
+  for (const g of newGroups) t.groups.push(g);
+  normalizeGroups(t);
+  t.selectedLayerIds = newIds;
+  t.activeLayerId = newIds[newIds.length - 1];
+  t.selGroup = null;
+  if (rootCopies.length === 1 && pasted.length === 1) markGroupSelection(t, rootCopies[0].id); // a group of one stays the group
+  reloadMissingImages(pasted, api.redraw);
+  api.renderList();
+  api.refresh();
+  api.redraw();
+  setProjectStatus(`Pasted ${pasted.length} layer${pasted.length === 1 ? "" : "s"}.`);
+  return true;
 }
 
 // Moves the selection one step toward the front ("up") or back, keeping its internal order.
@@ -2057,10 +2242,13 @@ function groupSelection(api, afterGroup) {
   const parents = new Set([...items.groups.map((g) => g.parentId ?? null), ...items.layers.map((l) => l.groupId ?? null)]);
   api.push();
   const gid = nextGroupId++;
-  t.groups.push({ id: gid, name: `Group ${gid}`, visible: true, parentId: parents.size === 1 ? [...parents][0] : null });
+  const ng = { id: gid, name: `Group ${gid}`, visible: true, parentId: parents.size === 1 ? [...parents][0] : null };
+  if (t === state) Object.assign(ng, { originX: 0, originY: 0 }); // Ring editor: a new group's origin is the ring centre
+  t.groups.push(ng);
   for (const g of items.groups) g.parentId = gid;
   for (const l of items.layers) l.groupId = gid;
   normalizeGroups(t);
+  if (t !== state) smGroupOriginAt(ng); // Straight: the origin starts at the middle of the members' first copies
   collapsedGroups.delete(gid);
   if (afterGroup) afterGroup(t.groups.find((g) => g.id === gid));
   if (selected.length === 1) markGroupSelection(t, gid); // a group of one stays selected as the group
@@ -2304,8 +2492,13 @@ function buildGroupRow(api, group, depth = 0) {
   });
   item.querySelector(".layer-collapse-btn").addEventListener("click", (e) => {
     e.stopPropagation();
-    if (collapsedGroups.has(group.id)) collapsedGroups.delete(group.id);
-    else collapsedGroups.add(group.id);
+    // Alt+click folds or unfolds the group's whole subtree (every group inside it) the same way
+    const fold = !collapsedGroups.has(group.id);
+    const ids = e.altKey ? groupSubtreeIds(api.target, group.id) : [group.id];
+    for (const id of ids) {
+      if (fold) collapsedGroups.add(id);
+      else collapsedGroups.delete(id);
+    }
     api.renderList();
   });
   item.addEventListener("click", (e) => api.selectGroup(group.id, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }));
@@ -2526,6 +2719,15 @@ function attachListDnD(api, list) {
   list.addEventListener("dragend", end);
 }
 
+// The two buttons above the layer list: fold or unfold every group of the mode (a view setting, not an undo step).
+function setAllGroupsCollapsed(api, collapsed) {
+  for (const g of api.target.groups) {
+    if (collapsed) collapsedGroups.add(g.id);
+    else collapsedGroups.delete(g.id);
+  }
+  api.renderList();
+}
+
 function updateLayerListSelectionIn(api) {
   const t = api.target;
   const selected = new Set(getSelectedLayersFrom(t).map((l) => l.id));
@@ -2607,6 +2809,53 @@ function blendIsAround(g) {
 // The object holding a group's pivot (pivotX / pivotY): its Repeat, else an "Around a point" blend.
 function pivotOf(g) {
   return g.repeat || (blendIsAround(g) ? g.blend : null);
+}
+
+// --- Group origin ---
+// Every group stores its own origin (group.originX / originY, artboard units from the ring centre). It is the point the
+// group Scale %, the rotate knob and the blue anchor work about; a Placement Origin edit or Alt+drag moves only this
+// point, never the members. A gesture that moves, turns or scales a selection carries the origins of every group wholly
+// inside it along (carriedOrigins), so nested groups stay attached to their members.
+const GROUP_ORIGIN_LIMIT = 100000;
+function groupOriginAt(g) {
+  return { x: Number.isFinite(g.originX) ? g.originX : 0, y: Number.isFinite(g.originY) ? g.originY : 0 };
+}
+
+function carriedGroups(layers) {
+  const sel = new Set(layers.map((l) => l.id));
+  return state.groups.filter((g) => {
+    const ls = subtreeLayers(state, g.id);
+    return ls.length > 0 && ls.every((l) => sel.has(l.id));
+  });
+}
+
+function carriedOrigins(layers) {
+  return carriedGroups(layers).map((g) => ({ g, x: groupOriginAt(g).x, y: groupOriginAt(g).y }));
+}
+
+// Ring editor, on load (and after a paste of an old payload): a group without a stored origin gets the point it used to
+// turn about, so nothing moves: the middle of its anchor points as selectionPoints counts them, and a Repeat group the
+// pink pivot.
+function fillGroupOrigins(target) {
+  if (target !== state) return;
+  for (const g of target.groups) {
+    if (Number.isFinite(g.originX) && Number.isFinite(g.originY)) continue;
+    if (g.repeat) {
+      g.originX = g.repeat.pivotX;
+      g.originY = g.repeat.pivotY;
+      continue;
+    }
+    const ls = subtreeLayers(target, g.id);
+    if (ls.length === 0) {
+      g.originX = 0;
+      g.originY = 0;
+      continue;
+    }
+    const { pts } = selectionPoints(ls);
+    const r4 = (v) => Math.round(v * 10000) / 10000 || 0;
+    g.originX = r4(pts.reduce((s, q) => s + q.x, 0) / pts.length - CENTER);
+    g.originY = r4(pts.reduce((s, q) => s + q.y, 0) / pts.length - CENTER);
+  }
 }
 
 function blendMetaText(group) {
@@ -3075,6 +3324,15 @@ function repeatCopyAngle(rep, k) {
   return rep.startAngle + k * repeatStepAngle(rep);
 }
 
+// A point turned by `deg` about the repeat pivot (the same maths as repeatTurnLayer).
+function repeatTurnPoint(rep, x, y, deg) {
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const r3 = (v) => Math.round(v * 1000) / 1000 || 0;
+  const rx = x - rep.pivotX, ry = y - rep.pivotY;
+  return { originX: r3(rep.pivotX + rx * cos - ry * sin), originY: r3(rep.pivotY + rx * sin + ry * cos) };
+}
+
 // One layer turned by `deg` (clockwise, like every angle here) about the pivot.
 function repeatTurnLayer(src, rep, deg) {
   const c = { ...src };
@@ -3223,6 +3481,9 @@ function createRepeatFromSelection() {
   if (whole) {
     pushHistory();
     whole.repeat = repeatDefaults();
+    // the stored origin starts on the pink pivot, so only one point shows (Alt+drag separates them)
+    whole.originX = whole.repeat.pivotX;
+    whole.originY = whole.repeat.pivotY;
     renderLayerList();
     refreshControls();
     render();
@@ -3273,7 +3534,12 @@ function expandRepeat() {
   for (const k of [...byCopy.keys()].sort((a, b) => a - b)) {
     // each copy is a sibling group "Copy N" with the same sub-groups as the original (flags dropped)
     const map = new Map();
-    for (const sg of subGroups) map.set(sg.id, { id: nextGroupId++, name: sg.id === g.id ? `Copy ${k + 1}` : sg.name, visible: sg.visible !== false, parentId: null });
+    const copyDeg = repeatCopyAngle(g.repeat, k);
+    for (const sg of subGroups) {
+      const ng = { id: nextGroupId++, name: sg.id === g.id ? `Copy ${k + 1}` : sg.name, visible: sg.visible !== false, parentId: null };
+      if (Number.isFinite(sg.originX)) Object.assign(ng, repeatTurnPoint(g.repeat, sg.originX, sg.originY, copyDeg)); // the copy's origin turns with its members
+      map.set(sg.id, ng);
+    }
     for (const sg of subGroups) {
       const ng = map.get(sg.id);
       ng.parentId = sg.id === g.id ? g.parentId ?? null : map.get(sg.parentId).id;
@@ -3423,7 +3689,7 @@ function applyPivotScale(g, raw, source) {
       base.set(l.id, { x: p.originX, y: p.originY, props });
     }
     const reps = state.groups.filter((x) => x !== g && pivotOf(x) && subIds.has(x.id)).map((x) => ({ g: x, x: pivotOf(x).pivotX, y: pivotOf(x).pivotY }));
-    gs = pivotScaleGesture = { gid: g.id, old, px: g.repeat.pivotX, py: g.repeat.pivotY, base, reps, historyLen: historyStack.length };
+    gs = pivotScaleGesture = { gid: g.id, old, px: g.repeat.pivotX, py: g.repeat.pivotY, base, reps, gbase: state.groups.filter((x) => subIds.has(x.id)).map((x) => ({ g: x, x: groupOriginAt(x).x, y: groupOriginAt(x).y })), historyLen: historyStack.length };
   }
   const ratio = newScale / gs.old;
   const r4 = (v) => Math.round(v * 10000) / 10000 || 0;
@@ -3433,6 +3699,10 @@ function applyPivotScale(g, raw, source) {
     l.originX = r4(gs.px + (b.x - gs.px) * ratio);
     l.originY = r4(gs.py + (b.y - gs.py) * ratio);
     for (const [prop, v] of Object.entries(b.props)) l[prop] = scaledValue(prop, v * ratio, l);
+  }
+  for (const r of gs.gbase) {
+    r.g.originX = r4(gs.px + (r.x - gs.px) * ratio);
+    r.g.originY = r4(gs.py + (r.y - gs.py) * ratio);
   }
   for (const r of gs.reps) {
     pivotOf(r.g).pivotX = r4(gs.px + (r.x - gs.px) * ratio);
@@ -3749,6 +4019,7 @@ function refreshControls() {
   if (mixedTypes) {
     [ringPanel, motifPanel, linePanel, shapePanel, textPanel, straightPanel].forEach((p) => p.classList.add("hidden"));
     markMixedFields(selection);
+    refreshGroupOriginUI();
     updateLayerListMeta();
     return;
   }
@@ -3881,12 +4152,72 @@ function refreshControls() {
   // Every field above was filled from the ACTIVE layer; this overwrites any of them the
   // rest of the selection disagrees on with a dash.
   markMixedFields(getSelectedLayers());
+  refreshGroupOriginUI();
   updateLayerListMeta();
 }
 
 // Placement panel — every layer type, so no per-type variants of these.
-bindControl("placeOriginX", (l, el) => (l.originX = Number(el.value)));
-bindControl("placeOriginY", (l, el) => (l.originY = Number(el.value)));
+// A whole group selected: the fields show and edit the group's stored origin (members stay put).
+function originEditGroup() {
+  return currentMode === "circle" ? selectedWholeGroup(state) : null;
+}
+bindControl("placeOriginX", (l, el) => {
+  const w = originEditGroup();
+  if (w) w.originX = Number(el.value);
+  else l.originX = Number(el.value);
+});
+bindControl("placeOriginY", (l, el) => {
+  const w = originEditGroup();
+  if (w) w.originY = Number(el.value);
+  else l.originY = Number(el.value);
+});
+
+function refreshGroupOriginUI() {
+  const w = originEditGroup();
+  const show = (id, on) => (document.getElementById(id).style.display = on ? "" : "none");
+  show("placeCentreBtn", !w);
+  show("placeGroupRingBtn", !!w);
+  show("placeGroupContentsBtn", !!w);
+  show("placeGroupHint", !!w);
+  if (!w) return;
+  const o = groupOriginAt(w);
+  setFieldValue("placeOriginX", o.x);
+  setFieldValue("placeOriginY", o.y);
+  for (const id of ["placeOriginXNum", "placeOriginYNum"]) {
+    const el = document.getElementById(id);
+    if (document.activeElement !== el) el.value = id === "placeOriginXNum" ? o.x : o.y;
+  }
+}
+
+// Middle of the group's painted bounding box (the drawn wrapper, repeat copies and blend steps included), relative to
+// the ring centre; null when nothing of it is drawn.
+function groupContentsCentre(g) {
+  const el = document.querySelector(`#canvas [data-group-id="${g.id}"]`);
+  if (!el) return null;
+  try {
+    const b = el.getBBox();
+    if (!(b.width > 0 || b.height > 0)) return null;
+    return { x: Math.round((b.x + b.width / 2 - CENTER) * 100) / 100, y: Math.round((b.y + b.height / 2 - CENTER) * 100) / 100 };
+  } catch (_) {
+    return null;
+  }
+}
+
+function setGroupOriginTo(getPoint) {
+  const w = originEditGroup();
+  if (!w) return;
+  const p = getPoint(w);
+  if (!p) return;
+  const o = groupOriginAt(w);
+  if (o.x === p.x && o.y === p.y) return;
+  pushHistory();
+  w.originX = p.x;
+  w.originY = p.y;
+  refreshControls();
+  render();
+}
+document.getElementById("placeGroupRingBtn").addEventListener("click", () => setGroupOriginTo(() => ({ x: 0, y: 0 })));
+document.getElementById("placeGroupContentsBtn").addEventListener("click", () => setGroupOriginTo(groupContentsCentre));
 bindControl("placeMirror", (l, el) => {
   if (el.value) l.mirror = el.value;
 });
@@ -4170,6 +4501,8 @@ document.getElementById("duplicateLayerBtn").addEventListener("click", duplicate
 document.getElementById("renameLayerBtn").addEventListener("click", () => renameSelection(circleApi));
 document.getElementById("groupLayersBtn").addEventListener("click", () => groupSelection(circleApi));
 document.getElementById("ungroupLayersBtn").addEventListener("click", () => ungroupSelection(circleApi));
+document.getElementById("collapseAllGroupsBtn").addEventListener("click", () => setAllGroupsCollapsed(circleApi, true));
+document.getElementById("expandAllGroupsBtn").addEventListener("click", () => setAllGroupsCollapsed(circleApi, false));
 document.getElementById("removeLayerBtn").addEventListener("click", removeLayer);
 document.getElementById("clearLayersBtn").addEventListener("click", clearLayers);
 document.getElementById("randomizeSpeedsBtn").addEventListener("click", randomizeAnimSpeeds);
@@ -6306,6 +6639,8 @@ function applyGlobalMask(content, mask, viewW, viewH, idPrefix, extent = 0) {
 // and clicked.
 const LAYER_MASK_EXTENT = 100000;
 let layerMaskSeq = 0;
+let maskMerge = true; // false = nested masks as before (kept as a switch for comparing renders)
+let circleMaskSeqEnd = 0; // where the Ring editor's mask ids stopped: the unrolled strip carries on from there (see renderStraight)
 
 function layerIsActiveMask(target, layer) {
   return !!layer.mask && layer.visible !== false && !groupHidden(target, layer);
@@ -6327,22 +6662,34 @@ function maskSvgEl(tag, attrs) {
 
 // The <mask> for `els` (the mask layer's rendered <g>s). Returns the mask, its id and the id of the group
 // holding the coloured originals (the editor ghost draws from it).
-function buildLayerMaskEl(els) {
-  const n = ++layerMaskSeq;
-  const id = `lmask-${n}`;
+// `into` (optional) = a mask built before ({ mask, id, n }): the new layers are added to THAT mask instead of
+// making another one (see applyLayerMasks: consecutive masks merge). Merging is exact: a mask is white with the mask
+// layer painted over it in black at its own alpha, so one more black layer over the same white gives
+// (1 - a1)(1 - a2), which is what two nested masks multiply to.
+function buildLayerMaskEl(els, into) {
   const E = LAYER_MASK_EXTENT;
   const region = { x: -E, y: -E, width: 2 * E, height: 2 * E };
-  const mask = maskSvgEl("mask", { id, maskUnits: "userSpaceOnUse", ...region });
-  mask.appendChild(maskSvgEl("rect", { ...region, fill: "#fff" }));
-  const filter = maskSvgEl("filter", { id: `${id}-k`, filterUnits: "userSpaceOnUse", ...region, "color-interpolation-filters": "sRGB" });
+  let mask, id, k;
+  if (into) {
+    mask = into.mask;
+    id = into.id;
+    k = ++into.n;
+  } else {
+    id = `lmask-${++layerMaskSeq}`;
+    k = 0;
+    mask = maskSvgEl("mask", { id, maskUnits: "userSpaceOnUse", ...region });
+    mask.appendChild(maskSvgEl("rect", { ...region, fill: "#fff" }));
+  }
+  const sfx = k ? `-${k}` : "";
+  const filter = maskSvgEl("filter", { id: `${id}-k${sfx}`, filterUnits: "userSpaceOnUse", ...region, "color-interpolation-filters": "sRGB" });
   filter.appendChild(maskSvgEl("feColorMatrix", { type: "matrix", values: "0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" }));
   mask.appendChild(filter);
-  const black = maskSvgEl("g", { filter: `url(#${id}-k)` });
-  const src = maskSvgEl("g", { id: `${id}-src` });
+  const black = maskSvgEl("g", { filter: `url(#${id}-k${sfx})` });
+  const src = maskSvgEl("g", { id: `${id}-src${sfx}` });
   for (const el of els) src.appendChild(el);
   black.appendChild(src);
   mask.appendChild(black);
-  return { mask, id, srcId: `${id}-src` };
+  return { mask, id, srcId: `${id}-src${sfx}`, ctx: into || { mask, id, n: 0 } };
 }
 
 // Editor-only: a faint outline of the mask layer's painted area. data-layer-id so it picks like the layer.
@@ -6376,6 +6723,7 @@ function applyLayerMasks(recs) {
   const unit = (renderReads && renderReads.unit) || 4;
   const edgeId = `lmask-edge-${layerMaskSeq + 1}`;
   ghosts.appendChild(maskSvgEl("defs", {})).appendChild(buildMaskEdgeFilter(edgeId, Math.max(0.3, 0.55 * unit)));
+  let prev = null; // the last wrapper made: { parent, wrap, ctx, label }
   for (const { layer, group, parent, els } of recs) {
     const first = els[0];
     const maskLabel = group ? group.name : layer.name;
@@ -6384,8 +6732,18 @@ function applyLayerMasks(recs) {
       if (nd === first) break;
       below.push(nd);
     }
-    const { mask, id, srcId } = buildLayerMaskEl(els); // moves els into the mask
-    if (below.length > 0) {
+    // A mask that follows another one in the same parent with nothing painted in between cuts exactly the
+    // wrapper the first one made: both go into ONE <mask> (a nested mask costs ~58 ms of raster each).
+    let merged = null;
+    if (maskMerge && prev && prev.parent === parent && below.length === 1 && below[0] === prev.wrap) {
+      merged = buildLayerMaskEl(els, prev.ctx);
+      prev.label += ` + ${maskLabel}`;
+      prev.wrap.dataset.maskName = `Mask: ${prev.label}`;
+    }
+    const { mask, id, srcId, ctx } = merged || buildLayerMaskEl(els); // moves els into the mask
+    if (merged) {
+      // (no new wrapper: the layers below stay in the first one)
+    } else if (below.length > 0) {
       const wrap = document.createElementNS(SVG_NS, "g");
       wrap.setAttribute("mask", `url(#${id})`);
       wrap.dataset.maskWrap = "1";
@@ -6393,6 +6751,7 @@ function applyLayerMasks(recs) {
       parent.insertBefore(wrap, below[0]);
       wrap.appendChild(mask);
       for (const nd of below) wrap.appendChild(nd);
+      prev = { parent, wrap, ctx, label: maskLabel };
     } else {
       parent.appendChild(mask); // nothing below: kept only so the ghost has something to draw
     }
@@ -6404,7 +6763,8 @@ function applyLayerMasks(recs) {
       outline.classList.remove("layer-hit");
       outline.setAttribute("pointer-events", "none");
       ghosts.appendChild(outline);
-      Array.from(mask.querySelectorAll(".layer-hit[data-layer-id]")).forEach((m, k) => {
+      const own = mask.querySelector(`[id="${srcId}"]`) || mask; // (a merged mask holds several parts: only this one's)
+      Array.from(own.querySelectorAll(".layer-hit[data-layer-id]")).forEach((m, k) => {
         const mid = m.getAttribute("id") || `${id}-m${k}`;
         m.setAttribute("id", mid);
         const hit = maskSvgEl("g", { "class": "layer-hit editor-only", opacity: 0 });
@@ -6525,6 +6885,12 @@ function selectionPoints(layers) {
 
 // Centre of the selection's anchor points, in canvas coordinates: what a group turns about.
 function selectionPivot(layers) {
+  // one whole group selected: its own stored origin (not the middle of its members)
+  const w = layers.length ? selectedWholeGroup(state) : null;
+  if (w && subtreeLayers(state, w.id).length === layers.length) {
+    const o = groupOriginAt(w);
+    return { x: CENTER + o.x, y: CENTER + o.y };
+  }
   const { pts } = selectionPoints(layers);
   return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length };
 }
@@ -7231,7 +7597,7 @@ function rescaleHandles() {
 // --- Draft mode and render coalescing ---
 // While a gesture is running (a handle, badge, pivot or origin drag, a slider or scrub, a wheel
 // burst) every redraw is a DRAFT: plain vector strokes (roughness counts as 0, see
-// effectiveRoughness), a bent asset or shape whose bitmap is not already cached is drawn flat,
+// effectiveRoughness), layer masks and mask groups are not applied (the mask itself shows faint), a bent asset or shape whose bitmap is not already cached is drawn flat,
 // and the Straight preview is not rebuilt. About DRAFT_END_MS after the last gesture signal, and
 // only once the pointer is up, endDraft() redraws once at full quality. Anything added later that
 // is expensive to draw (an art brush, say) should check `drafting` / effectiveRoughness() too.
@@ -7242,6 +7608,7 @@ let straightPreviewOn = true; // the "Show Straight preview" toggle (Ring mode);
 let draftTimer = null;
 let pointerIsDown = false;
 let renderQueued = false;
+const DRAFT_MASK_OPACITY = 0.3; // a mask layer or mask group drawn plain but faint while dragging (masks are skipped in a draft)
 
 function effectiveRoughness() {
   return drafting || brushOn(state.brush) ? 0 : state.roughness; // an art brush replaces roughness (shapes then draw plain)
@@ -7320,6 +7687,7 @@ function render() {
 
 function renderCircle(svg) {
   renderQueued = false; // a synchronous render satisfies any queued one
+  layerMaskSeq = 0; // mask ids restart every render, so the same design always makes the same SVG
   curBrush = state.brush;
   svg.innerHTML = "";
   const rough = effectiveRoughness();
@@ -7453,14 +7821,23 @@ function renderCircle(svg) {
     const firstIdx = parent.childNodes.length;
     parent.appendChild(layerG);
     appendMirrorTwins(parent, layerG, layer, place.mirror);
-    if (layer.mask && layerIsActiveMask(state, layer)) maskRecs.push({ layer, parent, els: Array.from(parent.childNodes).slice(firstIdx) });
+    if (layer.mask && layerIsActiveMask(state, layer)) {
+      // Draft (a gesture is running): no cut at all, the mask layer is only shown faintly where it is; the
+      // full masked result is drawn when the gesture ends.
+      if (drafting) layerG.setAttribute("opacity", ((layer.opacity != null ? layer.opacity : 100) / 100) * DRAFT_MASK_OPACITY);
+      else maskRecs.push({ layer, parent, els: Array.from(parent.childNodes).slice(firstIdx) });
+    }
   }
 
   for (const g of state.groups) {
     if (!groupIsActiveMask(state, g)) continue;
-    for (const wrap of content.querySelectorAll(`g[data-group-id="${g.id}"]`)) maskRecs.push({ group: g, parent: wrap.parentNode, els: [wrap] });
+    for (const wrap of content.querySelectorAll(`g[data-group-id="${g.id}"]`)) {
+      if (drafting) wrap.setAttribute("opacity", DRAFT_MASK_OPACITY);
+      else maskRecs.push({ group: g, parent: wrap.parentNode, els: [wrap] });
+    }
   }
   const maskGhosts = applyLayerMasks(maskRecs);
+  circleMaskSeqEnd = layerMaskSeq;
   applyGlobalMask(content, state.mask, CANVAS_SIZE, CANVAS_SIZE, "circle", INFINITE_MASK_EXTENT);
   svg.appendChild(content);
   scheduleDesignBox(content); // measured later (getBBox forces a layout of the whole drawing)
@@ -7562,37 +7939,32 @@ function makeLayerClickCycler(getTarget) {
   let lastTime = -1e9;
   let lastX = 0;
   let lastY = 0;
-  // The stack of ids under the pointer, topmost first. `drill` = the single layers (a Repeat copy or a
-  // Blend in-between resolves to the layer it was made from); otherwise a layer that sits in a group
-  // stands for the TOP-LEVEL group it belongs to ("g<id>"), Illustrator style.
-  const stack = (clientX, clientY, drill) => {
+  // The stack of single-layer ids under the pointer, topmost first (a Repeat copy or a Blend in-between
+  // resolves to the layer it was made from; a mask layer picks as itself). A group is reached with Shift+click
+  // (see shiftSelectGroup).
+  const stack = (clientX, clientY) => {
     const target = getTarget();
     const ids = [];
     for (const el of document.elementsFromPoint(clientX, clientY)) {
       const g = el.closest("g[data-layer-id]");
       if (!g) continue;
-      let id = g.dataset.repeatSrc != null ? Number(g.dataset.repeatSrc) : g.dataset.blendStart != null ? Number(g.dataset.blendStart) : Number(g.dataset.layerId);
-      if (!drill) {
-        const layer = target.layers.find((l) => l.id === id);
-        const top = layer ? groupChainOf(target, layer)[0] : null;
-        if (top) id = `g${top.id}`;
-      }
+      const id = g.dataset.repeatSrc != null ? Number(g.dataset.repeatSrc) : g.dataset.blendStart != null ? Number(g.dataset.blendStart) : Number(g.dataset.layerId);
       if (!ids.includes(id)) ids.push(id);
     }
     return ids;
   };
-  // `topOnly` (a Ctrl/Shift click, which adds to the selection) takes the front single layer instead of
+  // `topOnly` (a Ctrl+click, which toggles in the selection) takes the front single layer instead of
   // stepping down the stack. A second press within 350 ms and 6 px of the last one is a DOUBLE click (the
-  // browser's own dblclick event is lost because selecting rebuilds the drawing): it drills down to the
-  // front single layer under the pointer. The press time is also kept per pick, so a slow second click cycles.
+  // browser's own dblclick event is lost because selecting rebuilds the drawing): it picks the front layer
+  // again. The press time is also kept per pick, so a slower repeat click on the same spot cycles down the stack.
   const pick = (clientX, clientY, topOnly = false) => {
     const now = performance.now();
     if (!topOnly && now - lastTime < 350 && Math.hypot(clientX - lastX, clientY - lastY) < 6) {
-      const one = stack(clientX, clientY, true);
+      const one = stack(clientX, clientY);
       lastTime = -1e9;
       if (one.length) return one[0];
     }
-    const ids = stack(clientX, clientY, topOnly);
+    const ids = stack(clientX, clientY);
     if (ids.length === 0) {
       lastKey = "";
       lastIndex = -1;
@@ -7609,9 +7981,11 @@ function makeLayerClickCycler(getTarget) {
   };
   // Double click: the front single layer under the pointer (null on empty space).
   pick.drill = (clientX, clientY) => {
-    const ids = stack(clientX, clientY, true);
+    const ids = stack(clientX, clientY);
     return ids.length ? ids[0] : null;
   };
+  // Every single layer under the pointer, topmost first.
+  pick.all = (clientX, clientY) => stack(clientX, clientY);
   return pick;
 }
 
@@ -7655,11 +8029,24 @@ function moveOriginDrag(e) {
     drag.moved = true;
     pushHistory();
   }
+  if (drag.alt && drag.wholeG) {
+    // Alt+drag: only the group's stored origin moves, the members stay
+    drag.wholeG.originX = drag.alt.x + dx;
+    drag.wholeG.originY = drag.alt.y + dy;
+    refreshControls();
+    requestRender(true);
+    return;
+  }
   for (const layer of getSelectedLayers()) {
     const o = drag.origins.get(layer.id);
     if (!o) continue;
     layer.originX = o.x + dx;
     layer.originY = o.y + dy;
+  }
+  for (const r of drag.gorig || []) {
+    // groups wholly inside the selection carry their stored origins along
+    r.g.originX = r.x + dx;
+    r.g.originY = r.y + dy;
   }
   for (const r of drag.reps || []) {
     // a whole repeat group in the selection moves rigidly: members (above) and its pivot
@@ -7728,7 +8115,9 @@ function beginHandleDrag(e, kind, layerId) {
   // layer (or layers sharing one origin) just turns about its own.
   const groupMode = kind === "grouprotate" || kind === "groupradius" || base.size > 1;
   let pivot = origin;
-  if (base.size > 1) pivot = selectionPivot(getSelectedLayers());
+  const wholeG = groupMode ? selectedWholeGroup(state) : null; // a whole group turns/measures about its stored origin
+  const swing = base.size > 1 || !!wholeG;
+  if (swing) pivot = selectionPivot(getSelectedLayers());
   let reps = base.size > 1 ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: pivotOf(g).pivotX, y: pivotOf(g).pivotY })) : [];
   // A whole repeat group turns about its own pivot (which stays put); pivots nested inside swing.
   const repeatG = kind === "grouprotate" ? handleRepeatGroup() : null;
@@ -7744,6 +8133,8 @@ function beginHandleDrag(e, kind, layerId) {
     pointerId: e.pointerId,
     leadId: lead.id,
     repeatG: !!repeatG,
+    swing,
+    gorig: groupMode ? carriedOrigins(getSelectedLayers()) : [],
     start: clientToSvgPoint(svg, e.clientX, e.clientY),
     origin: ringOrigin,
     pivot,
@@ -7805,11 +8196,17 @@ function moveHandleDrag(e) {
       if (d.groupMode && l.followRing === false && l.type !== "text" && typeof b.rotation === "number") {
         l.rotation = round2(wrapDegrees(b.rotation + delta));
       }
-      if (d.base.size > 1 || d.repeatG) {
+      if (d.swing || d.repeatG) {
         const rx = CENTER + b.originX - d.pivot.x, ry = CENTER + b.originY - d.pivot.y;
         l.originX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
         l.originY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
       }
+    }
+    for (const r of d.gorig || []) {
+      // groups wholly inside the selection: their stored origins swing with their members
+      const rx = CENTER + r.x - d.pivot.x, ry = CENTER + r.y - d.pivot.y;
+      r.g.originX = round2(d.pivot.x + rx * cos - ry * sin - CENTER);
+      r.g.originY = round2(d.pivot.y + rx * sin + ry * cos - CENTER);
     }
     for (const r of d.reps || []) {
       // a whole repeat group in the selection turns as one point: its pivot swings with the rest
@@ -7920,7 +8317,7 @@ function onCanvasPointerDown(e) {
       }
       const reps = handlePivotGroups(rg, true);
       const pivot = { x: CENTER + pivotOf(rg).pivotX, y: CENTER + pivotOf(rg).pivotY };
-      originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
+      originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, gorig: carriedOrigins(getSelectedLayers()), moved: false };
       try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
     } else {
       beginRepeatPivotDrag(e, Number(pivotHandle.dataset.repeatPivot));
@@ -7944,7 +8341,9 @@ function onCanvasPointerDown(e) {
     }
     const pivot = e.target.closest("[data-origin-handle]").dataset.originHandle === "pivot" ? selectionPivot(getSelectedLayers()) : null;
     const reps = pivot ? anchorRepeatGroups(getSelectedLayers()).map((g) => ({ g, x: pivotOf(g).pivotX, y: pivotOf(g).pivotY })) : [];
-    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, moved: false };
+    const wholeG = pivot ? selectedWholeGroup(state) : null;
+    const alt = e.altKey && wholeG ? { x: groupOriginAt(wholeG).x, y: groupOriginAt(wholeG).y } : null;
+    originDrag = { pointerId: e.pointerId, start: clientToSvgPoint(svg, e.clientX, e.clientY), origins, pivot, reps, gorig: pivot ? carriedOrigins(getSelectedLayers()) : [], wholeG, alt, moved: false };
     svg.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
@@ -7955,13 +8354,18 @@ function onCanvasPointerDown(e) {
     e.preventDefault();
     return;
   }
-  // Ctrl/Cmd or Shift adds or removes the layer under the pointer, like the layer list.
-  const multi = e.ctrlKey || e.metaKey || e.shiftKey;
-  // A plain click picks the TOP-LEVEL group a layer sits in ("g<id>": a repeat copy counts as its source
-  // member); Ctrl/Shift+click toggles the single layer, a double click drills down to one layer.
+  // A plain click selects ONLY the layer under the pointer (a repeat copy or blend in-between counts as its
+  // source layer). Ctrl/Cmd+click adds or removes that layer (like the layer list). Shift+click selects its
+  // group, and again one level up (see shiftSelectGroup).
+  const multi = e.ctrlKey || e.metaKey;
+  if (e.shiftKey && !multi) {
+    const ids = pickCircleClickLayer.all(e.clientX, e.clientY);
+    if (ids.length) shiftSelectGroup(circleApi, ids);
+    else beginMarquee(e, "circle");
+    return;
+  }
   const id = pickCircleClickLayer(e.clientX, e.clientY, multi);
-  if (typeof id === "string") selectGroupIn(circleApi, Number(id.slice(1)), { toggle: multi });
-  else if (id != null) selectLayer(id, { toggle: multi });
+  if (id != null) selectLayer(id, { toggle: multi });
   else beginMarquee(e, "circle");
 }
 document.getElementById("canvas").addEventListener("pointerdown", onCanvasPointerDown);
@@ -7984,14 +8388,14 @@ document.getElementById("canvas").addEventListener("dblclick", (e) => {
 // --- Rubber-band (marquee) selection, Ring editor and Straight tile ---
 // Press on empty artboard and drag: a dashed rectangle (screen space, a plain DOM element so
 // render() never wipes it) and, on release, every visible layer whose DRAWN geometry meets it
-// is selected. Shift/Ctrl adds to the selection. Under 4 px is a plain click on empty space,
+// is selected. Ctrl adds to the selection. Under 4 px is a plain click on empty space,
 // which does nothing (as before). Escape cancels. The pointer is captured on the svg.
 const MARQUEE_MIN_PX = 4;
 let marquee = null;
 
 function beginMarquee(e, mode) {
   const svg = document.getElementById(mode === "circle" ? "canvas" : "tileCanvas");
-  marquee = { mode, svg, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, add: e.ctrlKey || e.metaKey || e.shiftKey, active: false };
+  marquee = { mode, svg, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, add: e.ctrlKey || e.metaKey, active: false };
   try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
   e.preventDefault(); // no text selection while dragging
 }
@@ -8790,6 +9194,7 @@ function drawStraightRingArcs(g, layer, maxR, padY, centerX) {
 
 function renderStraight(list = blendRenderLayers(state).list) {
   curBrush = state.brush;
+  layerMaskSeq = circleMaskSeqEnd; // the strip's masks number after the Ring editor's (both are in the page at once), the same every time
   const svg = document.getElementById("straightCanvas");
   svg.innerHTML = "";
   // Free straight lines belong to no ring, so there is nothing to unroll for them.
@@ -10285,9 +10690,11 @@ function applyGroupScale(api, source) {
     const pivot = {};
     for (const k of keys) pivot[k] = info.layers.reduce((sum, l) => sum + originOf(sc.mode, l, k), 0) / info.layers.length;
     if (sc.mode === "circle") {
-      const sp = selectionPivot(info.layers); // a whole repeat group in a multi-selection counts as its pivot
+      const sp = selectionPivot(info.layers); // a whole repeat group in a multi-selection counts as its pivot; a whole group: its stored origin
       pivot.originX = sp.x - CENTER;
       pivot.originY = sp.y - CENTER;
+    } else if (info.group) {
+      pivot.position = smGroupOriginAt(info.group).y;
     }
     const base = new Map();
     for (const l of info.layers) {
@@ -10296,10 +10703,20 @@ function applyGroupScale(api, source) {
       for (const prop of scalePropsFor(sc.mode, l.type)) if (typeof l[prop] === "number") snap.props[prop] = l[prop];
       base.set(l.id, snap);
     }
-    g = sc.gesture = { key: info.key, old, pivot, base, historyLen: api.historyLen() };
+    const gbase = sc.mode === "circle" ? carriedOrigins(info.layers) : smCarriedOrigins(info.layers);
+    g = sc.gesture = { key: info.key, old, pivot, base, gbase, historyLen: api.historyLen() };
   }
 
   const ratio = newScale / g.old;
+  for (const r of g.gbase || []) {
+    // stored group origins scale about the same point as their members
+    if (sc.mode === "circle") {
+      r.g.originX = Math.round((g.pivot.originX + (r.x - g.pivot.originX) * ratio) * 10000) / 10000 || 0;
+      r.g.originY = Math.round((g.pivot.originY + (r.y - g.pivot.originY) * ratio) * 10000) / 10000 || 0;
+    } else {
+      r.g.originY = Math.round((g.pivot.position + (r.y - g.pivot.position) * ratio) * 10000) / 10000 || 0;
+    }
+  }
   for (const l of info.layers) {
     const snap = g.base.get(l.id);
     if (!snap) continue;
@@ -10562,7 +10979,42 @@ function smSizeBall(layer) {
   return { a, ang, half, u, x: a.x + u.x * half, y: a.y + u.y * half };
 }
 
+// --- Group origin (Straight) ---
+// Same idea as the Ring editor's: a group stores its own origin (group.originX = x inside the centre tile, group.originY =
+// Position, both from the tile's top-left / middle line) that its Scale % works about and its blue anchor sits on. A group
+// without one (an old file) takes the middle of its members' first copies the first time it is used, so nothing moves.
+function smMeanAnchor(layers) {
+  if (layers.length === 0) return { x: 0, y: 0 };
+  const pts = layers.map(smAnchorOf);
+  const r4 = (v) => Math.round(v * 10000) / 10000 || 0;
+  return { x: r4(pts.reduce((s, q) => s + q.x, 0) / pts.length - smState.tileWidth), y: r4(pts.reduce((s, q) => s + q.y, 0) / pts.length - SM_CENTER_Y) };
+}
+
+function smGroupOriginAt(g) {
+  if (!Number.isFinite(g.originX) || !Number.isFinite(g.originY)) {
+    const m = smMeanAnchor(subtreeLayers(smState, g.id));
+    g.originX = m.x;
+    g.originY = m.y;
+  }
+  return { x: g.originX, y: g.originY };
+}
+
+function smCarriedOrigins(layers) {
+  const sel = new Set(layers.map((l) => l.id));
+  return smState.groups
+    .filter((g) => {
+      const ls = subtreeLayers(smState, g.id);
+      return ls.length > 0 && ls.every((l) => sel.has(l.id));
+    })
+    .map((g) => ({ g, x: smGroupOriginAt(g).x, y: smGroupOriginAt(g).y }));
+}
+
 function smGroupAnchor(layers) {
+  const w = layers.length ? selectedWholeGroup(smState) : null;
+  if (w && subtreeLayers(smState, w.id).length === layers.length) {
+    const o = smGroupOriginAt(w);
+    return { x: smState.tileWidth + o.x, y: SM_CENTER_Y + o.y };
+  }
   const pts = layers.map(smAnchorOf);
   return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length };
 }
@@ -10668,7 +11120,10 @@ function smBeginDrag(e, kind, leadId) {
     if (!info) return;
     scale0 = groupScaleValue(smApi, info);
   }
-  smDrag = { kind, pointerId: e.pointerId, svg, leadId: lead.id, start, base, pivot, scale0, dist0: Math.max(1, Math.hypot(start.x - pivot.x, start.y - pivot.y)), moved: false };
+  const wholeG = grouped && kind === "move" ? selectedWholeGroup(smState) : null;
+  const gorig = grouped && kind === "move" ? smCarriedOrigins(selected) : [];
+  const alt = wholeG && e.altKey ? { ...smGroupOriginAt(wholeG) } : null;
+  smDrag = { kind, pointerId: e.pointerId, svg, leadId: lead.id, start, base, pivot, gorig, wholeG, alt, scale0, dist0: Math.max(1, Math.hypot(start.x - pivot.x, start.y - pivot.y)), moved: false };
   try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
 }
 
@@ -10688,6 +11143,23 @@ function smMoveDrag(e) {
       else dx = 0;
     }
     const unit = svgUnitsPerPx(d.svg);
+    if (d.alt && d.wholeG) {
+      // Alt+drag: only the group's stored origin moves (Position snaps onto the middle line), the members stay
+      let ay = d.alt.y + dy;
+      if (Math.abs(ay) < SM_SNAP_PX * unit && !(e.shiftKey && dy === 0)) ay = 0;
+      const ax = Math.round(d.alt.x + dx);
+      ay = Math.round(ay);
+      if (!d.moved) {
+        if (ax === d.alt.x && ay === d.alt.y) return;
+        d.moved = true;
+        smPushHistory();
+      }
+      d.wholeG.originX = ax;
+      d.wholeG.originY = ay;
+      smRefreshControls();
+      requestRender(true);
+      return;
+    }
     // Position snaps onto the strip's middle line (the whole selection keeps its formation).
     dy = Math.abs(lb.position + dy) < SM_SNAP_PX * unit && !(e.shiftKey && dy === 0) ? -lb.position : Math.round(dy);
     dx = Math.round(dx);
@@ -10714,6 +11186,10 @@ function smMoveDrag(e) {
       if (!b) continue;
       l.position = Math.round((b.position + dy) * 10000) / 10000;
       if (b.startOffset != null) l.startOffset = b.startOffset + dx;
+    }
+    for (const r of d.gorig || []) {
+      r.g.originX = r.x + dx;
+      r.g.originY = Math.round((r.y + dy) * 10000) / 10000;
     }
     readout = `y ${lead.position}` + (lead.startOffset != null ? ` · x ${lead.startOffset}` : "");
   } else if (d.kind === "size") {
@@ -10801,7 +11277,7 @@ const pickStraightClickLayer = makeLayerClickCycler(() => smState);
 
 document.getElementById("tileCanvas").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+  const multi = e.ctrlKey || e.metaKey; // Ctrl+click toggles a layer; Shift+click selects its group (shiftSelectGroup)
   const badge = e.target.closest("[data-badge]");
   if (badge) {
     closeBadgeEditor(true);
@@ -10820,9 +11296,14 @@ document.getElementById("tileCanvas").addEventListener("pointerdown", (e) => {
     e.preventDefault();
     return;
   }
+  if (e.shiftKey && !multi) {
+    const ids = pickStraightClickLayer.all(e.clientX, e.clientY);
+    if (ids.length) shiftSelectGroup(smApi, ids);
+    else beginMarquee(e, "straight");
+    return;
+  }
   const id = pickStraightClickLayer(e.clientX, e.clientY, multi);
-  if (typeof id === "string") selectGroupIn(smApi, Number(id.slice(1)), { toggle: multi }); // plain click: the top-level group
-  else if (id != null) smSelectLayer(id, { toggle: multi });
+  if (id != null) smSelectLayer(id, { toggle: multi });
   else beginMarquee(e, "straight");
 });
 
@@ -11157,6 +11638,8 @@ document.getElementById("smDuplicateLayerBtn").addEventListener("click", smDupli
 document.getElementById("smRenameLayerBtn").addEventListener("click", () => renameSelection(smApi));
 document.getElementById("smGroupLayersBtn").addEventListener("click", () => groupSelection(smApi));
 document.getElementById("smUngroupLayersBtn").addEventListener("click", () => ungroupSelection(smApi));
+document.getElementById("smCollapseAllGroupsBtn").addEventListener("click", () => setAllGroupsCollapsed(smApi, true));
+document.getElementById("smExpandAllGroupsBtn").addEventListener("click", () => setAllGroupsCollapsed(smApi, false));
 document.getElementById("smRemoveLayerBtn").addEventListener("click", smRemoveLayer);
 document.getElementById("smClearLayersBtn").addEventListener("click", smClearLayers);
 document.getElementById("smRandomizeSpeedsBtn").addEventListener("click", smRandomizeAnimSpeeds);
@@ -12346,6 +12829,46 @@ document.addEventListener("keydown", (e) => {
   const api = currentMode === "circle" ? circleApi : smApi;
   if (e.shiftKey) ungroupSelection(api);
   else groupSelection(api);
+});
+
+// Ctrl+C / Ctrl+X copy or cut the selected layers (not while typing in a field, or with page text selected, where
+// the keys keep their normal behaviour). Paste is the browser's own `paste` event: it hands over the system
+// clipboard text without any permission, and a text field keeps its normal paste.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== "c" && k !== "x") return;
+  if (isTextEditingTarget(document.activeElement)) return;
+  if (window.getSelection && String(window.getSelection()).length) return;
+  const api = currentMode === "circle" ? circleApi : smApi;
+  if (getSelectedLayersFrom(api.target).length === 0) return;
+  e.preventDefault();
+  if (k === "c") copySelection(api);
+  else cutSelection(api);
+});
+
+// Safety net: if Ctrl+V gave no `paste` event within a moment (an embedded browser, a blocked clipboard), the
+// page clipboard is pasted instead.
+let pasteKeyPending = false;
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "v") return;
+  if (isTextEditingTarget(document.activeElement) || !pageClipboard) return;
+  pasteKeyPending = true;
+  setTimeout(() => {
+    if (!pasteKeyPending) return;
+    pasteKeyPending = false;
+    pasteClipboardPayload(currentMode === "circle" ? circleApi : smApi, pageClipboard);
+  }, 60);
+});
+
+document.addEventListener("paste", (e) => {
+  if (isTextEditingTarget(document.activeElement) || isTextEditingTarget(e.target)) return;
+  pasteKeyPending = false;
+  const text = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+  const payload = parseClipboardPayload(text) || pageClipboard;
+  if (!payload) return;
+  e.preventDefault();
+  pasteClipboardPayload(currentMode === "circle" ? circleApi : smApi, payload);
 });
 
 // --- Init ---

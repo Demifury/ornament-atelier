@@ -33,7 +33,7 @@ Both modes share the layer list, roughness and mask controls.
 
 ## Main tools
 
-- **Groups** – nest layers, hide or rename them, and move, scale or rotate a whole group at once; **Scale line widths** decides whether strokes get thinner and thicker with the group.
+- **Groups** – nest layers, hide or rename them, and move, scale or rotate a whole group at once; **Scale line widths** decides whether strokes get thinner and thicker with the group. Every group has its own **origin** (the blue anchor): the point its Scale % and rotate knob work about. A new group starts on the ring centre (Straight: the middle of its members); in the Placement panel the Origin fields, **Ring centre** and **Contents centre** move only that point, and so does Alt + dragging the anchor (a plain drag moves the whole group).
 - **Blend** (Circle mode) – pick two layers of the same type and generate smooth in-between steps, like a blend in a vector editor, either in a straight line or around a point, optionally closing the loop.
 - **Repeat around a point** (Circle mode) – copy a group around a pivot you place yourself, for rosettes and flowers of flowers.
 - **Roughness** – gives edges a hand-made, uneven look.
@@ -41,7 +41,7 @@ Both modes share the layer list, roughness and mask controls.
 - **Texture mask** – an uploaded texture that erases parts of the whole artwork, for a worn or printed look.
 - **Animation** – per-layer speed and an animated export.
 - **Handles and badges** – drag a layer's origin, radius or rotation in the preview, and edit count or size from small badges next to it.
-- **Layer list** – drag layers into and out of groups, select a single layer inside a group by its row or by double-clicking it, and deselect with Esc.
+- **Layer list** – drag layers into and out of groups, click a layer to select just that layer, Shift+click for its group, fold or unfold every group with the two buttons above the list, and deselect with Esc.
 - **Camera** – the canvas has no edge; zoom, pan, fit the design or the centre.
 
 ## Export
@@ -61,8 +61,11 @@ Both modes share the layer list, roughness and mask controls.
 | Ctrl + F | Open project |
 | Ctrl + E | Export PNG |
 | Ctrl + G / Ctrl + Shift + G | Group / ungroup |
+| Ctrl + C / Ctrl + X / Ctrl + V | Copy / cut / paste layers and groups (pasted above the selection in the same place; works between tabs) |
 | Delete | Remove selected layers |
 | Esc / Ctrl + Shift + A | Deselect |
+| Click / Shift + click / Ctrl + click a shape | Select that layer / its group (again: one level up) / add or remove the layer |
+| Alt + click a group's arrow | Fold or unfold the group and everything inside it |
 | Ctrl or Alt + scroll | Zoom |
 | Space + drag | Pan |
 | F / 0 / 1 | Fit design / fit centre / 100% |
