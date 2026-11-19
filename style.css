@@ -1628,3 +1628,6 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .mask-ghost.hot { opacity: 1; }
 #canvas.no-mask-outlines .mask-ghost { opacity: 0; }
 #addStraightBtn { flex: 1.7; font-size: 12px; gap: 4px; padding: 4px 4px; }
+/* Optional project name next to Save Project; it becomes part of the saved file name. */
+.project-name { display: block; width: 100%; box-sizing: border-box; margin: 0 0 8px; padding: 4px 6px; font-family: inherit; font-size: 12px; color: #e4e4e6; background: #0b0c0e; border: 1px solid #2c2d33; border-radius: 4px; }
+.project-name:focus { outline: none; border-color: #6b6cff; }

@@ -11646,11 +11646,201 @@ function maxLayerId(layers) {
   return layers.reduce((max, l) => Math.max(max, l.id), 0);
 }
 
-function saveProject() {
+// --- Project files as PNG ---
+// A save is one PNG: a preview of the design (what Explorer shows as the thumbnail) with the
+// full project JSON inside an iTXt chunk under PROJECT_PNG_KEYWORD. Open Project and drop read
+// it back; plain .json files from before still open. The JSON also carries name / createdAt /
+// savedAt / tags / note (projectMeta, one per mode); none of them changes the drawing.
+const PROJECT_PNG_KEYWORD = "ornament-atelier";
+const PROJECT_PREVIEW_SIZE = 1024;
+const PROJECT_PREVIEW_BG = "#0b0c0e";
+const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
+const projectMeta = { circle: null, straight: null };
+
+function currentProjectMeta() {
+  if (!projectMeta[currentMode]) projectMeta[currentMode] = { name: "", createdAt: null, tags: [], note: "" };
+  return projectMeta[currentMode];
+}
+
+function syncProjectNameField() {
+  const el = document.getElementById("projectName");
+  if (el) el.value = currentProjectMeta().name || "";
+}
+
+// Project JSON plus its metadata. `opts.createdAt` / `opts.savedAt` / `opts.name` / `opts.note`
+// override the mode's own (used when old files are converted).
+function buildProjectFileData(opts = {}) {
+  const meta = currentProjectMeta();
+  const now = new Date().toISOString();
   const data = buildProjectData();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  downloadBlob(blob, `ornament-${data.mode}.json`);
-  setProjectStatus(`Saved (${data.mode === "circle" ? "Circle" : "Straight"}).`);
+  return {
+    formatVersion: data.formatVersion,
+    app: "Ornament Atelier",
+    mode: data.mode,
+    name: opts.name ?? meta.name ?? "",
+    createdAt: opts.createdAt || meta.createdAt || now,
+    savedAt: opts.savedAt || now,
+    tags: Array.isArray(meta.tags) ? meta.tags.slice() : [],
+    note: opts.note ?? meta.note ?? "",
+    ...data,
+  };
+}
+
+const PROJECT_TYPE_WORDS = { ring: "ring", line: "line", straight: "straight", motif: "asset", shape: "shape", text: "text", guide: "guide" };
+
+// "7rings-2assets-r1900" (Circle: max ring radius) or "3lines-1text-w2000" (Straight: tile width).
+function projectFeatureSummary(data) {
+  const counts = new Map();
+  for (const l of data.layers || []) {
+    const w = PROJECT_TYPE_WORDS[l.type] || l.type || "layer";
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  const parts = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w, n]) => `${n}${w}${n === 1 ? "" : "s"}`);
+  if (parts.length === 0) parts.push("empty");
+  if (data.mode === "circle") {
+    const radii = (data.layers || []).filter((l) => l.type === "ring" && Number.isFinite(Number(l.radius))).map((l) => Number(l.radius));
+    if (radii.length) parts.push(`r${Math.round(Math.max(...radii))}`);
+  } else if (data.tileWidth) {
+    parts.push(`w${Math.round(data.tileWidth)}`);
+  }
+  return parts.join("-");
+}
+
+function safeFileNamePart(text) {
+  return String(text || "").normalize("NFC").trim().replace(/[\\/:*?"<>|\x00-\x1f]+/g, "").replace(/\s+/g, "-").replace(/^[.-]+|[.-]+$/g, "").slice(0, 60);
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+// ornament-circle_2026-11-19_14-32_7rings-2assets-r1900_name.png (local time of `when`)
+function projectFileName(data, when) {
+  const d = when instanceof Date ? when : new Date(when);
+  const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}_${pad2(d.getHours())}-${pad2(d.getMinutes())}`;
+  const name = safeFileNamePart(data.name);
+  return `ornament-${data.mode}_${stamp}_${projectFeatureSummary(data)}${name ? "_" + name : ""}.png`;
+}
+
+function loadSvgImage(svgString) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Couldn't draw the preview"));
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
+  });
+}
+
+// Square preview on the app background: the Ring export square, or the Straight tile cropped to its
+// painted band, fitted in the middle.
+async function renderProjectPreview(mode) {
+  const size = PROJECT_PREVIEW_SIZE;
+  const out = document.createElement("canvas");
+  out.width = size;
+  out.height = size;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = PROJECT_PREVIEW_BG;
+  ctx.fillRect(0, 0, size, size);
+  if (mode === "circle") {
+    const img = await loadSvgImage(withFrozenAnimation(() => getExportSvgString("canvas"), render));
+    ctx.drawImage(img, 0, 0, size, size);
+    return out;
+  }
+  const img = await loadSvgImage(withFrozenAnimation(() => smBuildExportSvgString()));
+  const w = smState.tileWidth;
+  const full = document.createElement("canvas");
+  full.width = w;
+  full.height = SM_HEIGHT;
+  const fctx = full.getContext("2d");
+  fctx.drawImage(img, 0, 0, w, SM_HEIGHT);
+  const b = verticalContentBounds(fctx, w, SM_HEIGHT) || { top: 0, bottom: SM_HEIGHT - 1 };
+  const margin = Math.round(w * 0.04);
+  const top = Math.max(0, b.top - margin);
+  const h = Math.min(SM_HEIGHT, b.bottom + margin + 1) - top;
+  const scale = Math.min((size * 0.94) / w, (size * 0.94) / h);
+  const dw = w * scale;
+  const dh = h * scale;
+  ctx.drawImage(full, 0, top, w, h, (size - dw) / 2, (size - dh) / 2, dw, dh);
+  return out;
+}
+
+async function zlibBytes(bytes, inflate) {
+  const stream = new Blob([bytes]).stream().pipeThrough(inflate ? new DecompressionStream("deflate") : new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function pngChunk(type, data) {
+  const head = new Uint8Array(8);
+  new DataView(head.buffer).setUint32(0, data.length);
+  const typeBytes = new TextEncoder().encode(type);
+  head.set(typeBytes, 4);
+  const crc = new Uint8Array(4);
+  new DataView(crc.buffer).setUint32(0, crc32(concatBytes([typeBytes, data])));
+  return concatBytes([head, data, crc]);
+}
+
+// iTXt, zlib-compressed: keyword \0 flag=1 method=0 language \0 translated keyword \0 text
+async function projectITxtChunk(json) {
+  const enc = new TextEncoder();
+  const text = await zlibBytes(enc.encode(json), false);
+  return pngChunk("iTXt", concatBytes([enc.encode(PROJECT_PNG_KEYWORD), new Uint8Array([0, 1, 0, 0, 0]), text]));
+}
+
+function isPngBytes(bytes) {
+  return bytes.length > 8 && PNG_SIGNATURE.every((v, i) => bytes[i] === v);
+}
+
+// The chunk goes right after IHDR (byte 33), so readers find it before the pixel data.
+async function buildProjectPng(data) {
+  const canvas = await renderProjectPreview(data.mode);
+  const png = new Uint8Array(await canvasToPngBuffer(canvas));
+  const chunk = await projectITxtChunk(JSON.stringify(data));
+  return new Blob([png.subarray(0, 33), chunk, png.subarray(33)], { type: "image/png" });
+}
+
+// The project JSON text inside a PNG, or null when the PNG has none.
+async function readProjectJsonFromPng(bytes) {
+  const dec = new TextDecoder();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 8;
+  while (pos + 12 <= bytes.length) {
+    const len = view.getUint32(pos);
+    const type = dec.decode(bytes.subarray(pos + 4, pos + 8));
+    const data = bytes.subarray(pos + 8, pos + 8 + len);
+    pos += 12 + len;
+    if (type === "IEND") break;
+    if (type !== "iTXt" && type !== "zTXt" && type !== "tEXt") continue;
+    const k = data.indexOf(0);
+    if (k < 0 || dec.decode(data.subarray(0, k)) !== PROJECT_PNG_KEYWORD) continue;
+    if (type === "tEXt") return dec.decode(data.subarray(k + 1));
+    if (type === "zTXt") return dec.decode(await zlibBytes(data.subarray(k + 2), true));
+    const compressed = data[k + 1] === 1;
+    let p = k + 3;
+    p = data.indexOf(0, p) + 1; // language tag
+    p = data.indexOf(0, p) + 1; // translated keyword
+    const body = data.subarray(p);
+    return dec.decode(compressed ? await zlibBytes(body, true) : body);
+  }
+  return null;
+}
+
+let saveInFlight = false;
+async function saveProject() {
+  if (saveInFlight) return;
+  saveInFlight = true;
+  try {
+    const data = buildProjectFileData();
+    const blob = await buildProjectPng(data);
+    const filename = projectFileName(data, new Date(data.savedAt));
+    downloadBlob(blob, filename);
+    currentProjectMeta().createdAt = data.createdAt;
+    setProjectStatus(`Saved "${filename}".`);
+  } catch (e) {
+    console.error(e);
+    setProjectStatus(`Couldn't save: ${e.message}`, true);
+  } finally {
+    saveInFlight = false;
+  }
 }
 
 // Startup only — populates BOTH modes at once from one bundled preset, so switching
@@ -11763,32 +11953,54 @@ function applyProjectData(data) {
   ensureAnimationRunning();
 }
 
-function loadProject(file) {
-  const reader = new FileReader();
-  reader.onload = async () => {
-    let data;
-    try {
-      data = JSON.parse(reader.result);
-    } catch (e) {
-      setProjectStatus("Couldn't read that file — not valid JSON.", true);
-      return;
+// Open Project: a project .png (JSON inside, see buildProjectPng) or a plain .json. Returns
+// true when a project was loaded (the converter for old saves waits on it).
+async function loadProject(file) {
+  let data;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let text;
+    if (isPngBytes(bytes)) {
+      text = await readProjectJsonFromPng(bytes);
+      if (text == null) {
+        setProjectStatus("That PNG has no Ornament Atelier project inside.", true);
+        return false;
+      }
+    } else {
+      text = new TextDecoder().decode(bytes);
     }
+    data = JSON.parse(text);
+  } catch (e) {
+    setProjectStatus("Couldn't read that file — not a project .png or valid JSON.", true);
+    return false;
+  }
+  {
     const isCurrentFormat = data && (data.mode === "circle" || data.mode === "straight") && Array.isArray(data.layers);
     const isOldFormat = data && data.circle && data.straight && Array.isArray(data.circle.layers) && Array.isArray(data.straight.layers);
     if (!isCurrentFormat && !isOldFormat) {
-      setProjectStatus("That file doesn't look like an Ornament Visualiser project.", true);
-      return;
+      setProjectStatus("That file doesn't look like an Ornament Atelier project.", true);
+      return false;
     }
     // Embedded fonts must have finished loading before the text layers are rasterised.
     if (isCurrentFormat) await restoreProjectFonts(data.fonts, data.layers);
     applyProjectData(data);
+    const mode = isCurrentFormat ? data.mode : "circle";
+    projectMeta[mode] = {
+      name: typeof data.name === "string" ? data.name : "",
+      createdAt: data.createdAt || null,
+      tags: Array.isArray(data.tags) ? data.tags.slice() : [],
+      note: typeof data.note === "string" ? data.note : "",
+    };
+    syncProjectNameField();
     setProjectStatus(`Loaded "${file.name}". (Ctrl+Z undoes the load.)`);
-  };
-  reader.onerror = () => setProjectStatus("Couldn't read that file.", true);
-  reader.readAsText(file);
+    return true;
+  }
 }
 
 document.getElementById("saveProjectBtn").addEventListener("click", saveProject);
+document.getElementById("projectName").addEventListener("input", (e) => {
+  currentProjectMeta().name = e.target.value;
+});
 document.getElementById("openProjectBtn").addEventListener("click", () => {
   document.getElementById("openProjectInput").click();
 });
@@ -11798,13 +12010,13 @@ document.getElementById("openProjectInput").addEventListener("change", (e) => {
   e.target.value = ""; // allow re-selecting the same file next time
 });
 
-// Drop a project .json anywhere on the window: same path as Open Project (loadProject, which
+// Drop a project .png or .json anywhere on the window: same path as Open Project (loadProject, which
 // detects the mode from the file, pushes undo and reports in the project status line). A
 // subtle overlay shows while a file is dragged over the window. Non-.json files are ignored.
 (() => {
   const overlay = document.createElement("div");
   overlay.id = "dropOverlay";
-  overlay.textContent = "Drop a project .json to open it";
+  overlay.textContent = "Drop a project .png or .json to open it";
   overlay.hidden = true;
   document.body.appendChild(overlay);
   let depth = 0;
@@ -11833,9 +12045,9 @@ document.getElementById("openProjectInput").addEventListener("change", (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault(); // never let the browser navigate to the dropped file
     hide();
-    const file = Array.from(e.dataTransfer.files).find((f) => /\.json$/i.test(f.name) || f.type === "application/json");
+    const file = Array.from(e.dataTransfer.files).find((f) => /\.(json|png)$/i.test(f.name) || f.type === "application/json" || f.type === "image/png");
     if (file) loadProject(file);
-    else setProjectStatus("Only project .json files can be dropped here.", true);
+    else setProjectStatus("Only project .png or .json files can be dropped here.", true);
   });
 })();
 
@@ -12055,6 +12267,7 @@ function setMode(mode) {
   document.getElementById("viewToggles").style.display = mode === "circle" ? "" : "none";
   document.getElementById("straightModePreview").style.display = mode === "straight" ? "" : "none";
   if (mode === "straight") smRender();
+  syncProjectNameField();
   // "Fit design" only means something for the Ring editor's off-artboard artwork.
   document.getElementById("zoomFitDesignBtn").hidden = mode !== "circle";
   {
@@ -12108,7 +12321,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Ctrl+S (or Cmd+S) saves the current project as a .json file, same as the "Save
+// Ctrl+S (or Cmd+S) saves the current project as a .png file (project inside), same as the "Save
 // Project" button — intercepted globally, even while a text field has focus, matching
 // the universal "Save" convention, and to stop the browser's native Save Page dialog.
 document.addEventListener("keydown", (e) => {
