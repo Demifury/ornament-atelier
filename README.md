@@ -50,7 +50,7 @@ Both modes share the layer list, roughness and mask controls.
 - SVG, as one file or as a layered file with named groups
 - PNG ZIP, with one image per layer
 - Animation as numbered PNG frames in a ZIP (Straight mode), ready for a video editor
-- Project files: each save is a PNG preview with the editable project inside, so you can see it in your file browser and open it again; drop a project file onto the page to open it (older .json saves still open)
+- Project files: each save is the full-size PNG export with the editable project inside, so you can see it in your file browser and open it again; drop a project file onto the page to open it (older .json saves still open)
 
 ## Shortcuts
 

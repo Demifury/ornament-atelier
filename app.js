@@ -9704,9 +9704,19 @@ document.getElementById("smFpsNum").addEventListener("input", smFpsInput);
 document.getElementById("smFpsNum").addEventListener("change", () => (smHistoryGestureOpen = false));
 
 document.getElementById("exportSvgBtn").addEventListener("click", () => exportSvg("canvas", "ornament.svg"));
-document.getElementById("exportPngBtn").addEventListener("click", () =>
-  exportPng("canvas", "ornament.png", CANVAS_SIZE, CANVAS_SIZE)
-);
+// The Circle editor's PNG: the 4096 px square centred on the ring centre. Also what Save Project writes.
+function renderCircleExportCanvas() {
+  const svgString = withFrozenAnimation(() => getExportSvgString("canvas"), render);
+  return rasterizeSvgToCanvas(svgString, CANVAS_SIZE, CANVAS_SIZE);
+}
+document.getElementById("exportPngBtn").addEventListener("click", async () => {
+  try {
+    const canvas = await renderCircleExportCanvas();
+    canvas.toBlob((blob) => downloadBlob(blob, withFileCode("ornament.png")), "image/png");
+  } catch (e) {
+    console.error(e);
+  }
+});
 document.getElementById("exportStraightSvgBtn").addEventListener("click", () => {
   if (!straightPreviewOn) renderStraight(); // hidden preview: render it just for this export
   exportSvg("straightCanvas", "ornament-straight.svg");
@@ -11307,33 +11317,34 @@ document.getElementById("smExportPngSeqBtn").addEventListener("click", () => {
   });
 });
 
-document.getElementById("smExportPngBtn").addEventListener("click", () => {
+// The Straight editor's PNG: one tile, trimmed top and bottom to the artwork. Also what Save Project writes.
+async function renderStraightExportCanvas() {
   const svgString = withFrozenAnimation(() => smBuildExportSvgString());
-  const svg64 = btoa(unescape(encodeURIComponent(svgString)));
-  const img = new Image();
-  img.onload = () => {
-    const full = document.createElement("canvas");
-    full.width = smState.tileWidth;
-    full.height = SM_HEIGHT;
-    const ctx = full.getContext("2d");
-    ctx.drawImage(img, 0, 0, smState.tileWidth, SM_HEIGHT);
+  const full = await rasterizeSvgToCanvas(svgString, smState.tileWidth, SM_HEIGHT);
+  const ctx = full.getContext("2d");
+  // The tile is always SM_HEIGHT tall internally, but a design usually occupies only a
+  // band of that — the empty rows above and below are dead weight in the saved file, so
+  // trim to the artwork. Width is untouched: cropping horizontally would break the
+  // seamless left/right repeat, whereas vertical padding carries no such meaning.
+  const bounds = verticalContentBounds(ctx, full.width, full.height);
+  let out = full;
+  if (bounds && (bounds.top > 0 || bounds.bottom < SM_HEIGHT - 1)) {
+    const cropH = bounds.bottom - bounds.top + 1;
+    out = document.createElement("canvas");
+    out.width = full.width;
+    out.height = cropH;
+    out.getContext("2d").drawImage(full, 0, bounds.top, full.width, cropH, 0, 0, full.width, cropH);
+  }
+  return out;
+}
 
-    // The tile is always SM_HEIGHT tall internally, but a design usually occupies only a
-    // band of that — the empty rows above and below are dead weight in the saved file, so
-    // trim to the artwork. Width is untouched: cropping horizontally would break the
-    // seamless left/right repeat, whereas vertical padding carries no such meaning.
-    const bounds = verticalContentBounds(ctx, full.width, full.height);
-    let out = full;
-    if (bounds && (bounds.top > 0 || bounds.bottom < SM_HEIGHT - 1)) {
-      const cropH = bounds.bottom - bounds.top + 1;
-      out = document.createElement("canvas");
-      out.width = full.width;
-      out.height = cropH;
-      out.getContext("2d").drawImage(full, 0, bounds.top, full.width, cropH, 0, 0, full.width, cropH);
-    }
+document.getElementById("smExportPngBtn").addEventListener("click", async () => {
+  try {
+    const out = await renderStraightExportCanvas();
     out.toBlob((blob) => downloadBlob(blob, withFileCode("ornament-tile.png")), "image/png");
-  };
-  img.src = "data:image/svg+xml;base64," + svg64;
+  } catch (e) {
+    console.error(e);
+  }
 });
 
 // --- Project save/load ---
@@ -11647,13 +11658,11 @@ function maxLayerId(layers) {
 }
 
 // --- Project files as PNG ---
-// A save is one PNG: a preview of the design (what Explorer shows as the thumbnail) with the
+// A save is one PNG: the full-size export image of the design (what Explorer shows as the thumbnail) with the
 // full project JSON inside an iTXt chunk under PROJECT_PNG_KEYWORD. Open Project and drop read
 // it back; plain .json files from before still open. The JSON also carries name / createdAt /
 // savedAt / tags / note (projectMeta, one per mode); none of them changes the drawing.
 const PROJECT_PNG_KEYWORD = "ornament-atelier";
-const PROJECT_PREVIEW_SIZE = 1024;
-const PROJECT_PREVIEW_BG = "#0b0c0e";
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 const projectMeta = { circle: null, straight: null };
 
@@ -11722,46 +11731,9 @@ function projectFileName(data, when) {
   return `ornament-${data.mode}_${stamp}_${projectFeatureSummary(data)}${name ? "_" + name : ""}.png`;
 }
 
-function loadSvgImage(svgString) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Couldn't draw the preview"));
-    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
-  });
-}
-
-// Square preview on the app background: the Ring export square, or the Straight tile cropped to its
-// painted band, fitted in the middle.
-async function renderProjectPreview(mode) {
-  const size = PROJECT_PREVIEW_SIZE;
-  const out = document.createElement("canvas");
-  out.width = size;
-  out.height = size;
-  const ctx = out.getContext("2d");
-  ctx.fillStyle = PROJECT_PREVIEW_BG;
-  ctx.fillRect(0, 0, size, size);
-  if (mode === "circle") {
-    const img = await loadSvgImage(withFrozenAnimation(() => getExportSvgString("canvas"), render));
-    ctx.drawImage(img, 0, 0, size, size);
-    return out;
-  }
-  const img = await loadSvgImage(withFrozenAnimation(() => smBuildExportSvgString()));
-  const w = smState.tileWidth;
-  const full = document.createElement("canvas");
-  full.width = w;
-  full.height = SM_HEIGHT;
-  const fctx = full.getContext("2d");
-  fctx.drawImage(img, 0, 0, w, SM_HEIGHT);
-  const b = verticalContentBounds(fctx, w, SM_HEIGHT) || { top: 0, bottom: SM_HEIGHT - 1 };
-  const margin = Math.round(w * 0.04);
-  const top = Math.max(0, b.top - margin);
-  const h = Math.min(SM_HEIGHT, b.bottom + margin + 1) - top;
-  const scale = Math.min((size * 0.94) / w, (size * 0.94) / h);
-  const dw = w * scale;
-  const dh = h * scale;
-  ctx.drawImage(full, 0, top, w, h, (size - dw) / 2, (size - dh) / 2, dw, dh);
-  return out;
+// The same image as the plain PNG export of the current mode, at full size.
+function renderProjectImage(mode) {
+  return mode === "circle" ? renderCircleExportCanvas() : renderStraightExportCanvas();
 }
 
 async function zlibBytes(bytes, inflate) {
@@ -11792,7 +11764,7 @@ function isPngBytes(bytes) {
 
 // The chunk goes right after IHDR (byte 33), so readers find it before the pixel data.
 async function buildProjectPng(data) {
-  const canvas = await renderProjectPreview(data.mode);
+  const canvas = await renderProjectImage(data.mode);
   const png = new Uint8Array(await canvasToPngBuffer(canvas));
   const chunk = await projectITxtChunk(JSON.stringify(data));
   return new Blob([png.subarray(0, 33), chunk, png.subarray(33)], { type: "image/png" });
@@ -11829,6 +11801,8 @@ async function saveProject() {
   if (saveInFlight) return;
   saveInFlight = true;
   try {
+    setProjectStatus("Saving…");
+    await new Promise((r) => setTimeout(r, 30)); // let the status paint before the heavy render
     const data = buildProjectFileData();
     const blob = await buildProjectPng(data);
     const filename = projectFileName(data, new Date(data.savedAt));
