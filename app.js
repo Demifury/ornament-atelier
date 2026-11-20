@@ -10110,9 +10110,22 @@ document.getElementById("smFpsNum").addEventListener("change", () => (smHistoryG
 
 document.getElementById("exportSvgBtn").addEventListener("click", () => exportSvg("canvas", "ornament.svg"));
 // The Circle editor's PNG: the 4096 px square centred on the ring centre. Also what Save Project writes.
-function renderCircleExportCanvas() {
+// Save Project passes `background` (the app's dark colour) so the saved PNG is opaque; the plain export stays transparent.
+const PROJECT_PNG_BG = "#0b0c0e";
+function paintBackground(canvas, background) {
+  if (!background) return canvas;
+  const out = document.createElement("canvas");
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, 0, 0);
+  return out;
+}
+async function renderCircleExportCanvas(background) {
   const svgString = withFrozenAnimation(() => getExportSvgString("canvas"), render);
-  return rasterizeSvgToCanvas(svgString, CANVAS_SIZE, CANVAS_SIZE);
+  return paintBackground(await rasterizeSvgToCanvas(svgString, CANVAS_SIZE, CANVAS_SIZE), background);
 }
 document.getElementById("exportPngBtn").addEventListener("click", async () => {
   try {
@@ -11801,7 +11814,7 @@ document.getElementById("smExportPngSeqBtn").addEventListener("click", () => {
 });
 
 // The Straight editor's PNG: one tile, trimmed top and bottom to the artwork. Also what Save Project writes.
-async function renderStraightExportCanvas() {
+async function renderStraightExportCanvas(background) {
   const svgString = withFrozenAnimation(() => smBuildExportSvgString());
   const full = await rasterizeSvgToCanvas(svgString, smState.tileWidth, SM_HEIGHT);
   const ctx = full.getContext("2d");
@@ -11818,7 +11831,7 @@ async function renderStraightExportCanvas() {
     out.height = cropH;
     out.getContext("2d").drawImage(full, 0, bounds.top, full.width, cropH, 0, 0, full.width, cropH);
   }
-  return out;
+  return paintBackground(out, background);
 }
 
 document.getElementById("smExportPngBtn").addEventListener("click", async () => {
@@ -12214,9 +12227,9 @@ function projectFileName(data, when) {
   return `ornament-${data.mode}_${stamp}_${projectFeatureSummary(data)}${name ? "_" + name : ""}.png`;
 }
 
-// The same image as the plain PNG export of the current mode, at full size.
+// The plain PNG export of the current mode at full size, on the dark app background.
 function renderProjectImage(mode) {
-  return mode === "circle" ? renderCircleExportCanvas() : renderStraightExportCanvas();
+  return mode === "circle" ? renderCircleExportCanvas(PROJECT_PNG_BG) : renderStraightExportCanvas(PROJECT_PNG_BG);
 }
 
 async function zlibBytes(bytes, inflate) {
@@ -13133,8 +13146,12 @@ resetPreviewView();
       apply();
       save();
     };
-    t.head.addEventListener("click", toggle);
+    // Buttons inside a heading (Undo / Redo in the Layers title) are not part of the fold toggle.
+    t.head.addEventListener("click", (e) => {
+      if (!e.target.closest("button")) toggle();
+    });
     t.head.addEventListener("keydown", (e) => {
+      if (e.target.closest("button")) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         toggle();

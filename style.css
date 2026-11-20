@@ -565,108 +565,6 @@ input[type="file"] {
   background: #232429;
 }
 
-/* Move Up / Move Down stacked on the left, Undo and Redo as two tall buttons beside
-   them spanning both rows — the pair reads as one "history" control next to the
-   "reorder" control, rather than four equal buttons in a row. */
-.order-history-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  align-items: stretch;
-}
-
-.move-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.move-stack button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  border: 1px solid #2c2d33;
-  border-radius: 6px;
-  background: #1a1b1f;
-  color: #e4e4e6;
-  cursor: pointer;
-  text-align: left;
-}
-
-.move-stack button:hover {
-  background: #232429;
-}
-
-/* The page font (Caudex) has no arrow glyphs, so it would silently fall back to some
-   arbitrary system face. Naming symbol-capable fonts explicitly keeps the arrow
-   consistent, and slightly larger/dimmer so it reads as an icon beside the label. */
-.btn-arrow {
-  font-family: "Segoe UI Symbol", "Apple Symbols", "Noto Sans Symbols 2", sans-serif;
-  font-size: 14px;
-  line-height: 1;
-  color: #9a9aa2;
-  flex-shrink: 0;
-}
-
-.move-stack button:hover .btn-arrow {
-  color: #e4e4e6;
-}
-
-.history-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  flex-shrink: 0;
-  padding: 0;
-  border: 1px solid #2c2d33;
-  border-radius: 6px;
-  background: #1a1b1f;
-  color: #9a9aa2;
-  cursor: pointer;
-}
-
-.history-btn:hover {
-  background: #232429;
-  color: #ffffff;
-}
-
-.history-btn svg {
-  display: block;
-}
-
-#duplicateLayerBtn,
-#smDuplicateLayerBtn {
-  background: #1B211A;
-  border-color: #1B211A;
-}
-
-#renameLayerBtn,
-#smRenameLayerBtn {
-  background: #132440;
-  border-color: #132440;
-  color: #e4e4e6;
-}
-
-#removeLayerBtn,
-#smRemoveLayerBtn {
-  background: #280905;
-  border-color: #280905;
-}
-
-#duplicateLayerBtn:hover,
-#renameLayerBtn:hover,
-#removeLayerBtn:hover,
-#smDuplicateLayerBtn:hover,
-#smRenameLayerBtn:hover,
-#smRemoveLayerBtn:hover {
-  filter: brightness(1.25);
-}
-
 .layer-list {
   display: flex;
   flex-direction: column;
@@ -1242,7 +1140,6 @@ kbd {
   stroke-linejoin: round;
 }
 .add-btn svg { stroke: var(--fam); }
-.layer-actions { display: flex; gap: 6px; margin: 10px 0 8px; }
 .icon-btn {
   flex: 1;
   display: flex;
@@ -1270,17 +1167,7 @@ kbd {
   white-space: nowrap;
 }
 .add-btn:hover, .icon-btn:hover { background: #232429; }
-.layer-actions .icon-btn { background: #1a1b1f; border-color: #2c2d33; }
-.layer-actions .icon-btn:hover { background: #232429; }
-.layer-actions .icon-btn-danger { color: #e57373; border-color: #4a1a14; }
-.layer-actions .icon-btn-danger:hover { background: #280905; }
 .icon-btn:disabled, .add-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.layer-actions #duplicateLayerBtn, .layer-actions #smDuplicateLayerBtn,
-.layer-actions #renameLayerBtn, .layer-actions #smRenameLayerBtn { background: #1a1b1f; border-color: #2c2d33; }
-.layer-actions #removeLayerBtn, .layer-actions #smRemoveLayerBtn { background: #1a1b1f; border-color: #4a1a14; color: #e57373; }
-.layer-actions #duplicateLayerBtn:hover, .layer-actions #smDuplicateLayerBtn:hover,
-.layer-actions #renameLayerBtn:hover, .layer-actions #smRenameLayerBtn:hover { background: #232429; }
-.layer-actions #removeLayerBtn:hover, .layer-actions #smRemoveLayerBtn:hover { background: #280905; }
 
 /* --- Compact fields ("name above the box") -------------------------------------------------
    Reusable: .sf-group (small heading) > .sf-grid (two columns) > .sf (label row + .sf-box).
@@ -1512,8 +1399,8 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .panel.is-folded > h2 { margin-bottom: 0; border-bottom-color: transparent; }
 
 /* --- Blend --- */
-.layer-actions .tip-wrap { flex: 1 1 10px; display: flex; min-width: 0; }
-.layer-actions .tip-wrap .icon-btn { flex: 1; }
+.sel-tiles .tip-wrap { display: flex; min-width: 0; }
+.sel-tiles .tip-wrap .icon-btn { flex: 1; }
 .tip-wrap .icon-btn:disabled { pointer-events: none; }
 
 /* --- Repeat around a point --- */
@@ -1627,7 +1514,90 @@ body.sf-scrubbing, body.sf-scrubbing * { cursor: ew-resize !important; user-sele
 .mask-ghost { opacity: 0.3; }
 .mask-ghost.hot { opacity: 1; }
 #canvas.no-mask-outlines .mask-ghost { opacity: 0; }
-#addStraightBtn { flex: 1.7; font-size: 12px; gap: 4px; padding: 4px 4px; }
 /* Optional project name next to Save Project; it becomes part of the saved file name. */
 .project-name { display: block; width: 100%; box-sizing: border-box; margin: 0 0 8px; padding: 4px 6px; font-family: inherit; font-size: 12px; color: #e4e4e6; background: #0b0c0e; border: 1px solid #2c2d33; border-radius: 4px; }
 .project-name:focus { outline: none; border-color: #6b6cff; }
+
+/* Layers panel (design E): Add = equal tiles, Selection = 4-wide block of labelled tiles, fold buttons in the list header,
+   Remove alone under the list, Undo / Redo in the panel title. */
+.layers-sidebar .panel h2:has(.h2-tools) { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.h2-tools { display: flex; gap: 4px; }
+.history-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+.history-btn:hover { background: #232429; color: #ffffff; }
+.history-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.history-btn svg { display: block; }
+.cap-label {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8b909a;
+  margin: 0 0 4px 2px;
+}
+.add-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin-bottom: 9px; }
+.add-btn.tile-add {
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  padding: 5px 0 3px;
+  font-size: 9.5px;
+  border-left: 1px solid #2c2d33;
+  border-top: 2px solid var(--fam);
+  border-radius: 6px;
+}
+.sel-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-bottom: 4px; }
+.icon-btn.tile-btn {
+  flex: none;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  padding: 6px 2px 4px;
+  font-size: 10.5px;
+  color: #cfcfd6;
+}
+.tile-btn span, .flat-btn span, .remove-btn span { pointer-events: none; }
+.layer-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #a3a3ad;
+  margin: 0 0 6px;
+}
+.layer-list-tools { display: flex; gap: 2px; }
+.icon-btn.flat-btn {
+  flex: none;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  background: transparent;
+  border-color: transparent;
+  color: #b9c6d8;
+}
+.icon-btn.flat-btn svg { width: 13px; height: 13px; }
+.icon-btn.flat-btn:hover { background: #232429; }
+.layer-list-head + .layer-list { margin-top: 0; }
+.remove-row { display: flex; justify-content: flex-end; margin: 0 0 4px; }
+.icon-btn.remove-btn {
+  flex: none;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #e57373;
+  border-color: #4a1a14;
+}
+.icon-btn.remove-btn:hover { background: #280905; }
+.icon-btn.remove-btn svg { width: 14px; height: 14px; }
